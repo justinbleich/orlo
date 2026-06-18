@@ -1,0 +1,19 @@
+{
+  "name": "rn-canvas",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "capture:sim": "pnpm --filter @rn-canvas/sim-bridge capture",
+    "diff": "pnpm --filter @rn-canvas/studio diff"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

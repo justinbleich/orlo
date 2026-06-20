@@ -1,157 +1,409 @@
-# PRD — RN Canvas (working title)
+# RN Canvas (working title)
 
-An infinite-canvas design tool, living in an IDE/harness, that lets designers and AI agents
-create and refine **React Native** UI on a freeform canvas and export near-1:1 RN code.
+## Product thesis
 
-Think Paper / MagicPath, but the canvas nodes *are* React Native primitives and the export
-target is React Native — not HTML/CSS.
+Web-native design tools benefit from a unified substrate where design, rendering, layout, and export all target the browser.
+
+React Native has no equivalent unified substrate.
+
+RN Canvas embraces this reality by making the document model itself React Native-native. The canvas is an authoring surface, the simulator is ground truth, and exported code is a direct serialization of the document rather than a translation from another design format.
+
+The result is a workflow where React Native UI can be designed visually without a lossy handoff step.
+
+---
+
+## Document set & scope
+
+This PRD defines **v1**, which is intentionally primitive-centric (see §3 and §12).
+
+* `BUILD.md` — the v1 build plan (Phases 0–6); the authoritative *how* and *when*.
+* `phase2.md`, `phase3.md` — **post-v1 roadmap** (components, tokens, variants, theming, interaction, data, device, icons). Not part of v1; sequenced only after the v1 success criteria in §10 are met.
+
+The document tree is canonical (§6). This PRD states requirements, not authoritative types or schedules — those live in `BUILD.md` and in code.
 
 ---
 
 ## 1. Problem
 
-The current generation of AI-native, infinite-canvas design tools (Paper, MagicPath, Stitch)
-all share one structural advantage: on the web, **HTML/CSS is simultaneously the renderer,
-the design model, the export format, and the transformable medium.** One substrate does four
-jobs, so "design === code" comes for free and export needs no conversion step.
+The current generation of AI-native, infinite-canvas design tools (Paper, MagicPath, Stitch) all share one structural advantage: on the web, HTML/CSS is simultaneously the renderer, the design model, the export format, and the transformable medium.
 
-That unity does not exist for React Native. There is no single substrate that is all four
-things at once:
+One substrate does four jobs, so “design === code” comes for free and export needs no conversion step.
 
-- RN primitives don't paint in a browser canvas without `react-native-web` (a re-implementation).
-- A real native runtime (simulator/device) can't be a smooth, freely-transformable infinite canvas.
+That unity does not exist for React Native.
 
-As a result, a designer who wants RN output today must either design in web tools and **port
-the result by hand** (lossy), or work in Figma and hand off to engineering (also lossy). There
-is no tool where the thing you manipulate on the canvas is the React Native component you ship.
+There is no single substrate that is all four things at once:
+
+* RN primitives do not paint directly in a browser canvas without react-native-web.
+* A real native runtime (simulator/device) cannot be a smooth, freely-transformable infinite canvas.
+* Native rendering behavior differs across platforms.
+* Browser rendering cannot be treated as React Native ground truth.
+
+As a result, teams either:
+
+* Design in web tools and manually port to RN.
+* Design in Figma and hand off to engineering.
+* Build UI directly in code without a visual authoring workflow.
+
+All approaches introduce fidelity loss between design intent and shipped RN UI.
+
+---
 
 ## 2. Goals
 
-- **Native-first document model.** Canvas nodes are RN primitives (`View`, `Text`, `Image`,
-  `Pressable`, `ScrollView`, `TextInput`, `FlatList`), never DOM nodes or rasterized pictures.
-- **Faithful export.** Serialize the document tree to idiomatic RN JSX + `StyleSheet` with
-  effectively no translation step. This is the core advantage over web tools targeting RN.
-- **Live, interactive canvas.** Pan/zoom/select/edit a freeform infinite canvas with real,
-  rendered RN components — not static frames.
-- **Ground-truth preview.** A real simulator/device shows exactly how a frame renders, and is
-  the source of truth where the fast canvas render only approximates.
-- **Agent-operable.** Coding agents (Cursor, Claude Code, etc.) can read and write the canvas
-  through an MCP server: inspect the node tree, edit nodes/styles, request screenshots, and
-  pull generated code.
+* Native-first document model.
+* Faithful RN export with effectively no translation step.
+* Infinite-canvas visual authoring experience.
+* Ground-truth simulator/device rendering.
+* Agent-operable architecture via MCP.
+* Eliminate RN design-to-code handoff loss.
+
+---
 
 ## 3. Non-goals (v1)
 
-- Pixel-perfect parity between the in-canvas render and the device. The canvas is a **preview**;
-  the simulator is truth. We surface the gap rather than pretend it doesn't exist.
-- Full bidirectional code↔canvas round-tripping. Generate-from-canvas ships first; parse
-  arbitrary RN source back into nodes is a later milestone.
-- Animation authoring, gesture authoring, navigation prototyping beyond basic screen stubs.
-- Native module / custom-native-view rendering in-canvas (these only appear correctly on device).
-- Real-time multiplayer (designed for, but not required for v1).
+* Pixel-perfect parity between canvas and device.
+* Full bidirectional code ↔ canvas round-tripping.
+* Reusable components, design tokens, variants, theming (post-v1; see §12).
+* Animation authoring.
+* Gesture authoring.
+* Advanced navigation prototyping.
+* Native-module rendering in canvas.
+* Real-time multiplayer.
+
+---
 
 ## 4. Target users
 
-- **RN product engineers** who want to lay out and iterate UI faster than writing JSX by hand.
-- **Designers on RN teams** who today design in Figma and watch fidelity die at handoff.
-- **AI coding agents** as first-class operators of the canvas, not just consumers of an export.
+### RN Product Engineers
 
-## 5. The four-jobs problem, and how we split it
+Want to iterate faster than hand-authoring JSX.
 
-Because no RN substrate does all four jobs, we deliberately assign each job to a different
-mechanism and accept the seams:
+### Designers on RN Teams
 
-| Job (free on web) | Our mechanism | Consequence |
-|---|---|---|
-| Rendering surface | `react-native-web` in the IDE webview | Render is an *approximation*; native-only components won't show |
-| Design model | RN-primitive node tree (source of truth) | Authoring is constrained to what RN can express |
-| Layout | **Yoga compiled to WASM** (the real RN engine) | Layout matches device closely; text/font metrics still differ |
-| Export format | Serialize node tree → RN JSX + `StyleSheet` | Near 1:1; this is the *easy* part and the product's edge |
-| Transformable medium | CSS transform on the canvas container | Cheap, crisp pan/zoom (web-side only) |
-| Ground truth | Simulator/device pane (Metro + Fast Refresh) | Real infra cost; iOS and Android diverge |
+Need a workflow that preserves fidelity through implementation.
 
-The inversion vs. web tools: their **render** is perfect but their RN **export** would be lossy;
-ours has an **approximate render** but a **faithful export.** The fidelity gap becomes a preview
-problem (solved by the simulator), not a code problem.
+### AI Coding Agents
 
-## 6. Functional requirements
+Operate directly on the document model rather than generating disconnected code.
 
-### 6.1 Document model
-- Nodes represent RN primitives with typed props and an RN-subset style object.
-- Tree operations: add/remove/reorder children, edit props, edit styles, group into components.
-- The document is the single source of truth. The canvas presentation layer and the renderer
-  derive from it and never own canonical state.
+---
 
-### 6.2 Canvas
-- Infinite pan/zoom, frame create/move/resize/delete, multi-select, undo/redo.
-- Each frame hosts a live RN node tree rendered via `react-native-web`.
-- Viewport culling and level-of-detail (cheap proxies for off-focus / zoomed-out frames).
+## 5. The Four-Jobs Problem
 
-### 6.3 Layout
-- All layout computed by Yoga (WASM), never by browser flow, so in-canvas geometry matches RN.
+Because no RN substrate does all four jobs, RN Canvas intentionally splits responsibilities.
 
-### 6.4 Styling
-- Style editor exposes **only** the RN style subset: unitless numbers, RN flexbox defaults
-  (`flexDirection: column` default), `shadow*`/`elevation`, no cascade, no pseudo-selectors,
-  no `grid`, no web-only shorthands.
-- Web-only CSS is rejected at the model boundary with a clear validation error.
+| Job                  | Mechanism                          | Consequence                 |
+| -------------------- | ---------------------------------- | --------------------------- |
+| Rendering surface    | react-native-web                   | Approximate render          |
+| Design model         | RN-native node tree                | Authoring constrained to RN |
+| Layout               | Yoga (WASM)                        | Layout closely matches RN   |
+| Export               | RN JSX + StyleSheet serialization  | Near 1:1 export             |
+| Transformable medium | CSS transforms on canvas container | Fast pan/zoom               |
+| Ground truth         | Expo simulator/device              | Operational complexity      |
 
-### 6.5 Code generation
-- Export document → idiomatic RN: function components, `StyleSheet.create`, correct imports.
-- "Pages" map to **screens** in a navigator (React Navigation), not web routes.
-- Component extraction (promote a subtree to a reusable component).
+The inversion versus web-native tools:
 
-### 6.6 Simulator ground truth
-- A harness RN app (Expo) renders any frame spec via Metro + Fast Refresh.
-- Focused frame mirrors live on a booted simulator.
-- Programmatic screenshot capture for both iOS and Android.
-- Visual-diff overlay between canvas render and device screenshot.
+* Web tools optimize rendering fidelity and translate to RN.
+* RN Canvas optimizes export fidelity and validates rendering through the simulator.
 
-### 6.7 Agent / MCP interface
-- MCP server exposing, at minimum:
-  - `get_tree` — return the document node tree (or a subtree).
-  - `create_frame` / `delete_frame`.
-  - `update_node` — set props.
-  - `set_style` — set RN-subset styles.
-  - `get_screenshot` — return a **device** screenshot (from sim-bridge), not a DOM shot.
-  - `get_code` — return RN JSX + `StyleSheet` for a node/frame.
-- Mirrors Paper's agent-canvas tool shape, adapted so screenshots and code are RN-native.
+The fidelity problem becomes a preview problem, not a code-generation problem.
 
-## 7. Non-functional requirements
+---
 
-- **Fidelity transparency:** never represent the rnw render as pixel-accurate. The diff against
-  the simulator must always be obtainable.
-- **Performance:** keep at most a small number of frames "live"; everything else is a cheap
-  proxy/snapshot. Continuous pan/zoom stays at 60fps via container transform.
-- **Determinism:** layout output must be reproducible (pin Yoga version; pin font metrics).
-- **Platform honesty:** iOS and Android previews are distinct targets; surface both.
+## 6. Source of Truth Hierarchy
 
-## 8. Key risks (ranked)
+```text
+Document Node Tree
+        │
+        ├── Yoga Layout Engine
+        │       │
+        │       ├── Canvas Renderer (RN Web)
+        │       └── Simulator Renderer (Expo)
+        │
+        └── RN Code Generator
+```
 
-1. **Render-fidelity vs. cost.** rnw approximates; truth requires a simulator. If the gap is too
-   large or screenshots too slow, the core UX suffers. → De-risk first (see Build Phase 0).
-2. **Simulator screenshot infrastructure.** Booting, driving, and capturing iOS + Android
-   reliably (and eventually at scale for many agent calls) is real ops work.
-3. **Code round-tripping.** RN `StyleSheet` indirection (styles referenced by key, defined
-   separately) makes parsing source back into nodes messier than inline-Tailwind round-trips.
-4. **Layout edge cases.** Text measurement and font metrics differ between Yoga-in-browser and
-   on-device text rendering even when box layout matches.
+Rules:
 
-## 9. Success criteria
+* The document tree is canonical.
+* Yoga is canonical for layout.
+* Simulator output is canonical for rendering fidelity.
+* Generated code is serialization, not a separate source of truth.
+* The document persists as a committed sidecar (e.g. `Screen.rncanvas.json`) written alongside the generated code. The studio loads the document from the sidecar; the code is never reverse-engineered into the document.
 
-- **Phase 0 (premise validated):** a hand-authored RN tree renders on the canvas via rnw+Yoga,
-  pans/zooms smoothly, and a side-by-side simulator screenshot shows a measured, acceptable
-  fidelity gap.
-- **v1 (usable):** a user (or agent) can build a multi-frame screen on the canvas, see it
-  mirrored on a simulator, and export RN code that compiles and renders matching the canvas
-  within the known fidelity gap — with no manual porting.
+---
 
-## 10. Comparison to existing tools
+## 7. Functional Requirements
 
-| | Paper / MagicPath (web) | This tool (RN) |
-|---|---|---|
-| Canvas nodes | HTML/CSS elements | RN primitives |
-| Render fidelity | Perfect (browser) | Approximate (rnw) + truth (simulator) |
-| Export | Clean React/Tailwind, no conversion | Clean RN JSX + StyleSheet, no conversion |
-| RN handoff | Lossy manual port | None — native by construction |
-| Agent screenshots | Free (DOM) | Requires simulator service |
-| Layout engine | Browser | Yoga (same as RN) |
+### 7.1 Document Model
+
+Nodes represent RN primitives with typed props and RN-subset styles.
+
+Nodes may also contain design-time metadata that never appears in generated code.
+
+Example:
+
+```ts
+type Node = {
+  id: string
+  type: RNPrimitive
+  props: Record<string, unknown>
+  style: RNStyle
+
+  design?: {
+    name?: string
+    locked?: boolean
+    hidden?: boolean
+    annotations?: Annotation[]
+  }
+}
+```
+
+**v1 primitive set (`RNPrimitive`):** `View`, `Text`, `Image`, `Pressable`, `ScrollView`, `TextInput`, `FlatList`.
+
+This named set is the v1 scope boundary — "primitive-centric" means exactly these. Keep the list here as scope; the authoritative `RNPrimitive` type lives in `packages/document`, not the PRD. The PRD names the set, code defines it. Adding a primitive is a scope change, not an implementation detail.
+
+Requirements:
+
+* Add/remove/reorder children
+* Edit props
+* Edit styles
+* Undo/redo support
+
+Grouping into reusable components is post-v1 (§12).
+
+The document remains the single source of truth. Design-time metadata is preserved in document persistence and is never emitted to generated code (§7.5).
+
+### 7.2 Canvas
+
+* Infinite pan/zoom
+* Frame create/move/resize/delete
+* Multi-select
+* Live RN rendering via react-native-web
+* Viewport culling
+* Level-of-detail rendering for distant frames
+
+### 7.3 Layout
+
+* Yoga WASM computes all layout.
+* Browser flow is never authoritative.
+* Selection geometry derives from Yoga output.
+
+### 7.4 Styling
+
+Supported:
+
+* RN flexbox
+* Unitless values
+* Shadow/elevation
+* RN-supported typography
+
+Rejected:
+
+* CSS cascade
+* Grid
+* Pseudo-selectors
+* Web-only shorthands
+* Unsupported CSS properties
+
+Validation occurs at the model boundary.
+
+### 7.5 Code Generation
+
+Export produces:
+
+* Function components
+* StyleSheet.create
+* Correct imports
+* Navigator-ready screen structure
+* A committed sidecar document (`*.rncanvas.json`) holding the canonical node tree and design-time metadata, written alongside the generated code
+
+Capabilities (v1):
+
+* Export screen(s)
+* Generate idiomatic RN structure
+
+Reusable-component export is post-v1 (§12).
+
+Invariants:
+
+* Generated code is a serialization of the document tree (§6), never a separate source of truth.
+* Design-time metadata (§7.1 `design`) is never emitted to generated code; it lives in the committed sidecar document (§6), which is the in-repo persistence of the document tree.
+* The document is loaded from the sidecar, never reverse-engineered from the generated code. Round-trip import from arbitrary (sidecar-less) code is post-v1 (§3, Risk #4).
+
+### 7.6 Simulator Ground Truth
+
+Expo-based harness app:
+
+* Mirrors selected frame
+* Metro + Fast Refresh
+* Screenshot capture
+* iOS target
+* Android target
+* Visual diff against canvas render
+
+### 7.7 Agent / MCP Interface
+
+Minimum MCP operations:
+
+* get_tree
+* create_frame
+* delete_frame
+* update_node
+* set_style
+* get_screenshot
+* get_code
+
+Agent screenshots must originate from device/simulator output, not DOM capture.
+
+Phasing of the MCP server lives in `BUILD.md` (a minimal server may land after the document model exists; the full agent loop is a later phase).
+
+---
+
+## 8. Non-functional Requirements
+
+### Fidelity Transparency
+
+Canvas render is never represented as pixel-perfect.
+
+Simulator validation must always be available.
+
+### Performance
+
+* Maintain 60fps pan/zoom.
+* Keep only a limited set of frames live.
+* Render inactive frames as lightweight proxies.
+
+### Determinism
+
+* Pin Yoga version.
+* Pin font metrics where possible.
+* Produce reproducible layout output.
+
+### Platform Honesty
+
+* iOS and Android are separate rendering targets.
+* Differences must be surfaced rather than hidden.
+
+---
+
+## 9. Key Risks
+
+### 1. Render Fidelity vs Cost
+
+RN Web is an approximation.
+
+Simulator infrastructure is required to establish trust.
+
+### 2. Text Measurement and Font Fidelity
+
+Text is expected to be the largest source of divergence.
+
+Potential differences:
+
+* Line wrapping
+* Font metrics
+* Line height
+* Dynamic type / OS-level accessibility text scaling
+* Font-loading parity between the canvas (RN Web) and the device
+* Custom fonts
+
+Even when Yoga geometry matches, rendered text may differ.
+
+### 3. Simulator Screenshot Infrastructure
+
+Reliable simulator management and screenshot capture is operationally complex.
+
+### 4. Code Round-Tripping
+
+StyleSheet indirection complicates reconstruction of a document tree from arbitrary source code.
+
+### 5. Layout Edge Cases
+
+Platform-specific rendering behavior may create geometry or visual discrepancies.
+
+---
+
+## 10. Success Criteria
+
+### Phase 0 — Premise Validation
+
+Demonstrate:
+
+* RN node tree
+* Yoga layout
+* RN Web rendering
+* Infinite pan/zoom
+* RN code export
+
+Validate that design → RN code is valuable.
+
+### V1 — Usable Product
+
+A user or agent can:
+
+* Build screens visually
+* Mirror them to a simulator
+* Compare canvas vs device
+* Export production-ready RN code
+* Avoid manual design-to-RN porting
+
+---
+
+## 11. Comparison to Existing Tools
+
+|                   | Paper / MagicPath | RN Canvas                     |
+| ----------------- | ----------------- | ----------------------------- |
+| Canvas nodes      | HTML/CSS          | RN primitives                 |
+| Render fidelity   | Browser-perfect   | Approximate + simulator truth |
+| Export            | React/Web         | React Native                  |
+| RN handoff        | Manual port       | None                          |
+| Agent screenshots | DOM               | Device/simulator              |
+| Layout engine     | Browser           | Yoga                          |
+| Source of truth   | Web document      | RN-native document            |
+
+---
+
+## 12. Future Document Abstractions (Post‑V1)
+
+The v1 model remains primitive-centric.
+
+Future abstractions may include:
+
+### Reusable Components
+
+* Component extraction
+* Component libraries
+* Shared updates
+
+### Design Tokens
+
+* Color tokens
+* Typography tokens
+* Spacing tokens
+
+### Variants
+
+* Button states
+* Component variants
+* Responsive variants
+
+### Theming
+
+* Light mode
+* Dark mode
+* Brand themes
+
+All future abstractions compile into the same RN-native document tree and export pipeline.
+
+These abstractions are specified as post-v1 roadmap in `phase2.md` (components, tokens, variants) and `phase3.md` (theming, plus the interaction, data, device, and icon layers).
+
+---
+
+## Core Positioning
+
+**Design React Native in React Native.**
+
+RN Canvas is the first visual editor whose source of truth is React Native itself.
+
+Instead of translating design artifacts into RN code after the fact, RN Canvas makes the document model RN-native from the beginning, eliminating the traditional design-to-development handoff.

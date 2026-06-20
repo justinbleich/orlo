@@ -1,5 +1,9 @@
 # phase3.md — Behavior, Data & Device Layer
 
+> **⚠ Post-v1 roadmap.** Per `PRD.md` §3 and §12, this entire layer — interaction, navigation,
+> data binding, device/responsive, theming, and icons — is **post-v1**, sequenced after v1 and
+> after `phase2.md`. This is not part of the v1 build.
+
 > The authoring tools beyond a static tree: interaction & navigation, data binding & lists,
 > device/responsive realities, theming/modes, and icons. Pair with `BUILD.md` (foundation),
 > `phase2.md` (static authoring tools), and `PRD.md` (rationale).

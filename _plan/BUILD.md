@@ -3,6 +3,11 @@
 > Executable build plan for Cursor. Pair this with `PRD.md` (requirements + rationale).
 > When in doubt about *why*, read the PRD. This file is *how* and *in what order*.
 
+> **Scope:** this plan covers **v1**, which is primitive-centric (`PRD.md` §3, §12).
+> `phase2.md` (components, tokens, variants) and `phase3.md` (interaction, data, device, theming,
+> icons) are **post-v1 roadmap** and are not built here — start them only after v1's success
+> criteria (`PRD.md` §10) are met.
+
 ## How to use this file (agent instructions)
 
 - Work **phase by phase, top to bottom.** Do not start a phase until the previous phase's
@@ -120,12 +125,18 @@ off-focus frames are cheap.
 
 - [ ] `packages/codegen`: document subtree → typed AST → RN JSX via `@babel/generator`.
 - [ ] Emit `StyleSheet.create`, function components, correct `react-native` imports.
-- [ ] Component extraction: promote a subtree to a named reusable component.
 - [ ] "Pages" → React Navigation screen stubs (not web routes).
-- [ ] Snapshot tests: fixtures → expected RN source; assert it compiles.
+- [ ] **Sidecar emit:** alongside each generated file, write a committed `*.rncanvas.json`
+      holding the canonical node tree + design-time metadata (§7.1 `design`). Generated code stays
+      clean; the sidecar is the in-repo persistence and is what the studio loads. The code is
+      never reverse-engineered into the document.
+- [ ] Invariant: design metadata is emitted **only** into the sidecar, never into the code.
+- [ ] Snapshot tests: fixtures → expected RN source + sidecar; assert the code compiles.
+
+> Component extraction is post-v1 (`phase2.md` 2C) and is not built in this phase.
 
 **Done when:** any frame exports idiomatic RN that compiles and visually matches the canvas
-within the known gap.
+within the known gap, and writes a sidecar that reloads into an identical document.
 
 ## Phase 4 — Simulator ground truth
 
@@ -150,13 +161,15 @@ canvas reflects every change.
 
 ## Phase 6 — Round-trip + polish
 
-- [ ] `packages/codegen`: parse RN source (`@babel/parser`/`traverse`) back into document nodes,
-      reconstructing `StyleSheet` references into the node `style` objects. Expect this to be the
-      hardest parse step — start with the subset emit produces, then widen.
-- [ ] Persistence; undo/redo polish (lean on tldraw where possible).
+- [ ] `packages/codegen`: parse **external** RN source (`@babel/parser`/`traverse`) back into
+      document nodes — i.e. importing code that has no sidecar — reconstructing `StyleSheet`
+      references into node `style` objects. Hardest parse step; start with the subset emit
+      produces, then widen. (Normal load uses the Phase 3 sidecar and needs none of this.)
+- [ ] Undo/redo polish (lean on tldraw where possible). Persistence already lands in Phase 3
+      via the sidecar.
 - [ ] Optional: Yjs multiplayer.
 
-**Done when:** code emitted by Phase 3 round-trips back to an equivalent document tree.
+**Done when:** external RN code with no sidecar imports back to an equivalent document tree.
 
 ---
 
@@ -164,4 +177,4 @@ canvas reflects every change.
 
 A user or agent builds a multi-frame screen on the canvas, mirrors it on a simulator, and exports
 RN code that compiles and matches the canvas within the measured fidelity gap — **with zero manual
-porting.** See PRD §9.
+porting.** See PRD §10.

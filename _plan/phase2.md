@@ -1,5 +1,9 @@
 # phase2.md — Designer Tooling Layer
 
+> **⚠ Post-v1 roadmap.** Per `PRD.md` §3 and §12, v1 is intentionally primitive-centric. The
+> components, design tokens, and variants in this document are **post-v1** and are sequenced only
+> after v1's success criteria (`PRD.md` §10) are met. This is not part of the v1 build.
+
 > The toolset designers need to author interfaces on the canvas: creation tools, auto-layout,
 > styling, and a component/design-system library. Pair with `BUILD.md` (foundation) and
 > `PRD.md` (rationale).

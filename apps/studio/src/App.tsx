@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { phase0Fixture } from "@rn-canvas/fixture";
+import { sampleDocument } from "@rn-canvas/document";
 import { RNFrameRenderer, computePixelDiff, registerAndDiff } from "@rn-canvas/render-web";
 import { toPng } from "html-to-image";
 
@@ -191,7 +191,7 @@ export default function App() {
               }}
             >
               <div ref={frameRef} data-frame-root>
-                <RNFrameRenderer root={phase0Fixture} />
+                <RNFrameRenderer root={sampleDocument} />
               </div>
             </div>
           </div>

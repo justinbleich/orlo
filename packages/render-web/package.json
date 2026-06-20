@@ -12,11 +12,12 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
-    "@rn-canvas/fixture": "workspace:*",
+    "@rn-canvas/document": "workspace:*",
+    "@rn-canvas/styles": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-native-web": "^0.19.13",
-    "yoga-layout": "^3.1.0"
+    "yoga-layout": "3.2.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

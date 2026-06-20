@@ -17,9 +17,9 @@ importers:
 
   apps/harness:
     dependencies:
-      '@rn-canvas/fixture':
+      '@rn-canvas/document':
         specifier: workspace:*
-        version: link:../../packages/fixture
+        version: link:../../packages/document
       expo:
         specifier: ~52.0.0
         version: 52.0.49(@babel/core@7.29.7)(@babel/preset-env@7.29.7(@babel/core@7.29.7))(react-native@0.76.3(@babel/core@7.29.7)(@babel/preset-env@7.29.7(@babel/core@7.29.7))(@types/react@18.3.31)(react@18.3.1))(react@18.3.1)
@@ -45,9 +45,9 @@ importers:
 
   apps/studio:
     dependencies:
-      '@rn-canvas/fixture':
+      '@rn-canvas/document':
         specifier: workspace:*
-        version: link:../../packages/fixture
+        version: link:../../packages/document
       '@rn-canvas/render-web':
         specifier: workspace:*
         version: link:../../packages/render-web
@@ -108,13 +108,14 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
-  packages/fixture: {}
-
   packages/render-web:
     dependencies:
-      '@rn-canvas/fixture':
+      '@rn-canvas/document':
         specifier: workspace:*
-        version: link:../fixture
+        version: link:../document
+      '@rn-canvas/styles':
+        specifier: workspace:*
+        version: link:../styles
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -125,7 +126,7 @@ importers:
         specifier: ^0.19.13
         version: 0.19.13(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       yoga-layout:
-        specifier: ^3.1.0
+        specifier: 3.2.1
         version: 3.2.1
     devDependencies:
       '@types/react':
@@ -139,11 +140,10 @@ importers:
         version: 5.9.3
 
   packages/sim-bridge:
-    dependencies:
-      '@rn-canvas/fixture':
-        specifier: workspace:*
-        version: link:../fixture
     devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.21
       tsx:
         specifier: ^4.19.2
         version: 4.22.4

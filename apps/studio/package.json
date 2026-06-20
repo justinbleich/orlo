@@ -10,7 +10,7 @@
     "diff": "tsx scripts/run-diff.ts"
   },
   "dependencies": {
-    "@rn-canvas/fixture": "workspace:*",
+    "@rn-canvas/document": "workspace:*",
     "@rn-canvas/render-web": "workspace:*",
     "@rn-canvas/sim-bridge": "workspace:*",
     "html-to-image": "^1.11.11",

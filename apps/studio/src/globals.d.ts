@@ -25,19 +25,36 @@ declare module "react-native" {
     | number
     | Array<{ uri: string }>;
 
-  export const View: ComponentType<{
-    style?: Record<string, unknown>;
-    children?: ReactNode;
-  }>;
+  type Style = Record<string, unknown>;
+
+  export const View: ComponentType<{ style?: Style; children?: ReactNode }>;
 
   export const Text: ComponentType<{
-    style?: Record<string, unknown>;
+    style?: Style;
+    numberOfLines?: number;
     children?: ReactNode;
   }>;
 
   export const Image: ComponentType<{
     source?: ImageSourcePropType;
-    style?: Record<string, unknown>;
+    style?: Style;
     resizeMode?: string;
+  }>;
+
+  export const Pressable: ComponentType<{ style?: Style; children?: ReactNode }>;
+
+  export const ScrollView: ComponentType<{
+    style?: Style;
+    horizontal?: boolean;
+    children?: ReactNode;
+  }>;
+
+  export const TextInput: ComponentType<{
+    style?: Style;
+    placeholder?: string;
+    defaultValue?: string;
+    value?: string;
+    editable?: boolean;
+    secureTextEntry?: boolean;
   }>;
 }

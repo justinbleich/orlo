@@ -9,12 +9,23 @@
 
 ## Phase 1 execution order (approved)
 
-1. `packages/styles` + `packages/document` (this contract). ← in progress
-2. Retarget `render-web` / `harness` / `studio` from `@rn-canvas/fixture` onto the
-   document model, on the **existing bare canvas**. Delete `packages/fixture`.
-3. **Checkpoint:** confirm the model renders end-to-end (canvas + harness) + diff still runs.
-4. Integrate `tldraw` with a custom `RNFrame` shape + inspector (select/move/resize/
+1. ✅ `packages/styles` + `packages/document` (this contract). — done, tested.
+2. ✅ Retarget `render-web` / `harness` / `studio` from `@rn-canvas/fixture` onto the
+   document model, on the **existing bare canvas**. `packages/fixture` deleted.
+3. ✅ **Checkpoint:** canvas renders the document end-to-end (verified in browser:
+   View card + Text + Image, Yoga-driven layout, no console errors). Harness retargeted
+   + typechecked; **harness runtime verification is pending a simulator** (not bootable
+   in this environment).
+4. ⬜ Integrate `tldraw` with a custom `RNFrame` shape + inspector (select/move/resize/
    multi-select). `design.locked` / `design.hidden` honored by the interaction layer here.
+
+### Open follow-ups carried into slice 4 / later
+- **Metro package exports:** `apps/harness/metro.config.js` enables
+  `unstable_enablePackageExports` so the `@rn-canvas/document/sample` subpath resolves at
+  runtime (RN 0.76 default is off). Verify when a simulator is first booted.
+- **rnw type shim is hand-rolled** and duplicated between
+  `packages/render-web/src/react-native-web.d.ts` and `apps/studio/src/globals.d.ts`.
+  They must stay in sync until replaced by real `@types/react-native` (post-spike).
 
 Do **not** touch `packages/codegen`, `sim-bridge` Android, or `packages/mcp-server` until
 Phase 1's Done-when passes. Smallest reviewable commits.

@@ -22,23 +22,39 @@ function NodeTreeRow({
   selectedId: NodeId | null;
 }) {
   const setSelection = useDocumentStore((s) => s.setSelection);
+  const updateDesign = useDocumentStore((s) => s.updateDesign);
   const isSelected = node.id === selectedId;
+  const locked = !!node.design?.locked;
   const label = node.design?.name ?? node.type;
   return (
     <>
       <div
-        onClick={() => setSelection([node.id])}
+        // A locked node is not selectable; click the lock glyph to unlock.
+        onClick={() => {
+          if (!locked) setSelection([node.id]);
+        }}
         style={{
           padding: "4px 8px",
           paddingLeft: 8 + depth * 14,
-          cursor: "pointer",
+          cursor: locked ? "not-allowed" : "pointer",
           fontSize: 12,
           background: isSelected ? "#2d6cdf" : "transparent",
           color: node.design?.hidden ? "#777" : "#dfe3ea",
           borderRadius: 4,
         }}
       >
-        {node.design?.locked ? "🔒 " : ""}
+        {locked && (
+          <span
+            title="Unlock"
+            onClick={(e) => {
+              e.stopPropagation();
+              updateDesign(rootId, node.id, { locked: false });
+            }}
+            style={{ cursor: "pointer" }}
+          >
+            🔒{" "}
+          </span>
+        )}
         {node.design?.hidden ? "◌ " : ""}
         {label} <span style={{ color: "#7c8492" }}>· {node.type}</span>
       </div>

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Tldraw, createShapeId, type Editor } from "tldraw";
+import {
+  Tldraw,
+  createShapeId,
+  type Editor,
+  type TLComponents,
+  type TLUiOverrides,
+} from "tldraw";
 import "tldraw/tldraw.css";
 import {
   createNode,
@@ -19,6 +25,37 @@ import { Inspector } from "./Inspector";
 
 const shapeUtils = [RNFrameShapeUtil];
 const RNFRAME = RNFrameShapeUtil.type;
+
+// Lockdown: tldraw is a frame host, not a whiteboard. Hide its default chrome so
+// users can't reach tldraw-native shapes/styles (which aren't RN nodes and can't
+// be exported). The watermark is intentionally left in place (license requires it).
+const components: TLComponents = {
+  Toolbar: null,
+  MainMenu: null,
+  StylePanel: null,
+  PageMenu: null,
+  ActionsMenu: null,
+  QuickActions: null,
+  HelpMenu: null,
+  ZoomMenu: null,
+  NavigationPanel: null,
+  KeyboardShortcutsDialog: null,
+  DebugMenu: null,
+  DebugPanel: null,
+};
+
+// tldraw's shape vocabulary is RNFrame only. Keep navigation tools (select, hand,
+// zoom); remove every shape-creating/destructive tool so no tldraw-native shape can
+// be made. RN primitives are document nodes created via the inspector, never here.
+const KEEP_TOOLS = new Set(["select", "hand", "zoom"]);
+const overrides: TLUiOverrides = {
+  tools(_editor, tools) {
+    for (const id of Object.keys(tools)) {
+      if (!KEEP_TOOLS.has(id)) delete tools[id];
+    }
+    return tools;
+  },
+};
 
 // tldraw's editor methods type shapes as the closed builtin union, so reads/
 // writes of our custom shape go through these narrow casts.
@@ -95,6 +132,7 @@ export default function App() {
 
   const onMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
+
     if (Object.keys(useDocumentStore.getState().roots).length === 0) {
       useDocumentStore.getState().addRoot(sampleDocument);
     }
@@ -236,7 +274,12 @@ export default function App() {
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-          <Tldraw onMount={onMount} shapeUtils={shapeUtils} />
+          <Tldraw
+            onMount={onMount}
+            shapeUtils={shapeUtils}
+            components={components}
+            overrides={overrides}
+          />
         </div>
         <Inspector rootId={focusedRootId} />
       </div>

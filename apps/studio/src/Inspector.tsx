@@ -6,9 +6,7 @@ import {
   type Node,
   type NodeId,
 } from "@rn-canvas/document";
-
-const PANEL_BG = "#1b1f27";
-const ROW_BG = "#222732";
+import { color, radius, space, text } from "./studio-theme";
 
 function NodeTreeRow({
   node,
@@ -34,13 +32,13 @@ function NodeTreeRow({
           if (!locked) setSelection([node.id]);
         }}
         style={{
-          padding: "4px 8px",
-          paddingLeft: 8 + depth * 14,
+          padding: `${space.xs} ${space.sm}`,
+          paddingLeft: `calc(${space.sm} + ${depth} * ${space.md})`,
           cursor: locked ? "not-allowed" : "pointer",
-          fontSize: 12,
-          background: isSelected ? "#2d6cdf" : "transparent",
-          color: node.design?.hidden ? "#777" : "#dfe3ea",
-          borderRadius: 4,
+          fontSize: text.sm,
+          background: isSelected ? color.accent : "transparent",
+          color: node.design?.hidden ? color.inkFaint : color.ink,
+          borderRadius: radius.sm,
         }}
       >
         {locked && (
@@ -56,7 +54,7 @@ function NodeTreeRow({
           </span>
         )}
         {node.design?.hidden ? "◌ " : ""}
-        {label} <span style={{ color: "#7c8492" }}>· {node.type}</span>
+        {label} <span style={{ color: color.inkFaint }}>· {node.type}</span>
       </div>
       {childrenOf(node).map((child) => (
         <NodeTreeRow
@@ -71,28 +69,30 @@ function NodeTreeRow({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-      <span style={{ color: "#9aa0a6" }}>{label}</span>
+    <label
+      style={{ display: "flex", flexDirection: "column", gap: space.xs, fontSize: text.xs }}
+    >
+      <span style={{ color: color.inkDim }}>{label}</span>
       {children}
     </label>
   );
 }
 
 const inputStyle: React.CSSProperties = {
-  background: "#11141a",
-  border: "1px solid #333a47",
-  borderRadius: 4,
-  color: "#e6e9ee",
-  padding: "5px 7px",
-  fontSize: 12,
+  background: color.chrome2,
+  border: `1px solid ${color.line}`,
+  borderRadius: radius.sm,
+  color: color.ink,
+  padding: `${space.xs} ${space.sm}`,
+  fontSize: text.sm,
+};
+
+const swatchStyle: React.CSSProperties = {
+  ...inputStyle,
+  padding: space.xs,
+  height: space["2xl"],
 };
 
 export function Inspector({ rootId }: { rootId: NodeId | null }) {
@@ -115,6 +115,9 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
     }
   }
 
+  // All edits route through the validated document-store actions (updateProps /
+  // updateStyle / updateDesign) — never direct node mutation — so the document
+  // stays single-source and styles re-validate on every keystroke.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const setStyle = (key: string, value: any) =>
     guard(() => updateStyle(rootId!, selectedId!, { [key]: value }));
@@ -127,33 +130,38 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   return (
     <aside
       style={{
-        width: 280,
-        flex: "0 0 280px",
-        background: PANEL_BG,
-        borderLeft: "1px solid #2a2f3a",
+        width: "100%",
+        height: "100%",
+        background: color.chrome,
         overflowY: "auto",
-        padding: 12,
+        padding: space.md,
         display: "flex",
         flexDirection: "column",
-        gap: 12,
+        gap: space.md,
       }}
     >
-      <strong style={{ fontSize: 13 }}>Inspector</strong>
+      <div className="eyebrow">Inspector</div>
 
-      {!root && <p style={{ color: "#7c8492", fontSize: 12 }}>Select a frame.</p>}
+      {!root && (
+        <p style={{ color: color.inkFaint, fontSize: text.sm }}>Select a frame.</p>
+      )}
 
       {root && (
         <section>
-          <div style={{ color: "#9aa0a6", fontSize: 11, marginBottom: 4 }}>Tree</div>
-          <div style={{ background: ROW_BG, borderRadius: 6, padding: 4 }}>
+          <div className="eyebrow" style={{ marginBottom: space.xs }}>
+            Tree
+          </div>
+          <div
+            style={{ background: color.chrome2, borderRadius: radius.base, padding: space.xs }}
+          >
             <NodeTreeRow node={root} rootId={root.id} depth={0} selectedId={selectedId} />
           </div>
         </section>
       )}
 
       {node && (
-        <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ color: "#9aa0a6", fontSize: 11 }}>
+        <section style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
+          <div className="eyebrow">
             {node.type} · {node.id.slice(0, 8)}
           </div>
 
@@ -167,8 +175,8 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
               }
             />
           </Field>
-          <div style={{ display: "flex", gap: 14 }}>
-            <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: space.lg, fontSize: text.sm, color: color.ink }}>
+            <label style={{ display: "flex", gap: space.xs, alignItems: "center" }}>
               <input
                 type="checkbox"
                 checked={!!node.design?.locked}
@@ -178,7 +186,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
               />
               Locked
             </label>
-            <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
+            <label style={{ display: "flex", gap: space.xs, alignItems: "center" }}>
               <input
                 type="checkbox"
                 checked={!!node.design?.hidden}
@@ -209,7 +217,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
               </Field>
               <Field label="Color">
                 <input
-                  style={{ ...inputStyle, padding: 2, height: 28 }}
+                  style={swatchStyle}
                   type="color"
                   value={node.style.color ?? "#000000"}
                   onChange={(e) => setStyle("color", e.target.value)}
@@ -220,13 +228,13 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
 
           <Field label="Background color">
             <input
-              style={{ ...inputStyle, padding: 2, height: 28 }}
+              style={swatchStyle}
               type="color"
               value={node.style.backgroundColor ?? "#ffffff"}
               onChange={(e) => setStyle("backgroundColor", e.target.value)}
             />
           </Field>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: space.sm }}>
             <Field label="Width">
               <input
                 style={inputStyle}
@@ -254,7 +262,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </Field>
 
           {error && (
-            <p style={{ color: "#ff8a8a", fontSize: 11, margin: 0 }}>{error}</p>
+            <p style={{ color: color.amber, fontSize: text.xs, margin: 0 }}>{error}</p>
           )}
         </section>
       )}

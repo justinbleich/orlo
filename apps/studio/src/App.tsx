@@ -22,6 +22,7 @@ import {
 import { toPng } from "html-to-image";
 import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
 import { Inspector } from "./Inspector";
+import { color, layout, radius, space, text } from "./studio-theme";
 
 const shapeUtils = [RNFrameShapeUtil];
 const RNFRAME = RNFrameShapeUtil.type;
@@ -132,6 +133,8 @@ export default function App() {
 
   const onMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
+    // Dark canvas to match the studio shell (chrome theming, not artboard).
+    editor.user.updateUserPreferences({ colorScheme: "dark" });
 
     if (Object.keys(useDocumentStore.getState().roots).length === 0) {
       useDocumentStore.getState().addRoot(sampleDocument);
@@ -243,34 +246,51 @@ export default function App() {
     }
   }, [captureCanvas, captureSim, simUrl]);
 
+  const btn: React.CSSProperties = {
+    background: color.chrome2,
+    color: color.ink,
+    border: `1px solid ${color.line}`,
+    borderRadius: radius.base,
+    padding: `${space.xs} ${space.md}`,
+    fontSize: text.sm,
+  };
+  const btnPrimary: React.CSSProperties = {
+    ...btn,
+    background: color.accentSoft,
+    borderColor: color.accentLine,
+  };
+
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <header
         style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid #2a2f3a",
+          padding: `${space.sm} ${space.lg}`,
+          background: color.chrome,
+          borderBottom: `1px solid ${color.line}`,
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          gap: space.md,
           flexWrap: "wrap",
         }}
       >
-        <strong>RN Canvas</strong>
-        <span style={{ color: "#9aa0a6", fontSize: 13 }}>Studio · Phase 1</span>
-        <button type="button" onClick={addFrame}>
+        <strong style={{ color: color.ink, fontSize: text.lg }}>RN Canvas</strong>
+        <span style={{ color: color.inkDim, fontSize: text.base }}>Studio · Phase 2</span>
+        <button type="button" style={btnPrimary} onClick={addFrame}>
           + Add frame
         </button>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button type="button" disabled={busy} onClick={() => void captureSim()}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: space.sm }}>
+          <button type="button" style={btn} disabled={busy} onClick={() => void captureSim()}>
             Capture simulator
           </button>
-          <button type="button" disabled={busy} onClick={() => void runDiff()}>
+          <button type="button" style={btn} disabled={busy} onClick={() => void runDiff()}>
             Run diff{diffScore !== null ? ` · ${(diffScore * 100).toFixed(0)}%` : ""}
           </button>
         </div>
       </header>
 
-      <p style={{ margin: "6px 16px", color: "#9aa0a6", fontSize: 12 }}>{status}</p>
+      <p style={{ margin: `${space.xs} ${space.lg}`, color: color.inkDim, fontSize: text.sm }}>
+        {status}
+      </p>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
@@ -281,7 +301,18 @@ export default function App() {
             overrides={overrides}
           />
         </div>
-        <Inspector rootId={focusedRootId} />
+        <div
+          style={{
+            flex: `0 0 ${layout.rightColumn}px`,
+            width: layout.rightColumn,
+            borderLeft: `1px solid ${color.line}`,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+          }}
+        >
+          <Inspector rootId={focusedRootId} />
+        </div>
       </div>
 
       {/* Offscreen capture target: a clean render of the focused frame for the

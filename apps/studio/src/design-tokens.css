@@ -1,0 +1,96 @@
+/* =============================================================================
+   RN Canvas — Studio design tokens
+   The single source of VALUES for the studio chrome. Extracted from the UI mockups.
+
+   Hard rule: these tokens style the STUDIO CHROME only (bars, rails, panels,
+   inspector, buttons). They are NEVER used to style the RN content on the canvas —
+   that content is styled by the document's own RNStyle. Chrome is dark; artboards
+   are light; keep them separate.
+   ========================================================================== */
+
+:root {
+  /* --- Chrome surfaces (dark) ------------------------------------------------
+     Layered from deepest (canvas backdrop) to raised (active controls).        */
+  --canvas:    #14161B;   /* infinite-canvas backdrop, deepest layer            */
+  --chrome:    #1B1E25;   /* bars + panels                                       */
+  --chrome-2:  #21252E;   /* controls, inputs, segmented backgrounds             */
+  --raised:    #272C36;   /* raised / active control state                       */
+  --line:      #2E333E;   /* borders + dividers                                  */
+  --line-soft: #262B34;   /* subtle internal dividers                            */
+
+  /* --- Ink (text) ----------------------------------------------------------- */
+  --ink:       #E7EAF0;   /* primary text                                        */
+  --ink-dim:   #98A1B1;   /* secondary text, inactive controls                   */
+  --ink-faint: #616B7B;   /* tertiary text, micro-labels                         */
+
+  /* --- Accents — each color has ONE job. Do not repurpose. ------------------
+     ACCENT (indigo) = selection, primary action, interactive, agent presence.
+     LIVE  (green)   = RESERVED for live / ground-truth / simulator / Fast
+                       Refresh signals ONLY. Never use it as a generic accent.
+     AMBER           = caution / diff / disabled-warning, used sparingly.        */
+  --accent:      #6E7CFF;
+  --accent-soft: rgba(110,124,255,.15);   /* accent fills/backgrounds           */
+  --accent-line: rgba(110,124,255,.50);   /* accent borders/outlines            */
+
+  --live:        #41D08B;
+  --live-soft:   rgba(65,208,139,.14);
+
+  --amber:       #E7A94B;
+
+  /* --- Artboard scaffolding (light) ----------------------------------------
+     For the FRAME's own neutral chrome only (status bar, default bg, hairlines).
+     NOT for RN content colors — those come from the document.                  */
+  --art:       #FFFFFF;
+  --art-2:     #F4F6F9;
+  --art-ink:   #1A1D24;
+  --art-dim:   #737D8C;
+  --art-line:  #E7EAEF;
+
+  /* --- Typography ----------------------------------------------------------- */
+  --font-sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", monospace;
+
+  /* Type scale (chrome). Artboard text uses its own sizes via RNStyle.         */
+  --text-micro: 10px;   /* uppercase panel labels, tracking +0.10em             */
+  --text-xs:    11px;
+  --text-sm:    12px;
+  --text-base:  13px;
+  --text-lg:    15px;
+  --text-xl:    17px;
+
+  /* --- Spacing (4px base) --------------------------------------------------- */
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  12px;
+  --space-lg:  16px;
+  --space-xl:  20px;
+  --space-2xl: 24px;
+
+  /* --- Radii ---------------------------------------------------------------- */
+  --radius-sm:   6px;   /* small controls                                       */
+  --radius:      8px;   /* default controls, buttons, inputs                    */
+  --radius-lg:   12px;  /* panels, cards, frames                                */
+  --radius-pill: 20px;  /* pills / chips                                        */
+
+  /* --- Region dimensions (see STUDIO-UI.md) --------------------------------- */
+  --h-topbar:       50px;
+  --w-rail:         52px;
+  --w-left-panel:   246px;
+  --w-right-column: 336px;
+  --h-ground-truth: 300px;
+}
+
+/* Micro-label convention: the "pro tool" register used for panel headers. */
+.eyebrow {
+  font-size: var(--text-micro);
+  letter-spacing: .10em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+/* Motion: the only animated element is the live/ground-truth pulse. Respect
+   reduced-motion everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; }
+}

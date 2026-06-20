@@ -16,8 +16,13 @@
    View card + Text + Image, Yoga-driven layout, no console errors). Harness retargeted
    + typechecked; **harness runtime verification is pending a simulator** (not bootable
    in this environment).
-4. ⬜ Integrate `tldraw` with a custom `RNFrame` shape + inspector (select/move/resize/
-   multi-select). `design.locked` / `design.hidden` honored by the interaction layer here.
+4. ✅ Integrate `tldraw` with a custom `RNFrame` shape + inspector. Verified in browser:
+   multi-frame canvas, add-frame, node tree + prop/style editing, edit→store→canvas
+   re-render (single source of truth), `design.hidden` honored, `design.locked`→shape
+   lock wired. tldraw provides move/resize/multi-select/undo natively.
+
+**Phase 1 (BUILD) is complete.** Next is BUILD Phase 2 (full render/layout fidelity) or
+phase2.md authoring tools — both post-Phase-1, start per the roadmap.
 
 ### Open follow-ups carried into slice 4 / later
 - **Metro package exports:** `apps/harness/metro.config.js` enables
@@ -26,6 +31,16 @@
 - **rnw type shim is hand-rolled** and duplicated between
   `packages/render-web/src/react-native-web.d.ts` and `apps/studio/src/globals.d.ts`.
   They must stay in sync until replaced by real `@types/react-native` (post-spike).
+- **tldraw custom-shape typing:** `RNFrameShapeUtil` has one `@ts-expect-error` —
+  tldraw 5.1.1 constrains `ShapeUtil` to the closed builtin `TLShape` union, so a custom
+  shape type isn't assignable (runtime is fine). Editor read/writes of the shape use
+  isolated casts in `App.tsx`. Revisit if tldraw opens the constraint.
+- **Add-frame focus:** creating a frame sets inspector focus to the new root, but the
+  store listener re-syncs focus from canvas selection; selecting the frame on canvas is
+  the reliable focus path. Minor UX polish for later.
+- **In-app fidelity diff** now captures an offscreen render of the focused frame (the
+  bare-canvas snapshot target is gone). The CLI diff (`scripts/run-diff.ts`) is unchanged.
+  Re-home the in-app diff against tldraw's export API in BUILD Phase 4.
 
 Do **not** touch `packages/codegen`, `sim-bridge` Android, or `packages/mcp-server` until
 Phase 1's Done-when passes. Smallest reviewable commits.

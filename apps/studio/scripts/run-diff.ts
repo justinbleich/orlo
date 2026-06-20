@@ -1,5 +1,5 @@
 import { captureSimulatorScreenshot, defaultScreenshotPath } from "@rn-canvas/sim-bridge";
-import { computePixelDiff } from "@rn-canvas/render-web";
+import { computePixelDiff, registerAndDiff } from "@rn-canvas/render-web";
 import { readFile } from "node:fs/promises";
 import { PNG } from "pngjs";
 
@@ -28,12 +28,13 @@ try {
   }
 
   const [canvas, sim] = await Promise.all([loadPng(canvasPath), loadPng(simPath)]);
-  const width = Math.min(canvas.width, sim.width);
-  const height = Math.min(canvas.height, sim.height);
-  const result = computePixelDiff(canvas.data, sim.data, width, height);
+  // Crop both to the card and resample to a shared size before diffing — the
+  // canvas snapshot is a tight crop, the sim screenshot a full device screen.
+  const result = registerAndDiff(canvas, sim, computePixelDiff);
 
   console.log(
-    `Fidelity: ${(result.score * 100).toFixed(2)}% (${result.diffPixels}/${result.totalPixels} pixels differ)`,
+    `Fidelity (card-registered): ${(result.score * 100).toFixed(2)}% ` +
+      `(${result.diffPixels}/${result.totalPixels} pixels differ over ${result.width}×${result.height})`,
   );
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);

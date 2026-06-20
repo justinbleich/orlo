@@ -7,6 +7,14 @@ export type FixtureNode = {
   children?: FixtureNode[];
 };
 
+/**
+ * Bundled 48×48 image as a data URI. Same-origin and deterministic, so the
+ * canvas snapshot never taints (a hotlinked remote image fails CORS inlining)
+ * and the canvas/native renders stay byte-stable for the fidelity diff.
+ */
+export const FIXTURE_IMAGE_URI =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAp0lEQVR4AdXBQQqDUBAFwZ7Gi+bauUoWE0EhigquzH9V9Xp/uKl5VnHDxLXmv5q94sTEUTOmZlFsyF4zvmZDfpoczUrCyaLJ08wknISTcAJNrpZwEk7CSTgJJ+EknISTcBJOwkk4CSfhJJyEk3ASTsJJOAkn4SSchJNwEk7CCRS5SsJJOAkniyJPMZNw8lPkKFayV4yv2Jg4KhbNWIoTE9eKveZZxQ1f+qIRngMFE4cAAAAASUVORK5CYII=";
+
 /** Phase 0 spike: row layout with Text + Image children. */
 export const phase0Fixture: FixtureNode = {
   type: "View",
@@ -32,13 +40,10 @@ export const phase0Fixture: FixtureNode = {
       type: "Image",
       props: {
         source: {
-          uri: "https://reactnative.dev/img/tiny_logo.png",
+          uri: FIXTURE_IMAGE_URI,
         },
       },
       style: { width: 48, height: 48 },
     },
   ],
 };
-
-export const FIXTURE_IMAGE_URI =
-  "https://reactnative.dev/img/tiny_logo.png";

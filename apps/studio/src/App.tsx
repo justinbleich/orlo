@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { phase0Fixture } from "@rn-canvas/fixture";
-import { RNFrameRenderer, computePixelDiff } from "@rn-canvas/render-web";
+import { RNFrameRenderer, computePixelDiff, registerAndDiff } from "@rn-canvas/render-web";
 import { toPng } from "html-to-image";
 
 type Transform = { x: number; y: number; scale: number };
@@ -25,31 +25,6 @@ function loadImageData(url: string): Promise<ImageData> {
     img.onerror = () => reject(new Error("Failed to load image"));
     img.src = url;
   });
-}
-
-function normalizeImageData(
-  source: ImageData,
-  width: number,
-  height: number,
-): ImageData {
-  if (source.width === width && source.height === height) {
-    return source;
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("Could not get canvas context");
-  }
-
-  const tmp = document.createElement("canvas");
-  tmp.width = source.width;
-  tmp.height = source.height;
-  tmp.getContext("2d")!.putImageData(source, 0, 0);
-  ctx.drawImage(tmp, 0, 0, width, height);
-  return ctx.getImageData(0, 0, width, height);
 }
 
 export default function App() {
@@ -142,14 +117,13 @@ export default function App() {
         loadImageData(sim),
       ]);
 
-      const width = Math.min(canvasData.width, simData.width);
-      const height = Math.min(canvasData.height, simData.height);
-      const a = normalizeImageData(canvasData, width, height);
-      const b = normalizeImageData(simData, width, height);
-      const result = computePixelDiff(a.data, b.data, width, height);
+      // Crop both to the card and resample to a shared size, so the score
+      // measures render fidelity rather than the simulator's grey margins.
+      const result = registerAndDiff(canvasData, simData, computePixelDiff);
       setDiffScore(result.score);
       setStatus(
-        `Fidelity score: ${(result.score * 100).toFixed(1)}% (${result.diffPixels}/${result.totalPixels} pixels differ)`,
+        `Fidelity score (card-registered): ${(result.score * 100).toFixed(1)}% ` +
+          `(${result.diffPixels}/${result.totalPixels} pixels differ over ${result.width}×${result.height})`,
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Diff failed");

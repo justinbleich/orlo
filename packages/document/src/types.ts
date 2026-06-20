@@ -1,0 +1,151 @@
+/**
+ * The canonical RN-primitive node tree — the single source of truth (PRD §6).
+ * The renderer, codegen, and harness all derive from this; none holds canonical
+ * state of its own.
+ */
+import type { RNStyle } from "@rn-canvas/styles";
+
+export type RNPrimitive =
+  | "View"
+  | "Text"
+  | "Image"
+  | "Pressable"
+  | "ScrollView"
+  | "TextInput"
+  | "FlatList";
+
+export type NodeId = string;
+
+export interface Annotation {
+  id: string;
+  text: string;
+}
+
+/** Design-time metadata. Never emitted to generated code (PRD §7.1/§7.5). */
+export interface DesignMeta {
+  name?: string;
+  locked?: boolean; // honored by the canvas interaction layer: no select/move
+  hidden?: boolean; // honored by the canvas interaction layer: not rendered
+  annotations?: Annotation[];
+}
+
+interface NodeBase {
+  id: NodeId;
+  style: RNStyle;
+  design?: DesignMeta;
+}
+
+// --- Per-primitive props (v1; interaction/data props are post-v1) ---
+
+export interface ViewProps {}
+
+export interface TextProps {
+  text: string;
+  numberOfLines?: number;
+}
+
+export type ImageSource = { uri: string } | { require: string };
+export interface ImageProps {
+  source: ImageSource;
+  resizeMode?: "cover" | "contain" | "stretch" | "center" | "repeat";
+}
+
+export interface PressableProps {
+  disabled?: boolean; // onPress → phase3
+}
+
+export interface ScrollViewProps {
+  horizontal?: boolean;
+  showsScrollIndicator?: boolean;
+}
+
+export interface TextInputProps {
+  placeholder?: string;
+  value?: string;
+  secureTextEntry?: boolean;
+  editable?: boolean;
+  keyboardType?: "default" | "numeric" | "email-address" | "phone-pad";
+}
+
+export interface FlatListProps {
+  data: unknown[]; // inline sample data; the data-authoring layer is phase3
+  horizontal?: boolean;
+}
+
+// --- Node union ---
+
+export interface ViewNode extends NodeBase {
+  type: "View";
+  props: ViewProps;
+  children: Node[];
+}
+export interface PressableNode extends NodeBase {
+  type: "Pressable";
+  props: PressableProps;
+  children: Node[];
+}
+export interface ScrollViewNode extends NodeBase {
+  type: "ScrollView";
+  props: ScrollViewProps;
+  children: Node[];
+}
+export interface FlatListNode extends NodeBase {
+  type: "FlatList";
+  props: FlatListProps;
+  children: [Node] | []; // exactly one item template (or none yet)
+}
+export interface TextNode extends NodeBase {
+  type: "Text";
+  props: TextProps;
+}
+export interface ImageNode extends NodeBase {
+  type: "Image";
+  props: ImageProps;
+}
+export interface TextInputNode extends NodeBase {
+  type: "TextInput";
+  props: TextInputProps;
+}
+
+export type Node =
+  | ViewNode
+  | PressableNode
+  | ScrollViewNode
+  | FlatListNode
+  | TextNode
+  | ImageNode
+  | TextInputNode;
+
+export type ContainerNode = ViewNode | PressableNode | ScrollViewNode | FlatListNode;
+
+/** Map from primitive type → its props shape (for typed createNode/updateProps). */
+export interface PropsByType {
+  View: ViewProps;
+  Text: TextProps;
+  Image: ImageProps;
+  Pressable: PressableProps;
+  ScrollView: ScrollViewProps;
+  TextInput: TextInputProps;
+  FlatList: FlatListProps;
+}
+
+export type AnyProps = PropsByType[RNPrimitive];
+
+const CONTAINER_TYPES: ReadonlySet<RNPrimitive> = new Set<RNPrimitive>([
+  "View",
+  "Pressable",
+  "ScrollView",
+  "FlatList",
+]);
+
+export function canHaveChildren(type: RNPrimitive): boolean {
+  return CONTAINER_TYPES.has(type);
+}
+
+export function isContainer(node: Node): node is ContainerNode {
+  return canHaveChildren(node.type);
+}
+
+export function childrenOf(node: Node): Node[] {
+  return isContainer(node) ? node.children : [];
+}

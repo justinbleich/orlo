@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 import type { Node } from "@rn-canvas/document";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,6 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const pluginDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(pluginDir, "../..");
-const screenshotPath = join(repoRoot, "tmp", "sim-screenshot.png");
 const defaultExportDir = join(repoRoot, "generated");
 
 type CodegenRequest = {
@@ -126,30 +125,6 @@ export function simScreenshotPlugin(): Plugin {
   return {
     name: "studio-node-api",
     configureServer(server) {
-      server.middlewares.use("/api/sim-screenshot", async (_req, res) => {
-        try {
-          await execFileAsync("pnpm", [
-            "--filter",
-            "@rn-canvas/sim-bridge",
-            "capture",
-            screenshotPath,
-          ], { cwd: repoRoot });
-
-          const png = await readFile(screenshotPath);
-          res.statusCode = 200;
-          res.setHeader("Content-Type", "image/png");
-          res.end(png);
-        } catch (error) {
-          res.statusCode = 500;
-          res.setHeader("Content-Type", "application/json");
-          res.end(
-            JSON.stringify({
-              error: error instanceof Error ? error.message : "Capture failed",
-            }),
-          );
-        }
-      });
-
       server.middlewares.use("/api/codegen/preview", async (req, res) => {
         if (req.method !== "POST") {
           sendJson(res, 405, { error: "POST required" });

@@ -10,7 +10,7 @@ export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
 }
 
-/** A quiet segmented tab bar used by the left panel, inspector, and ground truth. */
+/** A quiet segmented tab bar used by the left panel and inspector. */
 export function Tabs({
   tabs,
   active,
@@ -138,65 +138,5 @@ export function LeftPanel() {
       {tab === "Screens" && <Placeholder>Screen list — frames you add appear on the canvas. Management UI lands with navigation (phase 3).</Placeholder>}
       {tab === "Layers" && <Placeholder>Node tree — currently in the Inspector’s Design tab; moves here as the layers panel fills in.</Placeholder>}
     </aside>
-  );
-}
-
-/** Ground-truth pane (signature region). Placeholder until the simulator mirror
- *  lands in BUILD Phase 4. `--live` is allowed here and only here. */
-export function GroundTruthPane({
-  children,
-  toolbar,
-}: {
-  children: React.ReactNode;
-  toolbar?: React.ReactNode;
-}) {
-  const [tab, setTab] = useState("Device");
-  return (
-    <section
-      style={{
-        flex: `0 0 ${layout.groundTruth}px`,
-        height: layout.groundTruth,
-        borderTop: `1px solid ${color.line}`,
-        background: color.chrome,
-        display: "flex",
-        flexDirection: "column",
-        gap: space.sm,
-        padding: space.md,
-        minHeight: 0,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: space.sm }}>
-        <span
-          title="Live / ground truth"
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: radius.pill,
-            background: color.live,
-            display: "inline-block",
-          }}
-        />
-        <Eyebrow>Ground truth</Eyebrow>
-        <div style={{ marginLeft: "auto", width: 140 }}>
-          <Tabs tabs={["Device", "Code"]} active={tab} onSelect={setTab} />
-        </div>
-      </div>
-      {toolbar}
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          background: color.canvas,
-          border: `1px solid ${color.line}`,
-          borderRadius: radius.base,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          overflow: "hidden",
-        }}
-      >
-        {children}
-      </div>
-    </section>
   );
 }

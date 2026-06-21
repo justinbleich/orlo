@@ -15,16 +15,10 @@ import {
   type Node,
   type NodeId,
 } from "@rn-canvas/document";
-import {
-  RNFrameRenderer,
-  computePixelDiff,
-  registerAndDiff,
-} from "@rn-canvas/render-web";
-import { toPng } from "html-to-image";
 import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
 import { Inspector } from "./Inspector";
 import { color, layout, radius, space, text } from "./studio-theme";
-import { Eyebrow, GroundTruthPane, LeftPanel, Tabs, ToolRail } from "./shell";
+import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
 
 const shapeUtils = [RNFrameShapeUtil];
 const RNFRAME = RNFrameShapeUtil.type;
@@ -116,33 +110,10 @@ function syncShapes(editor: Editor) {
   }
 }
 
-function loadImageData(url: string): Promise<ImageData> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return reject(new Error("no 2d context"));
-      ctx.drawImage(img, 0, 0);
-      resolve(ctx.getImageData(0, 0, canvas.width, canvas.height));
-    };
-    img.onerror = () => reject(new Error("Failed to load image"));
-    img.src = url;
-  });
-}
-
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
-  const captureRef = useRef<HTMLDivElement>(null);
 
-  // Fidelity-diff state (preserved from the Phase 0 workflow).
-  const [simUrl, setSimUrl] = useState<string | null>(null);
-  const [diffScore, setDiffScore] = useState<number | null>(null);
   const [status, setStatus] = useState("Frame: drag · Resize: handles · Add: tool rail");
-  const [busy, setBusy] = useState(false);
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [screenName, setScreenName] = useState("Screen");
   const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
@@ -253,56 +224,6 @@ export default function App() {
     store.setSelection([root.id]);
   }, []);
 
-  const captureCanvas = useCallback(async () => {
-    if (!captureRef.current) return null;
-    return toPng(captureRef.current, { pixelRatio: 2, cacheBust: true });
-  }, []);
-
-  const captureSim = useCallback(async () => {
-    setBusy(true);
-    setStatus("Capturing iOS simulator screenshot…");
-    try {
-      const res = await fetch("/api/sim-screenshot");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      setSimUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return url;
-      });
-      setStatus("Simulator screenshot captured.");
-      return url;
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Simulator capture failed");
-      return null;
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  const runDiff = useCallback(async () => {
-    setBusy(true);
-    setStatus("Running visual diff…");
-    try {
-      const canvas = await captureCanvas();
-      const sim = simUrl ?? (await captureSim());
-      if (!canvas || !sim) {
-        setStatus("Need both canvas and simulator screenshots for diff.");
-        return;
-      }
-      const [a, b] = await Promise.all([loadImageData(canvas), loadImageData(sim)]);
-      const result = registerAndDiff(a, b, computePixelDiff);
-      setDiffScore(result.score);
-      setStatus(
-        `Fidelity (card-registered): ${(result.score * 100).toFixed(1)}% over ${result.width}×${result.height}`,
-      );
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Diff failed");
-    } finally {
-      setBusy(false);
-    }
-  }, [captureCanvas, captureSim, simUrl]);
-
   const requestCodegen = useCallback(
     async (mode: "preview" | "sync") => {
       if (!focusedRoot) {
@@ -386,11 +307,6 @@ export default function App() {
   };
   // Top-bar placeholders (structure only; controls fill in across phases).
   const crumbStyle: React.CSSProperties = { color: color.inkDim, fontSize: text.base };
-  const placeholderChip: React.CSSProperties = {
-    ...btn,
-    color: color.inkDim,
-    background: "transparent",
-  };
   const fieldStyle: React.CSSProperties = {
     background: color.chrome2,
     color: color.ink,
@@ -424,7 +340,7 @@ export default function App() {
         }}
       >
         <strong style={{ color: color.ink, fontSize: text.lg }}>RN Canvas</strong>
-        <span style={crumbStyle}>Untitled · Phase 2</span>
+        <span style={crumbStyle}>Untitled</span>
         <div style={{ display: "flex", gap: space.xs }}>
           <button
             type="button"
@@ -446,16 +362,6 @@ export default function App() {
           </button>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: space.sm }}>
-          <span style={{ ...crumbStyle, fontSize: text.sm }}>100%</span>
-          <span style={{ display: "flex", alignItems: "center", gap: space.xs, ...crumbStyle, fontSize: text.sm }}>
-            <span
-              style={{ width: 8, height: 8, borderRadius: radius.pill, background: color.accent }}
-            />
-            Agent idle
-          </span>
-          <button type="button" style={placeholderChip} disabled title="Phase 4">
-            Run on device
-          </button>
           <button
             type="button"
             style={btn}
@@ -465,16 +371,6 @@ export default function App() {
           >
             Sync Code
           </button>
-          <span
-            title="Account"
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: radius.pill,
-              background: color.raised,
-              border: `1px solid ${color.line}`,
-            }}
-          />
         </div>
       </header>
 
@@ -506,7 +402,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: inspector (top) + ground-truth pane (bottom) */}
+        {/* RIGHT COLUMN: canvas/code inspector. Optional native preview is on demand. */}
         <div
           style={{
             flex: `0 0 ${layout.rightColumn}px`,
@@ -631,40 +527,6 @@ export default function App() {
               )}
             </div>
           </div>
-
-          <GroundTruthPane
-            toolbar={
-              <div style={{ display: "flex", gap: space.sm }}>
-                <button type="button" style={btn} disabled={busy} onClick={() => void captureSim()}>
-                  Capture simulator
-                </button>
-                <button type="button" style={btn} disabled={busy} onClick={() => void runDiff()}>
-                  Run diff{diffScore !== null ? ` · ${(diffScore * 100).toFixed(0)}%` : ""}
-                </button>
-              </div>
-            }
-          >
-            {simUrl ? (
-              <img
-                src={simUrl}
-                alt="Simulator screenshot"
-                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-              />
-            ) : (
-              <span style={{ color: color.inkFaint, fontSize: text.sm, textAlign: "center", padding: space.md }}>
-                Live simulator mirror — BUILD Phase 4. Use Capture simulator to diff
-                the focused frame.
-              </span>
-            )}
-          </GroundTruthPane>
-        </div>
-      </div>
-
-      {/* Offscreen capture target: a clean render of the focused frame for the
-          fidelity diff (the simulator is ground truth; this is preview-only). */}
-      <div style={{ position: "fixed", left: -10000, top: 0 }} aria-hidden>
-        <div ref={captureRef} data-frame-root>
-          {focusedRoot ? <RNFrameRenderer root={focusedRoot} /> : null}
         </div>
       </div>
     </div>

@@ -422,7 +422,9 @@ export default function App() {
                 <div style={{ padding: space.md }}>
                   <Eyebrow>Code</Eyebrow>
                   <p style={{ color: color.inkFaint, fontSize: text.sm }}>
-                    Generated RN code — BUILD Phase 3 (codegen).
+                    Generated RN runs in the Node export pipeline (`@rn-canvas/codegen`).
+                    Live preview here wires up via a Node endpoint with the simulator
+                    bridge (Phase 4) — Babel can’t run in the browser bundle.
                   </p>
                 </div>
               )}

@@ -25,7 +25,7 @@ fully verifiable with no UI and no simulator).
 | 0 — de-risk spike | rnw+Yoga render, pan/zoom, sim screenshot, fidelity diff | ✅ done |
 | 1 — document model + canvas shell | `packages/document` + `packages/styles`, tldraw `RNFrame`, inspector, **tree editing** | ✅ complete |
 | 2 — live render + layout fidelity | all 7 primitives, Yoga across tree, **text/font**, culling + **LOD** | 🟢 verifiable scope done; only font-parity deferred (sim-gated) |
-| 3 — codegen (emit) + sidecar | document → idiomatic RN + `*.rncanvas.json` | 🟡 `packages/codegen` emit + sidecar done (tested); studio export/Code-tab wiring pending |
+| 3 — codegen (emit) + sidecar | document → idiomatic RN + `*.rncanvas.json` | 🟡 `packages/codegen` emit + sidecar done (tested, Node-side). Studio Code tab is a placeholder — Babel can't run in the browser bundle (`process is not defined`), so it wires via a Node endpoint alongside sim-bridge (Phase 4) |
 | 4 — simulator ground truth | harness over channel, iOS+Android sim-bridge, per-platform diff | 🟡 iOS bridge + diff exist; harness runtime unverified; Android not done |
 | 5 — MCP / agent loop | `packages/mcp-server` tools | ⬜ not started |
 | 6 — round-trip + polish | parse external RN → document | ⬜ not started |

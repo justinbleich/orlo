@@ -13,6 +13,7 @@ import {
   updateDesign,
   validateTree,
   childrenOf,
+  useDocumentStore,
 } from "./index";
 import { sampleDocument } from "./sample";
 
@@ -119,4 +120,30 @@ test("updateDesign sets metadata (locked/hidden)", () => {
 
 test("sampleDocument is a valid tree", () => {
   assert.deepEqual(validateTree(sampleDocument), []);
+});
+
+test("loadRoots atomically opens a document with fresh history", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots({ [sampleDocument.id]: sampleDocument }, [sampleDocument.id]);
+  store.updateStyle(sampleDocument.id, sampleDocument.id, { padding: 24 });
+  assert.equal(useDocumentStore.getState().past.length, 1);
+
+  const next = createNode("View", { id: "opened-root" });
+  useDocumentStore.getState().loadRoots({ [next.id]: next });
+  const opened = useDocumentStore.getState();
+  assert.deepEqual(Object.keys(opened.roots), [next.id]);
+  assert.deepEqual(opened.selection, [next.id]);
+  assert.equal(opened.past.length, 0);
+  assert.equal(opened.future.length, 0);
+});
+
+test("loadRoots validates the sidecar tree boundary", () => {
+  const invalid = {
+    ...sampleDocument,
+    style: { width: "320px" },
+  } as never;
+  assert.throws(
+    () => useDocumentStore.getState().loadRoots({ "sample-root": invalid }),
+    /Invalid document root/,
+  );
 });

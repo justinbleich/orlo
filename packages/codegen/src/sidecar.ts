@@ -5,7 +5,7 @@
  *
  * Design metadata lives ONLY here, never in the emitted code (see emit.ts).
  */
-import type { Node } from "@rn-canvas/document";
+import { validateTree, type Node } from "@rn-canvas/document";
 
 export interface SidecarDocument {
   version: 1;
@@ -31,9 +31,16 @@ export function parseSidecar(json: string): SidecarDocument {
     typeof data !== "object" ||
     data === null ||
     (data as { version?: unknown }).version !== 1 ||
+    typeof (data as { screenName?: unknown }).screenName !== "string" ||
     typeof (data as { root?: unknown }).root !== "object"
   ) {
     throw new Error("Invalid .rncanvas.json sidecar");
   }
-  return data as SidecarDocument;
+  const sidecar = data as SidecarDocument;
+  const errors = validateTree(sidecar.root);
+  if (errors.length > 0) {
+    const first = errors[0];
+    throw new Error(`Invalid .rncanvas.json sidecar: ${first.key} ${first.reason}`);
+  }
+  return sidecar;
 }

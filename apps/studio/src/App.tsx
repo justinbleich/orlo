@@ -77,6 +77,14 @@ type CodegenResult = {
   wrote?: boolean;
 };
 
+type OpenDocumentResult = {
+  version: 1;
+  screenName: string;
+  root: Node;
+  targetPath: string;
+  sidecarPath: string;
+};
+
 function rootSize(root: Node): { w: number; h: number } {
   const w = typeof root.style.width === "number" ? root.style.width : 320;
   const h = typeof root.style.height === "number" ? root.style.height : 200;
@@ -138,6 +146,7 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [screenName, setScreenName] = useState("Screen");
   const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
+  const [sidecarPath, setSidecarPath] = useState("generated/Screen.rncanvas.json");
   const [codegenResult, setCodegenResult] = useState<CodegenResult | null>(null);
   const [codegenError, setCodegenError] = useState<string | null>(null);
   const [codegenBusy, setCodegenBusy] = useState(false);
@@ -329,6 +338,36 @@ export default function App() {
     [focusedRoot, screenName, targetPath],
   );
 
+  const openSidecar = useCallback(async () => {
+    setCodegenBusy(true);
+    setCodegenError(null);
+    try {
+      const res = await fetch("/api/documents/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sidecarPath }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      const opened = body as OpenDocumentResult;
+      useDocumentStore.getState().loadRoots(
+        { [opened.root.id]: opened.root },
+        [opened.root.id],
+      );
+      setScreenName(opened.screenName);
+      setTargetPath(opened.targetPath);
+      setSidecarPath(opened.sidecarPath);
+      setCodegenResult(null);
+      setStatus(`Opened ${opened.sidecarPath}`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Sidecar load failed";
+      setCodegenError(message);
+      setStatus(message);
+    } finally {
+      setCodegenBusy(false);
+    }
+  }, [sidecarPath]);
+
   useEffect(() => {
     if (inspectorTab !== "Code" || !focusedRoot) return;
     void requestCodegen("preview");
@@ -502,6 +541,24 @@ export default function App() {
                   }}
                 >
                   <Eyebrow>Code</Eyebrow>
+                  <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                    <span style={{ color: color.inkDim, fontSize: text.xs }}>
+                      Sidecar path (.rncanvas.json)
+                    </span>
+                    <input
+                      value={sidecarPath}
+                      onChange={(e) => setSidecarPath(e.target.value)}
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    style={btn}
+                    disabled={codegenBusy}
+                    onClick={() => void openSidecar()}
+                  >
+                    Open Sidecar
+                  </button>
                   <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
                     <span style={{ color: color.inkDim, fontSize: text.xs }}>Screen name</span>
                     <input

@@ -19,6 +19,10 @@ type CodegenRequest = {
   targetPath?: string;
 };
 
+type SidecarRequest = {
+  sidecarPath?: string;
+};
+
 type GeneratedScreen = {
   screenName: string;
   code: string;
@@ -66,13 +70,25 @@ function resolveTargetPath(screenName: string, targetPath?: string) {
     : join(defaultExportDir, `${screenName}.tsx`);
   const tsxPath = resolve(base);
   if (relative(repoRoot, tsxPath).startsWith("..")) {
-    throw new Error("Export path must stay inside the workspace");
+    throw new Error("Sync path must stay inside the workspace");
   }
   if (extname(tsxPath) !== ".tsx") {
     throw new Error("Export path must end in .tsx");
   }
   const sidecarPath = tsxPath.replace(/\.tsx$/, ".rncanvas.json");
   return { tsxPath, sidecarPath };
+}
+
+function resolveSidecarPath(input?: string) {
+  if (!input?.trim()) throw new Error("Enter a sidecar path");
+  const sidecarPath = resolve(isAbsolute(input) ? input : join(repoRoot, input));
+  if (relative(repoRoot, sidecarPath).startsWith("..")) {
+    throw new Error("Sidecar path must stay inside the workspace");
+  }
+  if (!sidecarPath.endsWith(".rncanvas.json")) {
+    throw new Error("Sidecar path must end in .rncanvas.json");
+  }
+  return sidecarPath;
 }
 
 async function runCodegen(root: Node, screenName: string): Promise<GeneratedScreen> {
@@ -92,6 +108,18 @@ async function runCodegen(root: Node, screenName: string): Promise<GeneratedScre
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+async function parseSidecar(sidecarPath: string) {
+  const { stdout } = await execFileAsync("pnpm", [
+    "--filter",
+    "@rn-canvas/codegen",
+    "exec",
+    "tsx",
+    "src/cli-parse-sidecar.ts",
+    sidecarPath,
+  ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
+  return JSON.parse(stdout) as { version: 1; screenName: string; root: Node };
 }
 
 export function simScreenshotPlugin(): Plugin {
@@ -168,6 +196,27 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Codegen sync failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/documents/open", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson(req) as SidecarRequest;
+          const sidecarPath = resolveSidecarPath(body.sidecarPath);
+          const document = await parseSidecar(sidecarPath);
+          sendJson(res, 200, {
+            ...document,
+            sidecarPath: relative(repoRoot, sidecarPath),
+            targetPath: relative(repoRoot, sidecarPath).replace(/\.rncanvas\.json$/, ".tsx"),
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Sidecar load failed",
           });
         }
       });

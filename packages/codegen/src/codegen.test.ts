@@ -107,3 +107,17 @@ test("sidecar round-trips to an identical tree", () => {
   assert.deepEqual(parsed.root, root);
   assert.equal(screenName, "Card");
 });
+
+test("sidecar parser rejects an invalid document tree", () => {
+  assert.throws(
+    () =>
+      parseSidecar(
+        JSON.stringify({
+          version: 1,
+          screenName: "Broken",
+          root: { ...card(), style: { width: "320px" } },
+        }),
+      ),
+    /Invalid .rncanvas.json sidecar/,
+  );
+});

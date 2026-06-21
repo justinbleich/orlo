@@ -16,6 +16,7 @@ import {
   updateProps as opUpdateProps,
   updateStyle as opUpdateStyle,
 } from "./tree";
+import { validateTree } from "./validate";
 
 export type Roots = Record<NodeId, Node>;
 
@@ -33,6 +34,10 @@ export interface DocumentState {
   future: Snapshot[];
 
   setSelection(ids: NodeId[]): void;
+
+  /** Replace the open document atomically. Used by sidecar loading; opening a
+   *  document starts a fresh undo history rather than mixing document sessions. */
+  loadRoots(roots: Roots, selection?: NodeId[]): void;
 
   addRoot(root: Node): void;
   removeRoot(rootId: NodeId): void;
@@ -82,6 +87,23 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     future: [],
 
     setSelection: (ids) => set({ selection: ids }),
+
+    loadRoots: (roots, selection) => {
+      for (const [rootId, root] of Object.entries(roots)) {
+        if (root.id !== rootId) {
+          throw new Error(`Root key does not match node id: ${rootId}`);
+        }
+        const errors = validateTree(root);
+        if (errors.length > 0) {
+          const first = errors[0];
+          throw new Error(
+            `Invalid document root ${rootId}: ${first.key} ${first.reason}`,
+          );
+        }
+      }
+      const nextSelection = selection ?? Object.keys(roots).slice(0, 1);
+      set({ roots, selection: nextSelection, past: [], future: [] });
+    },
 
     addRoot: (root) => commit({ ...get().roots, [root.id]: root }),
     removeRoot: (rootId) => {

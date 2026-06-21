@@ -25,7 +25,7 @@ fully verifiable with no UI and no simulator).
 | 0 — de-risk spike | rnw+Yoga render, pan/zoom, sim screenshot, fidelity diff | ✅ done |
 | 1 — document model + canvas shell | `packages/document` + `packages/styles`, tldraw `RNFrame`, inspector, **tree editing** | ✅ complete |
 | 2 — live render + layout fidelity | all 7 primitives, Yoga across tree, **text/font**, culling + **LOD** | 🟢 verifiable scope done; only font-parity deferred (sim-gated) |
-| 3 — codegen (emit) + sidecar | document → idiomatic RN + `*.rncanvas.json` | 🟢 emit + sidecar + repo-aware Sync Code path done. Studio previews through a Node endpoint and writes `.tsx` + `.rncanvas.json` inside the workspace; Git actions remain explicit/deferred. React Navigation screen stubs remain open. |
+| 3 — codegen (emit) + sidecar | document → idiomatic RN + `*.rncanvas.json` | ✅ complete: emit + sidecar + repo-aware Sync Code, validated sidecar reopen, and multi-root generation as independently registerable native screen modules. Git actions remain explicit/deferred. |
 | 4 — simulator ground truth | harness over channel, iOS+Android sim-bridge, per-platform diff | 🟡 iOS bridge + diff exist; harness runtime unverified; Android not done |
 | 5 — MCP / agent loop | `packages/mcp-server` tools | ⬜ not started |
 | 6 — round-trip + polish | parse external RN → document | ⬜ not started |
@@ -70,10 +70,10 @@ Notes:
 2. **Font parity: document, don't build.** Measurement is done; parity is simulator-gated.
    Building font-into-Expo infra blind = unverifiable effort. Record the divergence.
 3. **LOD commit** to close Phase 2's verifiable remainder (small; tldraw gives culling).
-4. **BUILD Phase 3 — codegen.** The design===code thesis is now wired end-to-end:
-   document → Node codegen preview → repo sync (`.tsx` + `.rncanvas.json`). Keep Git
-   explicit; do not auto-stage/commit/push. The remaining Phase 3 question is the
-   minimum React Navigation screen-stub behavior.
+4. **BUILD Phase 3 — codegen.** Complete: the design===code thesis is wired end-to-end:
+   sidecar → document → Node codegen preview → repo sync (`.tsx` + `.rncanvas.json`).
+   Multiple roots serialize as independently registerable native screen modules; route
+   graphs and typed params remain post-v1. Keep Git explicit; do not auto-stage/commit/push.
 
 Rationale: if we can't export RN, the prettiest shell is worthless; if we can, the thesis
 is proven. Effort should follow the substrate, not the chrome.

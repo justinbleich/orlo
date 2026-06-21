@@ -322,3 +322,12 @@ retarget to `@rn-canvas/document`.
 - Product semantics are **Sync Code**, not detached export: repo-aware filesystem
   materialization, deterministic output, Git actions explicit and deferred.
 - Path traversal outside the workspace is rejected; design metadata remains sidecar-only.
+
+## Phase 3 completion checkpoint
+
+- Studio opens canonical `*.rncanvas.json` documents through a workspace-confined,
+  validated Node endpoint; opening atomically replaces roots and resets undo history.
+- `generateScreens` serializes multiple document roots as independent default-exported
+  native screen modules. They are ready for React Navigation registration without
+  introducing a v1 route graph, route params, transitions, or navigation editor.
+- Phase 3 exit loop: sidecar → Studio document → edit → Sync Code + sidecar.

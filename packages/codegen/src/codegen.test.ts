@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parse } from "@babel/parser";
 import { createNode } from "@rn-canvas/document";
-import { emitScreen, generateScreen, parseSidecar } from "./index";
+import { emitScreen, generateScreen, generateScreens, parseSidecar } from "./index";
 
 /** Assert emitted source parses as valid TS+JSX ("compiles" per BUILD Phase 3). */
 function assertParses(code: string) {
@@ -119,5 +119,42 @@ test("sidecar parser rejects an invalid document tree", () => {
         }),
       ),
     /Invalid .rncanvas.json sidecar/,
+  );
+});
+
+test("pages generate as independent React Navigation-ready screen stubs", () => {
+  const home = card();
+  const screens = generateScreens([
+    { screenName: "HomeScreen", root: home },
+    { screenName: "ProfileScreen", root: createNode("View") },
+  ]);
+
+  assert.deepEqual(screens.map((screen) => screen.screenName), [
+    "HomeScreen",
+    "ProfileScreen",
+  ]);
+  assert.match(screens[0].code, /export default function HomeScreen\(\)/);
+  assert.match(screens[1].code, /export default function ProfileScreen\(\)/);
+  assert.ok(screens.every((screen) => !/react-router|window\.|document\./.test(screen.code)));
+  assert.deepEqual(parseSidecar(screens[0].sidecar).root, home);
+  assertParses(screens[0].code);
+  assertParses(screens[1].code);
+});
+
+test("multi-screen generation rejects duplicate route names", () => {
+  assert.throws(
+    () =>
+      generateScreens([
+        { screenName: "HomeScreen", root: card() },
+        { screenName: "HomeScreen", root: createNode("View") },
+      ]),
+    /Duplicate screen name/,
+  );
+});
+
+test("multi-screen generation rejects names that cannot be stable identifiers", () => {
+  assert.throws(
+    () => generateScreens([{ screenName: "home screen", root: card() }]),
+    /Invalid screen name/,
   );
 });

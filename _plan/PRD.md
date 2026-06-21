@@ -6,7 +6,7 @@ Web-native design tools benefit from a unified substrate where design, rendering
 
 React Native has no equivalent unified substrate.
 
-RN Canvas embraces this reality by making the document model itself React Native-native. The canvas is an authoring surface, the simulator is ground truth, and exported code is a direct serialization of the document rather than a translation from another design format.
+RN Canvas embraces this reality by making the document model itself React Native-native. The canvas is the primary authoring surface, exported code is a direct serialization of the document rather than a translation from another design format, and an optional local native preview lets users inspect the result in their own Simulator environment.
 
 The result is a workflow where React Native UI can be designed visually without a lossy handoff step.
 
@@ -53,7 +53,7 @@ All approaches introduce fidelity loss between design intent and shipped RN UI.
 * Native-first document model.
 * Faithful RN export with effectively no translation step.
 * Infinite-canvas visual authoring experience.
-* Ground-truth simulator/device rendering.
+* Optional local simulator/device preview without making native tooling a prerequisite.
 * Agent-operable architecture via MCP.
 * Eliminate RN design-to-code handoff loss.
 
@@ -68,6 +68,8 @@ All approaches introduce fidelity loss between design intent and shipped RN UI.
 * Gesture authoring.
 * Advanced navigation prototyping.
 * Native-module rendering in canvas.
+* Automated simulator installation, lifecycle management, or pixel-diff infrastructure.
+* Requiring Xcode, Android Studio, or an Expo account to use the canvas/code workflow.
 * Real-time multiplayer.
 
 ---
@@ -99,12 +101,12 @@ Because no RN substrate does all four jobs, RN Canvas intentionally splits respo
 | Layout               | Yoga (WASM)                        | Layout closely matches RN   |
 | Export               | RN JSX + StyleSheet serialization  | Near 1:1 export             |
 | Transformable medium | CSS transforms on canvas container | Fast pan/zoom               |
-| Ground truth         | Expo simulator/device              | Operational complexity      |
+| Native validation    | Optional local simulator/device    | User-owned environment      |
 
 The inversion versus web-native tools:
 
 * Web tools optimize rendering fidelity and translate to RN.
-* RN Canvas optimizes export fidelity and validates rendering through the simulator.
+* RN Canvas optimizes authoring and export fidelity; users may validate rendering through an optional local native preview.
 
 The fidelity problem becomes a preview problem, not a code-generation problem.
 
@@ -118,7 +120,7 @@ Document Node Tree
         ├── Yoga Layout Engine
         │       │
         │       ├── Canvas Renderer (RN Web)
-        │       └── Simulator Renderer (Expo)
+        │       └── Optional Native Preview (local)
         │
         └── RN Code Generator
 ```
@@ -127,7 +129,7 @@ Rules:
 
 * The document tree is canonical.
 * Yoga is canonical for layout.
-* Simulator output is canonical for rendering fidelity.
+* Native output is the fidelity reference when a local preview is available; it is not required for authoring or export.
 * Generated code is serialization, not a separate source of truth.
 * The document persists as a committed sidecar (e.g. `Screen.rncanvas.json`) written alongside the generated code. The studio loads the document from the sidecar; the code is never reverse-engineered into the document.
 
@@ -231,16 +233,18 @@ Invariants:
 * Design-time metadata (§7.1 `design`) is never emitted to generated code; it lives in the committed sidecar document (§6), which is the in-repo persistence of the document tree.
 * The document is loaded from the sidecar, never reverse-engineered from the generated code. Round-trip import from arbitrary (sidecar-less) code is post-v1 (§3, Risk #4).
 
-### 7.6 Simulator Ground Truth
+### 7.6 Optional Local Device Preview
 
-Expo-based harness app:
+V1 may launch or link to a user-owned local preview:
 
 * Mirrors selected frame
-* Metro + Fast Refresh
-* Screenshot capture
-* iOS target
-* Android target
-* Visual diff against canvas render
+* Opens externally or in a temporary Studio preview surface
+* Uses local tooling such as Expo/Metro and `serve-sim` when installed
+* Is feature-detected and never blocks canvas or code workflows when unavailable
+* Identifies its platform honestly
+
+Automated boot/install orchestration, mandatory iOS/Android parity, interaction automation,
+and canvas/device pixel diffing are post-v1.
 
 ### 7.7 Agent / MCP Interface
 
@@ -251,10 +255,11 @@ Minimum MCP operations:
 * delete_frame
 * update_node
 * set_style
-* get_screenshot
+* get_canvas_screenshot
 * get_code
 
-Agent screenshots must originate from device/simulator output, not DOM capture.
+Canvas screenshots must be labeled as canvas preview output. A future optional native-preview
+provider may expose device screenshots separately; the two sources are never conflated.
 
 Phasing of the MCP server lives in `BUILD.md` (a minimal server may land after the document model exists; the full agent loop is a later phase).
 
@@ -266,7 +271,7 @@ Phasing of the MCP server lives in `BUILD.md` (a minimal server may land after t
 
 Canvas render is never represented as pixel-perfect.
 
-Simulator validation must always be available.
+Canvas output is labeled as preview. Native validation is optional and local.
 
 ### Performance
 
@@ -282,8 +287,8 @@ Simulator validation must always be available.
 
 ### Platform Honesty
 
-* iOS and Android are separate rendering targets.
-* Differences must be surfaced rather than hidden.
+* Preview platform is always identified.
+* Unsupported or unavailable native targets are surfaced rather than silently substituted.
 
 ---
 
@@ -293,7 +298,7 @@ Simulator validation must always be available.
 
 RN Web is an approximation.
 
-Simulator infrastructure is required to establish trust.
+Native preview is useful for final inspection but is not allowed to dominate the v1 authoring workflow.
 
 ### 2. Text Measurement and Font Fidelity
 
@@ -310,9 +315,9 @@ Potential differences:
 
 Even when Yoga geometry matches, rendered text may differ.
 
-### 3. Simulator Screenshot Infrastructure
+### 3. Local Preview Availability
 
-Reliable simulator management and screenshot capture is operationally complex.
+Native toolchains are large, platform-specific, and locally configured. Preview must degrade cleanly when absent.
 
 ### 4. Code Round-Tripping
 
@@ -343,8 +348,7 @@ Validate that design → RN code is valuable.
 A user or agent can:
 
 * Build screens visually
-* Mirror them to a simulator
-* Compare canvas vs device
+* Optionally open a selected frame in a local native preview
 * Export production-ready RN code
 * Avoid manual design-to-RN porting
 
@@ -355,10 +359,10 @@ A user or agent can:
 |                   | Paper / MagicPath | RN Canvas                     |
 | ----------------- | ----------------- | ----------------------------- |
 | Canvas nodes      | HTML/CSS          | RN primitives                 |
-| Render fidelity   | Browser-perfect   | Approximate + simulator truth |
+| Render fidelity   | Browser-perfect   | Approximate canvas + optional native inspection |
 | Export            | React/Web         | React Native                  |
 | RN handoff        | Manual port       | None                          |
-| Agent screenshots | DOM               | Device/simulator              |
+| Agent screenshots | DOM               | Labeled canvas preview; optional native source |
 | Layout engine     | Browser           | Yoga                          |
 | Source of truth   | Web document      | RN-native document            |
 

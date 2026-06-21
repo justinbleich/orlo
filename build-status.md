@@ -2,19 +2,17 @@
 
 > Status snapshot + recommendation, checked against `_plan/PRD.md`, `_plan/BUILD.md`,
 > `_plan/phase2.md`, `_plan/phase3.md`. Companion to `context.md` (which holds the
-> living engineering contract). Updated 2026-06-20.
+> living engineering contract). Updated 2026-06-21.
 
 ## TL;DR
 
-The valuable UI (canvas + `RNFrame`, inspector, tree editing) is what PRD/BUILD v1
-actually call for. The **region shell** (rail, left-panel tabs, ground-truth pane,
-top-bar placeholders) is sourced from `STUDIO-UI.md`'s full multi-phase vision, not
-from PRD/BUILD v1 — that's the complexity running ahead of the substrate.
+BUILD Phases 0–3 are complete. The automated simulator branch proved the operational
+cost but ran ahead of the product: native tooling is local to each user and should not
+gate RN Canvas. V1 is now centered on the canvas ↔ document ↔ code loop.
 
-**Recommendation:** freeze the chrome, document the font-parity gap (don't build it
-blind — it's simulator-gated), do a small **LOD** commit to finish Phase 2's verifiable
-remainder, then put real effort into **BUILD Phase 3 — codegen** (the product thesis;
-fully verifiable with no UI and no simulator).
+**Recommendation:** park simulator automation and pixel diff, remove its permanent
+chrome, then harden primitive insertion, Screens/Layers, and sidecar Sync Code. Spike
+`serve-sim` later as an optional local iOS preview adapter.
 
 ---
 
@@ -26,7 +24,7 @@ fully verifiable with no UI and no simulator).
 | 1 — document model + canvas shell | `packages/document` + `packages/styles`, tldraw `RNFrame`, inspector, **tree editing** | ✅ complete |
 | 2 — live render + layout fidelity | all 7 primitives, Yoga across tree, **text/font**, culling + **LOD** | 🟢 verifiable scope done; only font-parity deferred (sim-gated) |
 | 3 — codegen (emit) + sidecar | document → idiomatic RN + `*.rncanvas.json` | ✅ complete: emit + sidecar + repo-aware Sync Code, validated sidecar reopen, and multi-root generation as independently registerable native screen modules. Git actions remain explicit/deferred. |
-| 4 — simulator ground truth | harness over channel, iOS+Android sim-bridge, per-platform diff | 🟡 iOS bridge + diff exist; harness runtime unverified; Android not done |
+| 4 — canvas/code workflow hardening | primitive rail, Screens/Layers, sidecar workflow, optional preview | 🟡 starting from completed Phase 3 checkpoint |
 | 5 — MCP / agent loop | `packages/mcp-server` tools | ⬜ not started |
 | 6 — round-trip + polish | parse external RN → document | ⬜ not started |
 
@@ -38,10 +36,10 @@ fully verifiable with no UI and no simulator).
 - ✅ **LOD proxy** — `RNFrameShapeUtil` renders a cheap proxy (no Yoga/rnw) when a frame
   is unselected and small on-screen (`w * zoom < 160px`); full render otherwise. Verified:
   zoom out → proxy, zoom in / select → live (PRD §7.2/§8).
-- 🔒 **Font parity** (PRD §9 #1 risk) — canvas measures/renders with ambient `system-ui`;
+- **Known font gap** (PRD §9 #1 risk) — canvas measures/renders with ambient `system-ui`;
   device uses SF/Roboto. True parity = standardize on one bundled font (Inter is already
   `--font-sans`) in studio + harness + `FontMetricsTable` (PRD §8). **Only validatable
-  against a simulator**, which can't be booted in this environment → deferred, documented.
+  against a native runtime. It is documented and does not gate v1 authoring/export.
 
 ---
 
@@ -52,7 +50,7 @@ fully verifiable with no UI and no simulator).
 | tldraw lockdown (frame host only) | BUILD invariants | Core — keep |
 | Tree editing + selection-single-source + undo | PRD §7.1, BUILD Ph1 "Done when" | Core — keep |
 | Design tokens | BUILD ("Tailwind for chrome only") | Cheap — fine |
-| Region shell (rail, left panel, ground-truth pane, top-bar placeholders) | **STUDIO-UI.md only** (spans phase2/3/4) | **Ahead of need — freeze** |
+| Fixed ground-truth pane | Superseded UI plan | Remove from v1; optional preview is on demand |
 
 Notes:
 - After the commit-2 trim the shell is **scope-honest** (no post-v1 features advertised:
@@ -67,13 +65,10 @@ Notes:
 
 1. **Freeze the chrome.** No new regions/placeholders/polish until the feature behind a
    region lands. The shell is a frame to drop panels into, not ongoing work.
-2. **Font parity: document, don't build.** Measurement is done; parity is simulator-gated.
-   Building font-into-Expo infra blind = unverifiable effort. Record the divergence.
-3. **LOD commit** to close Phase 2's verifiable remainder (small; tldraw gives culling).
-4. **BUILD Phase 3 — codegen.** Complete: the design===code thesis is wired end-to-end:
-   sidecar → document → Node codegen preview → repo sync (`.tsx` + `.rncanvas.json`).
-   Multiple roots serialize as independently registerable native screen modules; route
-   graphs and typed params remain post-v1. Keep Git explicit; do not auto-stage/commit/push.
+2. Remove the fixed ground-truth pane and simulator actions from v1 chrome.
+3. Make the rail create all seven primitives through document-store operations.
+4. Make Screens/Layers real views derived from the document and selection stores.
+5. Re-verify sidecar open → edit → Sync Code → reopen before Phase 5 MCP.
 
 Rationale: if we can't export RN, the prettiest shell is worthless; if we can, the thesis
 is proven. Effort should follow the substrate, not the chrome.
@@ -85,10 +80,9 @@ is proven. Effort should follow the substrate, not the chrome.
 The freeze is "don't grow it speculatively," **not** "it's final." The shell must
 later expand to meet platform realities, each tied to a phase:
 
-- **iOS vs Android as distinct targets** (PRD §8 platform honesty, BUILD invariant 5) —
-  a target switch in chrome + per-platform render/diff. → BUILD Phase 4.
-- **Per-platform ground-truth** — the ground-truth pane shows real device screenshots +
-  per-platform visual diff. → BUILD Phase 4 (the pane is a placeholder until then).
+- **Optional local preview** — feature-detected `serve-sim`/external preview entry point;
+  it never occupies permanent canvas space or blocks authoring. → post-core Phase 4 spike.
+- **Automated boot/install, Android parity, and pixel diff** → post-v1.
 - **Device presets + orientation** (iPhone/Pixel/tablet, portrait/landscape) — frame
   sizing UI in chrome. → phase3 §3D (post-v1).
 - **Safe-area overlay** on canvas; insets per device. → phase3 §3D (post-v1).
@@ -99,8 +93,7 @@ not before.
 
 ## Open gates / known issues
 
-- **Simulator not bootable here** — harness typechecks + `metro.config.js` package-exports
-  set, but never run; blocks font-parity validation and Phase 4 sign-off.
+- **Native preview is unavailable here** until macOS/Xcode is updated. This no longer blocks v1.
 - **tldraw dev warning** — benign dev-only React "useMemo deps changed size" from
   `TldrawUiComponentsProvider` when `components`/`overrides` are supplied. No prod impact.
 - **rnw type shim duplicated** across `render-web` + `studio/globals.d.ts` (kept in sync).
@@ -110,6 +103,6 @@ not before.
 
 ## Branch
 
-`phase1-document-styles` now carries Phase 1 + the Phase 2 studio-UI foundation + tree
-editing + the v1 trim (never pushed). Recommend landing it (PR) before more accretes, so
-Phase 3 starts from a reviewed base.
+Current branch: `codex/v1-canvas-code-focus`, based on the completed Phase 3 checkpoint
+`f7905f9`. The full simulator experiment remains preserved on
+`codex/phase4-simulator-ground-truth` and is intentionally not merged.

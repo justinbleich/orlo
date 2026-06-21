@@ -16,8 +16,8 @@
   unacceptable, stop and surface it — do not proceed to build product surface on a broken premise.
 - Treat the **document model as the single source of truth.** The canvas library and the renderer
   derive from it; they never hold canonical state. Violating this is a defect.
-- Treat **rnw render as preview, simulator as truth.** Never label the in-canvas render
-  pixel-accurate anywhere in code, comments, or UI copy.
+- Treat **rnw render as preview.** Never label the in-canvas render pixel-accurate.
+  Optional native preview is user-owned and must not gate canvas or code workflows.
 - Keep diffs small and reviewable; commit per task, not per phase.
 
 ## Non-negotiable invariants
@@ -26,8 +26,8 @@
    (`grid`, cascade, pseudo-selectors, unit strings like `"10px"`, web `boxShadow`).
 2. Layout goes through **Yoga (WASM)**, never browser flow. No relying on the DOM to lay things out.
 3. Codegen output is **idiomatic RN**: function components, `StyleSheet.create`, correct imports.
-4. Screenshots returned to agents come from the **simulator**, never from the DOM.
-5. iOS and Android are **distinct preview targets.** Never collapse them silently.
+4. Agent screenshots identify their source (`canvas` or optional `native`); never conflate them.
+5. Native preview platforms are explicit and optional. Never silently substitute one platform.
 
 ---
 
@@ -42,9 +42,8 @@
 - **Renderer:** `react-native-web` + `yoga-layout` (WASM build) in `packages/render-web`.
 - **Codegen:** `@babel/generator` (+ a typed AST builder) for emit; `@babel/parser` +
   `@babel/traverse` for the later round-trip parse.
-- **Harness app:** Expo (RN) in `apps/harness`, driven by Metro + Fast Refresh.
-- **Sim bridge:** Node service wrapping `xcrun simctl` (iOS) and `adb` (Android) for boot,
-  install, and screenshot.
+- **Optional preview:** a thin local adapter (prefer `serve-sim` for iOS) may expose a
+  user-owned native preview. The Phase 0 harness/bridge spike remains parked, not core runtime.
 - **MCP server:** `@modelcontextprotocol/sdk` (Node) in `packages/mcp-server`.
 - **State:** Zustand for the document store. Yjs reserved for later multiplayer.
 
@@ -52,14 +51,14 @@
 
 ```
 /apps
-  /studio          # Vite React IDE app: hosts the canvas + inspector + preview pane
-  /harness         # Expo RN app that renders a frame spec for ground-truth screenshots
+  /studio          # Vite React IDE app: hosts the canvas + inspector + code workflow
+  /harness         # Phase 0 Expo fixture; optional local-preview input
 /packages
   /document        # RN-primitive node schema, types, tree operations, validation
   /styles          # RN style-subset definitions + validators + (style -> Yoga) mapping
   /render-web      # react-native-web + Yoga(WASM) renderer for one frame
   /codegen         # document <-> RN JSX/StyleSheet (emit first; parse later)
-  /sim-bridge      # simulator/emulator control + screenshot capture (iOS + Android)
+  /sim-bridge      # parked Phase 0 spike / future local-preview adapters
   /mcp-server      # MCP tools exposing the canvas to coding agents
 /PRD.md
 /BUILD.md
@@ -138,20 +137,24 @@ off-focus frames are cheap.
 **Done when:** any frame exports idiomatic RN that compiles and visually matches the canvas
 within the known gap, and writes a sidecar that reloads into an identical document.
 
-## Phase 4 — Simulator ground truth
+## Phase 4 — Canvas/code workflow hardening
 
-- [ ] `apps/harness`: accept a frame spec over a local channel; render via Metro + Fast Refresh.
-- [ ] `packages/sim-bridge`: boot/install/screenshot for **iOS (`simctl`)** and
-      **Android (`adb`)**; expose a `captureFrame(spec, platform)` API.
-- [ ] `apps/studio`: preview pane mirroring the focused frame live on a booted simulator.
-- [ ] Visual-diff overlay between canvas render and device screenshot, per platform.
+- [ ] Tool rail creates all seven RN primitives as document nodes inside the focused frame;
+      they never become tldraw shapes.
+- [ ] Screens panel lists document roots and supports create/select/delete without duplicating state.
+- [ ] Layers panel exposes the focused document tree and selection/reorder operations through
+      the document store.
+- [ ] Code workflow clearly supports sidecar open → canvas edit → Sync Code → sidecar reopen.
+- [ ] Optional local **Open Preview** action is feature-detected and non-blocking. Prefer a thin
+      `serve-sim` adapter for iOS after a dedicated spike; external preview is acceptable.
 
-**Done when:** focused frame mirrors on a real simulator and a per-platform diff is one click away.
+**Done when:** a user can build and organize a multi-frame primitive document primarily from the
+canvas shell, sync/reopen code without state drift, and use the product without native tooling.
 
 ## Phase 5 — MCP / agent loop
 
 - [ ] `packages/mcp-server`: implement tools — `get_tree`, `create_frame`, `delete_frame`,
-      `update_node`, `set_style`, `get_screenshot` (from sim-bridge), `get_code` (from codegen).
+      `update_node`, `set_style`, `get_canvas_screenshot`, `get_code` (from codegen).
 - [ ] Wire the server so an agent (Cursor/Claude Code) can connect and operate the live document.
 - [ ] End-to-end test: agent creates a frame, sets styles, requests a screenshot, pulls code;
       changes appear on the canvas and survive a reload.
@@ -175,6 +178,6 @@ canvas reflects every change.
 
 ## Definition of done (v1)
 
-A user or agent builds a multi-frame screen on the canvas, mirrors it on a simulator, and exports
-RN code that compiles and matches the canvas within the measured fidelity gap — **with zero manual
-porting.** See PRD §10.
+A user or agent builds and organizes a multi-frame screen on the canvas, syncs it to idiomatic RN
+code plus its canonical sidecar, and reopens it without state drift — **with zero manual porting and
+without requiring native tooling.** See PRD §10.

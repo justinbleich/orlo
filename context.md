@@ -71,9 +71,8 @@ or production-build impact; not suppressible without hacks.
 - **Add-frame focus:** creating a frame sets inspector focus to the new root, but the
   store listener re-syncs focus from canvas selection; selecting the frame on canvas is
   the reliable focus path. Minor UX polish for later.
-- **In-app fidelity diff** now captures an offscreen render of the focused frame (the
-  bare-canvas snapshot target is gone). The CLI diff (`scripts/run-diff.ts`) is unchanged.
-  Re-home the in-app diff against tldraw's export API in BUILD Phase 4.
+- The Phase 0 in-app/CLI fidelity diff remains historical spike code. Automated native
+  capture and pixel diff are post-v1 and must not occupy permanent Studio chrome.
 
 Do **not** touch `packages/codegen`, `sim-bridge` Android, or `packages/mcp-server` until
 Phase 1's Done-when passes. Smallest reviewable commits.
@@ -89,7 +88,8 @@ Phase 1's Done-when passes. Smallest reviewable commits.
   fidelity risk — it gets its own module).
 - **Determinism (PRD §8):** pin the Yoga version (exact, no `^`); design for pinnable
   font metrics in the measurer.
-- rnw render is **preview**, simulator is **truth**. Never label the canvas pixel-perfect.
+- rnw render is **preview**. Never label the canvas pixel-perfect; optional native preview
+  is a user-owned inspection surface and does not gate authoring or export.
 
 ---
 
@@ -331,3 +331,14 @@ retarget to `@rn-canvas/document`.
   native screen modules. They are ready for React Navigation registration without
   introducing a v1 route graph, route params, transitions, or navigation editor.
 - Phase 3 exit loop: sidecar → Studio document → edit → Sync Code + sidecar.
+
+## V1 focus correction after Phase 3
+
+- The simulator-automation experiment is parked intact on
+  `codex/phase4-simulator-ground-truth`; do not merge it into v1 by default.
+- Phase 4 now hardens the canvas/code workflow: seven-primitive rail insertion,
+  document-derived Screens/Layers, and sidecar Sync Code/reopen.
+- Native preview is optional, local, and feature-detected. Prefer a small `serve-sim`
+  spike for iOS after Xcode is available; boot/install automation, Android parity,
+  interaction automation, and pixel diff are post-v1.
+- The fixed ground-truth pane is removed from v1 so canvas and inspector retain the space.

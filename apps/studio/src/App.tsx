@@ -68,6 +68,15 @@ const asRNFrame = (s: EditorShape) => s as unknown as RNFrameShape;
 type CreatePartial = Parameters<Editor["createShape"]>[0];
 type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
+type CodegenResult = {
+  screenName: string;
+  code: string;
+  sidecar: string;
+  targetPath: string;
+  sidecarPath: string;
+  wrote?: boolean;
+};
+
 function rootSize(root: Node): { w: number; h: number } {
   const w = typeof root.style.width === "number" ? root.style.width : 320;
   const h = typeof root.style.height === "number" ? root.style.height : 200;
@@ -127,6 +136,11 @@ export default function App() {
   const [status, setStatus] = useState("Frame: drag · Resize: handles · Add: tool rail");
   const [busy, setBusy] = useState(false);
   const [inspectorTab, setInspectorTab] = useState("Design");
+  const [screenName, setScreenName] = useState("Screen");
+  const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
+  const [codegenResult, setCodegenResult] = useState<CodegenResult | null>(null);
+  const [codegenError, setCodegenError] = useState<string | null>(null);
+  const [codegenBusy, setCodegenBusy] = useState(false);
 
   // The document store's selection is the single source of truth. The focused
   // frame is *derived* from it (the root whose subtree holds the selection), and
@@ -280,6 +294,49 @@ export default function App() {
     }
   }, [captureCanvas, captureSim, simUrl]);
 
+  const requestCodegen = useCallback(
+    async (mode: "preview" | "sync") => {
+      if (!focusedRoot) {
+        setCodegenError("Select a frame before syncing code.");
+        return null;
+      }
+      setCodegenBusy(true);
+      setCodegenError(null);
+      try {
+        const res = await fetch(`/api/codegen/${mode}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ root: focusedRoot, screenName, targetPath }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        setCodegenResult(body);
+        setStatus(
+          mode === "sync"
+            ? `Synced ${body.targetPath} + ${body.sidecarPath}`
+            : `Generated preview for ${body.targetPath}`,
+        );
+        return body as CodegenResult;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Codegen failed";
+        setCodegenError(message);
+        setStatus(message);
+        return null;
+      } finally {
+        setCodegenBusy(false);
+      }
+    },
+    [focusedRoot, screenName, targetPath],
+  );
+
+  useEffect(() => {
+    if (inspectorTab !== "Code" || !focusedRoot) return;
+    void requestCodegen("preview");
+    // Preview once when entering Code or changing frames. Name/path edits are
+    // explicit via Preview/Sync so they don't spawn a Node codegen process per key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedRootId, inspectorTab]);
+
   const btn: React.CSSProperties = {
     background: color.chrome2,
     color: color.ink,
@@ -294,6 +351,15 @@ export default function App() {
     ...btn,
     color: color.inkDim,
     background: "transparent",
+  };
+  const fieldStyle: React.CSSProperties = {
+    background: color.chrome2,
+    color: color.ink,
+    border: `1px solid ${color.line}`,
+    borderRadius: radius.base,
+    padding: `${space.xs} ${space.sm}`,
+    fontSize: text.sm,
+    width: "100%",
   };
 
   return (
@@ -351,8 +417,14 @@ export default function App() {
           <button type="button" style={placeholderChip} disabled title="Phase 4">
             Run on device
           </button>
-          <button type="button" style={placeholderChip} disabled title="Phase 3">
-            Export
+          <button
+            type="button"
+            style={btn}
+            disabled={codegenBusy || !focusedRoot}
+            title="Write generated RN + sidecar to the workspace"
+            onClick={() => void requestCodegen("sync")}
+          >
+            Sync Code
           </button>
           <span
             title="Account"
@@ -419,13 +491,85 @@ export default function App() {
               {inspectorTab === "Design" ? (
                 <Inspector rootId={focusedRootId} />
               ) : (
-                <div style={{ padding: space.md }}>
+                <div
+                  style={{
+                    padding: space.md,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: space.md,
+                    overflow: "auto",
+                    width: "100%",
+                  }}
+                >
                   <Eyebrow>Code</Eyebrow>
-                  <p style={{ color: color.inkFaint, fontSize: text.sm }}>
-                    Generated RN runs in the Node export pipeline (`@rn-canvas/codegen`).
-                    Live preview here wires up via a Node endpoint with the simulator
-                    bridge (Phase 4) — Babel can’t run in the browser bundle.
-                  </p>
+                  <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                    <span style={{ color: color.inkDim, fontSize: text.xs }}>Screen name</span>
+                    <input
+                      value={screenName}
+                      onChange={(e) => setScreenName(e.target.value)}
+                      onBlur={() => void requestCodegen("preview")}
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                    <span style={{ color: color.inkDim, fontSize: text.xs }}>
+                      Repo path (.tsx)
+                    </span>
+                    <input
+                      value={targetPath}
+                      onChange={(e) => setTargetPath(e.target.value)}
+                      onBlur={() => void requestCodegen("preview")}
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <div style={{ display: "flex", gap: space.sm }}>
+                    <button
+                      type="button"
+                      style={btn}
+                      disabled={codegenBusy || !focusedRoot}
+                      onClick={() => void requestCodegen("preview")}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      style={btn}
+                      disabled={codegenBusy || !focusedRoot}
+                      onClick={() => void requestCodegen("sync")}
+                    >
+                      Sync Code
+                    </button>
+                  </div>
+                  {codegenError && (
+                    <p style={{ color: color.amber, fontSize: text.sm, margin: 0 }}>
+                      {codegenError}
+                    </p>
+                  )}
+                  {codegenResult && (
+                    <>
+                      <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
+                        {codegenResult.wrote ? "Wrote" : "Previewing"}{" "}
+                        {codegenResult.targetPath} + {codegenResult.sidecarPath}. Git is
+                        explicit: review and commit these files yourself.
+                      </p>
+                      <pre
+                        style={{
+                          margin: 0,
+                          padding: space.md,
+                          background: color.canvas,
+                          border: `1px solid ${color.line}`,
+                          borderRadius: radius.base,
+                          color: color.inkDim,
+                          fontSize: text.xs,
+                          lineHeight: 1.55,
+                          overflow: "auto",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {codegenResult.code}
+                      </pre>
+                    </>
+                  )}
                 </div>
               )}
             </div>

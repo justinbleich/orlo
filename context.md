@@ -312,3 +312,13 @@ export const useDocumentStore: UseBoundStore<...>;   // actions wrap the pure op
 The Phase-0 tree becomes `sampleDocument: Node` exported from `document`, used by the
 render/diff harness and tests. `packages/fixture` is deleted; render-web / harness / studio
 retarget to `@rn-canvas/document`.
+
+## Phase 3 Sync Code checkpoint
+
+- `packages/codegen` remains Node-side; Babel is never bundled into the browser.
+- Studio `POST /api/codegen/preview` returns generated RN + sidecar for the focused root.
+- Studio `POST /api/codegen/sync` writes a user-selected `.tsx` path and the adjacent
+  `.rncanvas.json` inside the workspace (default: `generated/Screen.tsx`).
+- Product semantics are **Sync Code**, not detached export: repo-aware filesystem
+  materialization, deterministic output, Git actions explicit and deferred.
+- Path traversal outside the workspace is rejected; design metadata remains sidecar-only.

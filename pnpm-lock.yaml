@@ -45,6 +45,9 @@ importers:
 
   apps/studio:
     dependencies:
+      '@rn-canvas/codegen':
+        specifier: workspace:*
+        version: link:../../packages/codegen
       '@rn-canvas/document':
         specifier: workspace:*
         version: link:../../packages/document

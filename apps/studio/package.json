@@ -10,6 +10,7 @@
     "diff": "tsx scripts/run-diff.ts"
   },
   "dependencies": {
+    "@rn-canvas/codegen": "workspace:*",
     "@rn-canvas/document": "workspace:*",
     "@rn-canvas/render-web": "workspace:*",
     "@rn-canvas/sim-bridge": "workspace:*",

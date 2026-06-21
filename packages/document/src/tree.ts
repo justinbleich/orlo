@@ -44,7 +44,15 @@ export function createNode<T extends RNPrimitive>(
   }
   const style = assertStyle({ ...DEFAULT_STYLE[type], ...(init.style ?? {}) });
 
-  const base = { id: init.id ?? newId(), props, style, design: init.design };
+  // Omit `design` entirely when not provided, so nodes don't carry an `undefined`
+  // key (keeps them JSON-stable for sidecar round-trips).
+  const base: { id: NodeId; props: AnyProps; style: RNStyle; design?: DesignMeta } = {
+    id: init.id ?? newId(),
+    props,
+    style,
+  };
+  if (init.design) base.design = init.design;
+
   if (canHaveChildren(type)) {
     return { ...base, type, children: init.children ?? [] } as Node;
   }

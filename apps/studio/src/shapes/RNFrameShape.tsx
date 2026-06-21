@@ -3,12 +3,40 @@ import {
   Rectangle2d,
   ShapeUtil,
   T,
+  useEditor,
+  useValue,
   type Geometry2d,
   type RecordProps,
   type TLBaseShape,
 } from "tldraw";
 import { useDocumentStore } from "@rn-canvas/document";
 import { RNFrameRenderer } from "@rn-canvas/render-web";
+
+// Below this on-screen width the rnw detail isn't legible, so we render a cheap
+// proxy instead of running Yoga + react-native-web. (PRD §7.2 LOD / §8: keep only a
+// limited set of frames live; render the rest as lightweight proxies.)
+const LOD_MIN_ONSCREEN_WIDTH = 160;
+
+/** Lightweight stand-in for an off-focus / zoomed-out frame — no Yoga, no rnw. */
+function LODProxy({ w, h, label }: { w: number; h: number; label: string }) {
+  return (
+    <div
+      style={{
+        width: w,
+        height: h,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#f1f3f5",
+        color: "#8b93a1",
+        fontFamily: "sans-serif",
+        fontSize: Math.max(12, Math.min(w, h) * 0.12),
+      }}
+    >
+      {label}
+    </div>
+  );
+}
 
 /**
  * A tldraw shape that hosts one RN document subtree. tldraw owns the *spatial*
@@ -50,8 +78,18 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
   }
 
   override component(shape: RNFrameShape) {
+    const editor = useEditor();
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
+    // A frame is "live" (full render) when selected or large enough on screen;
+    // otherwise it falls back to the proxy. Reactive to zoom + selection.
+    const live = useValue(
+      "rnframe-live",
+      () =>
+        editor.getSelectedShapeIds().includes(shape.id) ||
+        shape.props.w * editor.getZoomLevel() >= LOD_MIN_ONSCREEN_WIDTH,
+      [editor, shape.id, shape.props.w],
+    );
     return (
       <HTMLContainer
         style={{
@@ -63,12 +101,18 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
           pointerEvents: "none",
         }}
       >
-        {root ? (
-          <RNFrameRenderer root={root} />
-        ) : (
+        {!root ? (
           <div style={{ padding: 12, color: "#999", fontSize: 12 }}>
             No document root ({shape.props.rootId || "unset"})
           </div>
+        ) : live ? (
+          <RNFrameRenderer root={root} />
+        ) : (
+          <LODProxy
+            w={shape.props.w}
+            h={shape.props.h}
+            label={root.design?.name ?? root.type}
+          />
         )}
       </HTMLContainer>
     );

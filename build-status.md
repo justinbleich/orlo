@@ -24,7 +24,7 @@ fully verifiable with no UI and no simulator).
 |---|---|---|
 | 0 — de-risk spike | rnw+Yoga render, pan/zoom, sim screenshot, fidelity diff | ✅ done |
 | 1 — document model + canvas shell | `packages/document` + `packages/styles`, tldraw `RNFrame`, inspector, **tree editing** | ✅ complete |
-| 2 — live render + layout fidelity | all 7 primitives, Yoga across tree, **text/font**, culling + **LOD** | 🟡 partial (see below) |
+| 2 — live render + layout fidelity | all 7 primitives, Yoga across tree, **text/font**, culling + **LOD** | 🟢 verifiable scope done; only font-parity deferred (sim-gated) |
 | 3 — codegen (emit) + sidecar | document → idiomatic RN + `*.rncanvas.json` | ⬜ not started |
 | 4 — simulator ground truth | harness over channel, iOS+Android sim-bridge, per-platform diff | 🟡 iOS bridge + diff exist; harness runtime unverified; Android not done |
 | 5 — MCP / agent loop | `packages/mcp-server` tools | ⬜ not started |
@@ -35,7 +35,9 @@ fully verifiable with no UI and no simulator).
 - ✅ **Text measurement wired** — `render-web` `computeLayout` sets Yoga measure funcs
   via `styles` `createCanvasTextMeasurer` (wrap + `numberOfLines`); styles tests cover it.
 - ✅ Viewport culling — provided by tldraw.
-- ⬜ **LOD proxy** for off-focus/zoomed-out frames (PRD §7.2/§8). Verifiable here.
+- ✅ **LOD proxy** — `RNFrameShapeUtil` renders a cheap proxy (no Yoga/rnw) when a frame
+  is unselected and small on-screen (`w * zoom < 160px`); full render otherwise. Verified:
+  zoom out → proxy, zoom in / select → live (PRD §7.2/§8).
 - 🔒 **Font parity** (PRD §9 #1 risk) — canvas measures/renders with ambient `system-ui`;
   device uses SF/Roboto. True parity = standardize on one bundled font (Inter is already
   `--font-sans`) in studio + harness + `FontMetricsTable` (PRD §8). **Only validatable
@@ -75,6 +77,23 @@ Rationale: if we can't export RN, the prettiest shell is worthless; if we can, t
 is proven. Effort should follow the substrate, not the chrome.
 
 ---
+
+## Shell — deferred platform accommodations
+
+The freeze is "don't grow it speculatively," **not** "it's final." The shell must
+later expand to meet platform realities, each tied to a phase:
+
+- **iOS vs Android as distinct targets** (PRD §8 platform honesty, BUILD invariant 5) —
+  a target switch in chrome + per-platform render/diff. → BUILD Phase 4.
+- **Per-platform ground-truth** — the ground-truth pane shows real device screenshots +
+  per-platform visual diff. → BUILD Phase 4 (the pane is a placeholder until then).
+- **Device presets + orientation** (iPhone/Pixel/tablet, portrait/landscape) — frame
+  sizing UI in chrome. → phase3 §3D (post-v1).
+- **Safe-area overlay** on canvas; insets per device. → phase3 §3D (post-v1).
+- **Light/dark theming toggle** for artboard content. → phase3 §3E (post-v1).
+
+Capture rule: add each of these when its phase lands, against the existing tokens —
+not before.
 
 ## Open gates / known issues
 

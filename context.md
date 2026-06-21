@@ -21,8 +21,26 @@
    re-render (single source of truth), `design.hidden` honored, `design.locked`→shape
    lock wired. tldraw provides move/resize/multi-select/undo natively.
 
-**Phase 1 (BUILD) is complete.** Next is BUILD Phase 2 (full render/layout fidelity) or
-phase2.md authoring tools — both post-Phase-1, start per the roadmap.
+**Phase 1 (BUILD) is complete.**
+
+## Phase 2 — studio UI foundation (tldraw lockdown + tokens + shell)
+
+Foundation only (not feature-complete chrome; cohesion/polish pass at the Phase 3→4
+boundary). Three commits:
+1. ✅ **tldraw lockdown** — `components` hides default chrome; `overrides.tools` keeps
+   only select/hand/zoom (no shape-creating tools); design.locked/hidden are real
+   behavior; watermark intact. tldraw is a frame host, never a whiteboard.
+2. ✅ **Design tokens** — `design-tokens.css` + `studio-theme.ts` in `apps/studio/src`;
+   `STUDIO-UI.md` doc in `_plan/_ui`. Chrome retrofit onto tokens (no raw hex/px); dark
+   tldraw canvas (`--canvas`). Discipline: tokens = chrome only; artboard = RNStyle.
+3. ✅ **Region skeleton** — top bar · tool rail · left panel (Screens/Layers/Library) ·
+   canvas · right column (Inspector Design/Interact/Code + ground-truth pane placeholder).
+   Structure + token styling only; features fill in per phase. Verified in browser.
+
+### Known: tldraw dev warning
+Supplying `components`/`overrides` triggers a benign dev-only React warning ("useMemo
+deps changed size") from tldraw internals (`TldrawUiComponentsProvider`). No functional
+or production-build impact; not suppressible without hacks.
 
 ### Open follow-ups carried into slice 4 / later
 - **Metro package exports:** `apps/harness/metro.config.js` enables

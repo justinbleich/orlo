@@ -23,6 +23,7 @@ import { toPng } from "html-to-image";
 import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
 import { Inspector } from "./Inspector";
 import { color, layout, radius, space, text } from "./studio-theme";
+import { Eyebrow, GroundTruthPane, LeftPanel, Tabs, ToolRail } from "./shell";
 
 const shapeUtils = [RNFrameShapeUtil];
 const RNFRAME = RNFrameShapeUtil.type;
@@ -123,8 +124,9 @@ export default function App() {
   // Fidelity-diff state (preserved from the Phase 0 workflow).
   const [simUrl, setSimUrl] = useState<string | null>(null);
   const [diffScore, setDiffScore] = useState<number | null>(null);
-  const [status, setStatus] = useState("Frame: drag · Resize: handles · Add: toolbar");
+  const [status, setStatus] = useState("Frame: drag · Resize: handles · Add: tool rail");
   const [busy, setBusy] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState("Design");
 
   const focusedRoot = useDocumentStore((s) =>
     focusedRootId ? s.roots[focusedRootId] : undefined,
@@ -254,53 +256,94 @@ export default function App() {
     padding: `${space.xs} ${space.md}`,
     fontSize: text.sm,
   };
-  const btnPrimary: React.CSSProperties = {
+  // Top-bar placeholders (structure only; controls fill in across phases).
+  const crumbStyle: React.CSSProperties = { color: color.inkDim, fontSize: text.base };
+  const placeholderChip: React.CSSProperties = {
     ...btn,
-    background: color.accentSoft,
-    borderColor: color.accentLine,
+    color: color.inkDim,
+    background: "transparent",
   };
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: color.canvas,
+      }}
+    >
+      {/* TOP BAR */}
       <header
         style={{
-          padding: `${space.sm} ${space.lg}`,
+          flex: `0 0 ${layout.topbar}px`,
+          height: layout.topbar,
+          padding: `0 ${space.lg}`,
           background: color.chrome,
           borderBottom: `1px solid ${color.line}`,
           display: "flex",
           alignItems: "center",
           gap: space.md,
-          flexWrap: "wrap",
         }}
       >
         <strong style={{ color: color.ink, fontSize: text.lg }}>RN Canvas</strong>
-        <span style={{ color: color.inkDim, fontSize: text.base }}>Studio · Phase 2</span>
-        <button type="button" style={btnPrimary} onClick={addFrame}>
-          + Add frame
-        </button>
-        <div style={{ marginLeft: "auto", display: "flex", gap: space.sm }}>
-          <button type="button" style={btn} disabled={busy} onClick={() => void captureSim()}>
-            Capture simulator
+        <span style={crumbStyle}>Untitled · Phase 2</span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: space.sm }}>
+          <span style={{ ...crumbStyle, fontSize: text.sm }}>100%</span>
+          <span style={{ display: "flex", alignItems: "center", gap: space.xs, ...crumbStyle, fontSize: text.sm }}>
+            <span
+              style={{ width: 8, height: 8, borderRadius: radius.pill, background: color.accent }}
+            />
+            Agent idle
+          </span>
+          <button type="button" style={placeholderChip} disabled title="Phase 4">
+            Run on device
           </button>
-          <button type="button" style={btn} disabled={busy} onClick={() => void runDiff()}>
-            Run diff{diffScore !== null ? ` · ${(diffScore * 100).toFixed(0)}%` : ""}
+          <button type="button" style={placeholderChip} disabled title="Phase 3">
+            Export
           </button>
+          <span
+            title="Account"
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: radius.pill,
+              background: color.raised,
+              border: `1px solid ${color.line}`,
+            }}
+          />
         </div>
       </header>
 
-      <p style={{ margin: `${space.xs} ${space.lg}`, color: color.inkDim, fontSize: text.sm }}>
-        {status}
-      </p>
-
+      {/* WORKBENCH: rail · left panel · canvas · right column */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-          <Tldraw
-            onMount={onMount}
-            shapeUtils={shapeUtils}
-            components={components}
-            overrides={overrides}
-          />
+        <ToolRail onAddFrame={addFrame} />
+        <LeftPanel />
+
+        <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+            <Tldraw
+              onMount={onMount}
+              shapeUtils={shapeUtils}
+              components={components}
+              overrides={overrides}
+            />
+          </div>
+          <div
+            style={{
+              flex: "0 0 auto",
+              padding: `${space.xs} ${space.md}`,
+              borderTop: `1px solid ${color.line}`,
+              background: color.chrome,
+              color: color.inkDim,
+              fontSize: text.sm,
+            }}
+          >
+            {status}
+          </div>
         </div>
+
+        {/* RIGHT COLUMN: inspector (top) + ground-truth pane (bottom) */}
         <div
           style={{
             flex: `0 0 ${layout.rightColumn}px`,
@@ -311,7 +354,55 @@ export default function App() {
             minHeight: 0,
           }}
         >
-          <Inspector rootId={focusedRootId} />
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: space.md, paddingBottom: 0 }}>
+              <Tabs
+                tabs={["Design", "Interact", "Code"]}
+                active={inspectorTab}
+                onSelect={setInspectorTab}
+              />
+            </div>
+            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+              {inspectorTab === "Design" ? (
+                <Inspector rootId={focusedRootId} />
+              ) : (
+                <div style={{ padding: space.md }}>
+                  <Eyebrow>{inspectorTab}</Eyebrow>
+                  <p style={{ color: color.inkFaint, fontSize: text.sm }}>
+                    {inspectorTab === "Interact"
+                      ? "Interactions & navigation — phase 3."
+                      : "Generated RN code — BUILD Phase 3 (codegen)."}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <GroundTruthPane
+            toolbar={
+              <div style={{ display: "flex", gap: space.sm }}>
+                <button type="button" style={btn} disabled={busy} onClick={() => void captureSim()}>
+                  Capture simulator
+                </button>
+                <button type="button" style={btn} disabled={busy} onClick={() => void runDiff()}>
+                  Run diff{diffScore !== null ? ` · ${(diffScore * 100).toFixed(0)}%` : ""}
+                </button>
+              </div>
+            }
+          >
+            {simUrl ? (
+              <img
+                src={simUrl}
+                alt="Simulator screenshot"
+                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+              />
+            ) : (
+              <span style={{ color: color.inkFaint, fontSize: text.sm, textAlign: "center", padding: space.md }}>
+                Live simulator mirror — BUILD Phase 4. Use Capture simulator to diff
+                the focused frame.
+              </span>
+            )}
+          </GroundTruthPane>
         </div>
       </div>
 
@@ -322,15 +413,6 @@ export default function App() {
           {focusedRoot ? <RNFrameRenderer root={focusedRoot} /> : null}
         </div>
       </div>
-
-      {simUrl && (
-        <img
-          src={simUrl}
-          alt="sim"
-          style={{ position: "fixed", left: -10000, top: 0 }}
-          aria-hidden
-        />
-      )}
     </div>
   );
 }

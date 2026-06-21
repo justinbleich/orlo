@@ -64,18 +64,13 @@ function Placeholder({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Left creation-tool rail. Only "frame" is wired (Add frame); the rest are
- *  placeholders for tools that arrive with phase2.md authoring. */
+/** Left creation-tool rail. v1 canvas creation is Frame only (child primitives are
+ *  added via the inspector tree, not canvas draw tools). Rectangle/Text/Image/
+ *  Component/Icon/Connect tools are phase2.md/phase3 authoring — not shown in v1. */
 export function ToolRail({ onAddFrame }: { onAddFrame: () => void }) {
   const tools: { glyph: string; label: string; onClick?: () => void }[] = [
     { glyph: "⌖", label: "Select" },
     { glyph: "▭", label: "Frame", onClick: onAddFrame },
-    { glyph: "◻", label: "Rectangle" },
-    { glyph: "T", label: "Text" },
-    { glyph: "▣", label: "Image" },
-    { glyph: "◈", label: "Component" },
-    { glyph: "★", label: "Icon" },
-    { glyph: "⤳", label: "Connect" },
   ];
   return (
     <nav
@@ -138,10 +133,10 @@ export function LeftPanel() {
         overflowY: "auto",
       }}
     >
-      <Tabs tabs={["Screens", "Layers", "Library"]} active={tab} onSelect={setTab} />
+      {/* Library (components/tokens) is post-v1 — not shown in v1. */}
+      <Tabs tabs={["Screens", "Layers"]} active={tab} onSelect={setTab} />
       {tab === "Screens" && <Placeholder>Screen list — frames you add appear on the canvas. Management UI lands with navigation (phase 3).</Placeholder>}
       {tab === "Layers" && <Placeholder>Node tree — currently in the Inspector’s Design tab; moves here as the layers panel fills in.</Placeholder>}
-      {tab === "Library" && <Placeholder>Components & tokens library — post-v1 (phase 2 authoring track).</Placeholder>}
     </aside>
   );
 }

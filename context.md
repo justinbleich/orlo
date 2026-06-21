@@ -37,6 +37,21 @@ boundary). Three commits:
    canvas · right column (Inspector Design/Interact/Code + ground-truth pane placeholder).
    Structure + token styling only; features fill in per phase. Verified in browser.
 
+### Post-foundation (UI ↔ v1 functionality alignment)
+- ✅ **Tree editing** — Inspector add/delete/reorder (PRD §7.1) via validated store
+  actions; reparent-via-drag stays post-v1. Phase 1's "build a tree through the
+  inspector" is now actually true.
+- ✅ **Selection = single source** — store `selection` is authoritative; focused frame
+  derived (`findRootContaining`); canvas↔store synced both ways; orphan shapes pruned.
+- ✅ **Undo/redo** — history snapshots tree + selection together; top-bar controls.
+- ✅ **Shell trimmed to v1** — rail = Select + Frame; dropped Library (post-v1) and
+  Interact (phase 3); kept Export / Code / ground-truth / Run-on-device / Agent as
+  honest later-phase placeholders.
+
+### Next: BUILD Phase 2 (render fidelity)
+Text measurement first (wire `styles` `TextMeasurer` into `render-web` `computeLayout`
++ font-loading parity), then LOD proxy. tldraw already gives viewport culling.
+
 ### Known: tldraw dev warning
 Supplying `components`/`overrides` triggers a benign dev-only React warning ("useMemo
 deps changed size") from tldraw internals (`TldrawUiComponentsProvider`). No functional

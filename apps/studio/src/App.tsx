@@ -408,8 +408,9 @@ export default function App() {
         >
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: space.md, paddingBottom: 0 }}>
+              {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
               <Tabs
-                tabs={["Design", "Interact", "Code"]}
+                tabs={["Design", "Code"]}
                 active={inspectorTab}
                 onSelect={setInspectorTab}
               />
@@ -419,11 +420,9 @@ export default function App() {
                 <Inspector rootId={focusedRootId} />
               ) : (
                 <div style={{ padding: space.md }}>
-                  <Eyebrow>{inspectorTab}</Eyebrow>
+                  <Eyebrow>Code</Eyebrow>
                   <p style={{ color: color.inkFaint, fontSize: text.sm }}>
-                    {inspectorTab === "Interact"
-                      ? "Interactions & navigation — phase 3."
-                      : "Generated RN code — BUILD Phase 3 (codegen)."}
+                    Generated RN code — BUILD Phase 3 (codegen).
                   </p>
                 </div>
               )}

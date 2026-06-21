@@ -28,6 +28,7 @@ export { canHaveChildren, isContainer, childrenOf } from "./types";
 export {
   createNode,
   findNode,
+  findRootContaining,
   getParent,
   insertChild,
   removeNode,
@@ -47,6 +48,6 @@ export {
   type NodeError,
 } from "./validate";
 
-export { useDocumentStore, type DocumentState, type Roots } from "./store";
+export { useDocumentStore, type DocumentState, type Roots, type Snapshot } from "./store";
 
 export { sampleDocument, FIXTURE_IMAGE_URI } from "./sample";

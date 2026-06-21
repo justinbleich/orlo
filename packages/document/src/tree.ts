@@ -63,6 +63,14 @@ export function findNode(tree: Node, id: NodeId): Node | undefined {
   return undefined;
 }
 
+/** Find the root (frame) tree whose subtree contains `id`. */
+export function findRootContaining(roots: Node[], id: NodeId): Node | undefined {
+  for (const root of roots) {
+    if (findNode(root, id)) return root;
+  }
+  return undefined;
+}
+
 export function getParent(tree: Node, id: NodeId): Node | undefined {
   for (const child of childrenOf(tree)) {
     if (child.id === id) return tree;

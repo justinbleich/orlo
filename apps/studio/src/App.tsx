@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Tldraw,
   createShapeId,
@@ -9,6 +9,7 @@ import {
 import "tldraw/tldraw.css";
 import {
   createNode,
+  findRootContaining,
   sampleDocument,
   useDocumentStore,
   type Node,
@@ -119,7 +120,6 @@ function loadImageData(url: string): Promise<ImageData> {
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const captureRef = useRef<HTMLDivElement>(null);
-  const [focusedRootId, setFocusedRootId] = useState<NodeId | null>(null);
 
   // Fidelity-diff state (preserved from the Phase 0 workflow).
   const [simUrl, setSimUrl] = useState<string | null>(null);
@@ -128,35 +128,64 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [inspectorTab, setInspectorTab] = useState("Design");
 
-  const focusedRoot = useDocumentStore((s) =>
-    focusedRootId ? s.roots[focusedRootId] : undefined,
-  );
+  // The document store's selection is the single source of truth. The focused
+  // frame is *derived* from it (the root whose subtree holds the selection), and
+  // canvas selection is kept in sync with it below — neither side owns its own copy.
   const roots = useDocumentStore((s) => s.roots);
+  const selection = useDocumentStore((s) => s.selection);
+  const focusedRoot = useMemo(
+    () => findRootContaining(Object.values(roots), selection[0] ?? ""),
+    [roots, selection],
+  );
+  const focusedRootId = focusedRoot?.id ?? null;
+
+  const canUndo = useDocumentStore((s) => s.past.length > 0);
+  const canRedo = useDocumentStore((s) => s.future.length > 0);
+  const undo = useDocumentStore((s) => s.undo);
+  const redo = useDocumentStore((s) => s.redo);
 
   const onMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
     // Dark canvas to match the studio shell (chrome theming, not artboard).
     editor.user.updateUserPreferences({ colorScheme: "dark" });
 
-    if (Object.keys(useDocumentStore.getState().roots).length === 0) {
-      useDocumentStore.getState().addRoot(sampleDocument);
+    const store = useDocumentStore.getState();
+    if (Object.keys(store.roots).length === 0) {
+      store.addRoot(sampleDocument);
     }
     syncShapes(editor);
-    setFocusedRootId(sampleDocument.id);
+    store.setSelection([sampleDocument.id]);
 
-    // Track which frame is focused → drives the inspector.
+    // Canvas → store: selecting a frame selects its root node (unless the current
+    // selection already lives in that frame, e.g. a child node is selected).
     editor.store.listen(
       () => {
         const sel = editor.getOnlySelectedShape();
-        if (sel && isRNFrame(sel)) {
-          setFocusedRootId(asRNFrame(sel).props.rootId);
-        }
+        if (!sel || !isRNFrame(sel)) return;
+        const rootId = asRNFrame(sel).props.rootId;
+        const s = useDocumentStore.getState();
+        const curRoot = findRootContaining(Object.values(s.roots), s.selection[0] ?? "");
+        if (curRoot?.id !== rootId) s.setSelection([rootId]);
       },
       { scope: "session" },
     );
   }, []);
 
-  // Keep new roots in sync with shapes, and mirror design.locked → shape lock.
+  // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
+  // can't ping-pong with the listener above.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !focusedRoot) return;
+    const shape = editor
+      .getCurrentPageShapes()
+      .find((s) => isRNFrame(s) && asRNFrame(s).props.rootId === focusedRoot.id);
+    if (shape && editor.getOnlySelectedShape()?.id !== shape.id) {
+      editor.select(shape.id);
+    }
+  }, [focusedRoot]);
+
+  // Reconcile shapes with roots: add shapes for new roots, prune shapes whose root
+  // is gone (e.g. undo of Add frame), and mirror design.locked → shape lock.
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -164,7 +193,11 @@ export default function App() {
     for (const shape of editor.getCurrentPageShapes()) {
       if (!isRNFrame(shape)) continue;
       const root = roots[asRNFrame(shape).props.rootId];
-      const shouldLock = !!root?.design?.locked;
+      if (!root) {
+        editor.deleteShapes([shape.id]);
+        continue;
+      }
+      const shouldLock = !!root.design?.locked;
       if (shape.isLocked !== shouldLock) {
         editor.updateShape({
           id: shape.id,
@@ -190,12 +223,11 @@ export default function App() {
       },
       children: [createNode("Text", { props: { text: "New frame" } })],
     });
-    useDocumentStore.getState().addRoot(root);
+    const store = useDocumentStore.getState();
+    store.addRoot(root);
     const editor = editorRef.current;
-    if (editor) {
-      syncShapes(editor);
-      setFocusedRootId(root.id);
-    }
+    if (editor) syncShapes(editor);
+    store.setSelection([root.id]);
   }, []);
 
   const captureCanvas = useCallback(async () => {
@@ -288,6 +320,26 @@ export default function App() {
       >
         <strong style={{ color: color.ink, fontSize: text.lg }}>RN Canvas</strong>
         <span style={crumbStyle}>Untitled · Phase 2</span>
+        <div style={{ display: "flex", gap: space.xs }}>
+          <button
+            type="button"
+            style={btn}
+            disabled={!canUndo}
+            onClick={() => undo()}
+            title="Undo"
+          >
+            ↶
+          </button>
+          <button
+            type="button"
+            style={btn}
+            disabled={!canRedo}
+            onClick={() => redo()}
+            title="Redo"
+          >
+            ↷
+          </button>
+        </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: space.sm }}>
           <span style={{ ...crumbStyle, fontSize: text.sm }}>100%</span>
           <span style={{ display: "flex", alignItems: "center", gap: space.xs, ...crumbStyle, fontSize: text.sm }}>

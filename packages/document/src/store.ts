@@ -19,11 +19,18 @@ import {
 
 export type Roots = Record<NodeId, Node>;
 
+/** A history entry snapshots both the tree and the selection, so undo/redo
+ *  restores a coherent selection (no dangling selected-node after an undo). */
+export interface Snapshot {
+  roots: Roots;
+  selection: NodeId[];
+}
+
 export interface DocumentState {
   roots: Roots;
   selection: NodeId[];
-  past: Roots[];
-  future: Roots[];
+  past: Snapshot[];
+  future: Snapshot[];
 
   setSelection(ids: NodeId[]): void;
 
@@ -47,10 +54,12 @@ export interface DocumentState {
 const HISTORY_LIMIT = 100;
 
 export const useDocumentStore = create<DocumentState>((set, get) => {
-  /** Commit a new roots map, recording the previous one for undo. */
+  /** Commit a new roots map, snapshotting the previous tree + selection for undo. */
   const commit = (next: Roots) => {
     set((state) => ({
-      past: [...state.past, state.roots].slice(-HISTORY_LIMIT),
+      past: [...state.past, { roots: state.roots, selection: state.selection }].slice(
+        -HISTORY_LIMIT,
+      ),
       future: [],
       roots: next,
     }));
@@ -102,9 +111,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         if (state.past.length === 0) return state;
         const previous = state.past[state.past.length - 1];
         return {
-          roots: previous,
+          roots: previous.roots,
+          selection: previous.selection,
           past: state.past.slice(0, -1),
-          future: [state.roots, ...state.future].slice(0, HISTORY_LIMIT),
+          future: [
+            { roots: state.roots, selection: state.selection },
+            ...state.future,
+          ].slice(0, HISTORY_LIMIT),
         };
       }),
     redo: () =>
@@ -112,8 +125,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         if (state.future.length === 0) return state;
         const next = state.future[0];
         return {
-          roots: next,
-          past: [...state.past, state.roots].slice(-HISTORY_LIMIT),
+          roots: next.roots,
+          selection: next.selection,
+          past: [...state.past, { roots: state.roots, selection: state.selection }].slice(
+            -HISTORY_LIMIT,
+          ),
           future: state.future.slice(1),
         };
       }),

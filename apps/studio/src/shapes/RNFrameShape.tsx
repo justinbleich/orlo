@@ -9,8 +9,13 @@ import {
   type RecordProps,
   type TLBaseShape,
 } from "tldraw";
+import { useCallback, useState } from "react";
 import { useDocumentStore } from "@rn-canvas/document";
-import { RNFrameRenderer } from "@rn-canvas/render-web";
+import {
+  RNFrameRenderer,
+  type LayoutReadyResult,
+} from "@rn-canvas/render-web";
+import { RNNodeOverlay } from "../RNNodeOverlay";
 
 // Below this on-screen width the rnw detail isn't legible, so we render a cheap
 // proxy instead of running Yoga + react-native-web. (PRD §7.2 LOD / §8: keep only a
@@ -79,17 +84,25 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
 
   override component(shape: RNFrameShape) {
     const editor = useEditor();
+    const [layoutResult, setLayoutResult] = useState<LayoutReadyResult | null>(null);
+    const onLayoutReady = useCallback((result: LayoutReadyResult) => {
+      setLayoutResult(result);
+    }, []);
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
     // A frame is "live" (full render) when selected or large enough on screen;
     // otherwise it falls back to the proxy. Reactive to zoom + selection.
-    const live = useValue(
-      "rnframe-live",
-      () =>
-        editor.getSelectedShapeIds().includes(shape.id) ||
-        shape.props.w * editor.getZoomLevel() >= LOD_MIN_ONSCREEN_WIDTH,
+    const selected = useValue(
+      "rnframe-selected",
+      () => editor.getSelectedShapeIds().includes(shape.id),
+      [editor, shape.id],
+    );
+    const largeEnough = useValue(
+      "rnframe-large-enough",
+      () => shape.props.w * editor.getZoomLevel() >= LOD_MIN_ONSCREEN_WIDTH,
       [editor, shape.id, shape.props.w],
     );
+    const live = selected || largeEnough;
     return (
       <HTMLContainer
         style={{
@@ -98,7 +111,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
           overflow: "hidden",
           backgroundColor: "#ffffff",
           // Let tldraw handle selection/drag; inner RN content is preview-only.
-          pointerEvents: "none",
+          pointerEvents: selected ? "auto" : "none",
         }}
       >
         {!root ? (
@@ -106,13 +119,18 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
             No document root ({shape.props.rootId || "unset"})
           </div>
         ) : live ? (
-          <RNFrameRenderer root={root} />
+          <div style={{ pointerEvents: "none" }}>
+            <RNFrameRenderer root={root} onLayoutReady={onLayoutReady} />
+          </div>
         ) : (
           <LODProxy
             w={shape.props.w}
             h={shape.props.h}
             label={root.design?.name ?? root.type}
           />
+        )}
+        {root && live && layoutResult && (
+          <RNNodeOverlay root={root} result={layoutResult} active={selected} />
         )}
       </HTMLContainer>
     );

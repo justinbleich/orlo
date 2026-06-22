@@ -22,13 +22,26 @@ type SidecarRequest = {
   sidecarPath?: string;
 };
 
+type BrowserCommand = {
+  id: string;
+  type: string;
+  payload: unknown;
+};
+
+type BrowserCommandResult = {
+  id?: string;
+  ok?: boolean;
+  value?: unknown;
+  error?: string;
+};
+
 type GeneratedScreen = {
   screenName: string;
   code: string;
   sidecar: string;
 };
 
-function readRequestJson(req: import("node:http").IncomingMessage): Promise<CodegenRequest> {
+function readRequestJson<T>(req: import("node:http").IncomingMessage): Promise<T> {
   return new Promise((resolveBody, reject) => {
     let raw = "";
     req.setEncoding("utf8");
@@ -41,7 +54,7 @@ function readRequestJson(req: import("node:http").IncomingMessage): Promise<Code
     });
     req.on("end", () => {
       try {
-        resolveBody(raw ? JSON.parse(raw) : {});
+        resolveBody((raw ? JSON.parse(raw) : {}) as T);
       } catch {
         reject(new Error("Invalid JSON body"));
       }
@@ -122,6 +135,13 @@ async function parseSidecar(sidecarPath: string) {
 }
 
 export function simScreenshotPlugin(): Plugin {
+  const commandQueue: BrowserCommand[] = [];
+  const pending = new Map<
+    string,
+    { res: import("node:http").ServerResponse; timeout: ReturnType<typeof setTimeout> }
+  >();
+  let nextCommandId = 1;
+
   return {
     name: "studio-node-api",
     configureServer(server) {
@@ -131,7 +151,7 @@ export function simScreenshotPlugin(): Plugin {
           return;
         }
         try {
-          const body = await readRequestJson(req);
+          const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
           const generated = await runCodegen(body.root, screenName);
@@ -154,7 +174,7 @@ export function simScreenshotPlugin(): Plugin {
           return;
         }
         try {
-          const body = await readRequestJson(req);
+          const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
           const generated = await runCodegen(body.root, screenName);
@@ -181,7 +201,7 @@ export function simScreenshotPlugin(): Plugin {
           return;
         }
         try {
-          const body = await readRequestJson(req) as SidecarRequest;
+          const body = await readRequestJson<SidecarRequest>(req);
           const sidecarPath = resolveSidecarPath(body.sidecarPath);
           const document = await parseSidecar(sidecarPath);
           sendJson(res, 200, {
@@ -194,6 +214,67 @@ export function simScreenshotPlugin(): Plugin {
             error: error instanceof Error ? error.message : "Sidecar load failed",
           });
         }
+      });
+
+      server.middlewares.use("/api/mcp/command", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { ok: false, error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<{ type?: string; payload?: unknown }>(req);
+          if (!body.type) throw new Error("Command type is required");
+          const id = String(nextCommandId++);
+          commandQueue.push({ id, type: body.type, payload: body.payload ?? {} });
+          const timeout = setTimeout(() => {
+            pending.delete(id);
+            sendJson(res, 504, {
+              ok: false,
+              error: "Studio did not answer the command before timeout",
+            });
+          }, 9_000);
+          pending.set(id, { res, timeout });
+        } catch (error) {
+          sendJson(res, 400, {
+            ok: false,
+            error: error instanceof Error ? error.message : "Invalid MCP command",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/mcp/next", (req, res) => {
+        if (req.method !== "GET") {
+          sendJson(res, 405, { error: "GET required" });
+          return;
+        }
+        const command = commandQueue.shift();
+        if (!command) {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+        sendJson(res, 200, command);
+      });
+
+      server.middlewares.use("/api/mcp/result", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        const result = await readRequestJson<BrowserCommandResult>(req);
+        const entry = result.id ? pending.get(result.id) : undefined;
+        if (!entry) {
+          sendJson(res, 404, { error: "Pending command not found" });
+          return;
+        }
+        clearTimeout(entry.timeout);
+        pending.delete(result.id!);
+        sendJson(entry.res, result.ok ? 200 : 400, {
+          ok: !!result.ok,
+          value: result.value,
+          error: result.error,
+        });
+        sendJson(res, 200, { ok: true });
       });
     },
   };

@@ -33,6 +33,21 @@ export type FontMetricsTable = Record<
   { ascent: number; descent: number; lineGap: number }
 >;
 
+/** The v1 canvas/harness font. Keep this aligned with both app font loaders. */
+export const DEFAULT_FONT_FAMILY = "Inter";
+
+/**
+ * Normalized OpenType hhea metrics from Inter 400 v4.1
+ * (@expo-google-fonts/inter 0.4.2): 1984 / -494 / 0 at 2048 units/em.
+ */
+export const DEFAULT_FONT_METRICS: FontMetricsTable = Object.freeze({
+  [DEFAULT_FONT_FAMILY]: Object.freeze({
+    ascent: 1984 / 2048,
+    descent: 494 / 2048,
+    lineGap: 0,
+  }),
+});
+
 const DEFAULT_FONT_SIZE = 14;
 /** RN's default line-height multiple when none is set, used as a fallback. */
 const DEFAULT_LINE_HEIGHT_RATIO = 1.25;
@@ -41,15 +56,15 @@ function fontShorthand(style: RNStyle): string {
   const size = style.fontSize ?? DEFAULT_FONT_SIZE;
   const weight = style.fontWeight ?? "400";
   const fontStyle = style.fontStyle ?? "normal";
-  const family = style.fontFamily ?? "system-ui, -apple-system, sans-serif";
+  const family = style.fontFamily ?? DEFAULT_FONT_FAMILY;
   return `${fontStyle} ${weight} ${size}px ${family}`;
 }
 
 function lineHeightPx(style: RNStyle, metrics?: FontMetricsTable): number {
   if (typeof style.lineHeight === "number") return style.lineHeight;
   const size = style.fontSize ?? DEFAULT_FONT_SIZE;
-  const family = style.fontFamily;
-  if (family && metrics?.[family]) {
+  const family = style.fontFamily ?? DEFAULT_FONT_FAMILY;
+  if (metrics?.[family]) {
     const m = metrics[family];
     return Math.ceil(size * (m.ascent + m.descent + m.lineGap));
   }
@@ -110,7 +125,7 @@ function wrap(
 export function createCanvasTextMeasurer(opts?: {
   fontMetrics?: FontMetricsTable;
 }): TextMeasurer {
-  const metrics = opts?.fontMetrics;
+  const metrics = opts?.fontMetrics ?? DEFAULT_FONT_METRICS;
 
   let ctx: CanvasRenderingContext2D | null = null;
   if (typeof document !== "undefined") {

@@ -8,6 +8,22 @@
    are light; keep them separate.
    ========================================================================== */
 
+@font-face {
+  font-family: "Inter";
+  src: url("@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
 :root {
   /* --- Chrome surfaces (dark) ------------------------------------------------
      Layered from deepest (canvas backdrop) to raised (active controls).        */

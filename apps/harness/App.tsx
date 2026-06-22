@@ -1,5 +1,10 @@
 import type { Node } from "@rn-canvas/document";
 import { sampleDocument } from "@rn-canvas/document/sample";
+import {
+  Inter_400Regular,
+  Inter_600SemiBold,
+  useFonts,
+} from "@expo-google-fonts/inter";
 import { StatusBar } from "expo-status-bar";
 import {
   Image,
@@ -97,6 +102,14 @@ function renderNode(node: Node, key?: number): ReactNode {
 }
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    Inter: Inter_400Regular,
+    Inter_600SemiBold,
+  });
+
+  if (fontError) throw fontError;
+  if (!fontsLoaded) return null;
+
   return (
     <View style={styles.screen}>
       <StatusBar style="dark" />

@@ -34,7 +34,12 @@ export const sampleDocument: Node = {
       id: "sample-text",
       type: "Text",
       props: { text: "Hello RN Canvas" },
-      style: { fontSize: 18, fontWeight: "600", color: "#111111" },
+      style: {
+        fontFamily: "Inter",
+        fontSize: 18,
+        fontWeight: "600",
+        color: "#111111",
+      },
     },
     {
       id: "sample-image",

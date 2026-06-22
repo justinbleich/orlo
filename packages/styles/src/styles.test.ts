@@ -2,7 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { validateStyle, assertStyle } from "./validate";
 import { pickVisualStyle } from "./yoga-map";
-import { createCanvasTextMeasurer } from "./text-measure";
+import {
+  createCanvasTextMeasurer,
+  DEFAULT_FONT_FAMILY,
+  DEFAULT_FONT_METRICS,
+} from "./text-measure";
 
 test("accepts a valid RN style", () => {
   const result = validateStyle({
@@ -100,4 +104,28 @@ test("text measurer respects numberOfLines clamp", () => {
     maxWidth: 30,
   });
   assert.ok(clamped.height < unclamped.height);
+});
+
+test("default text uses pinned Inter metrics", () => {
+  const m = createCanvasTextMeasurer();
+  const measured = m.measure({ text: "Pinned", style: { fontSize: 14 } });
+  const metrics = DEFAULT_FONT_METRICS[DEFAULT_FONT_FAMILY];
+
+  assert.equal(
+    measured.height,
+    Math.ceil(14 * (metrics.ascent + metrics.descent + metrics.lineGap)),
+  );
+  assert.equal(measured.height, 17);
+});
+
+test("pinned metrics produce deterministic wrapping and line height", () => {
+  const measure = () =>
+    createCanvasTextMeasurer().measure({
+      text: "one two three four",
+      style: { fontFamily: DEFAULT_FONT_FAMILY, fontSize: 16 },
+      maxWidth: 55,
+    });
+
+  assert.deepEqual(measure(), measure());
+  assert.equal(measure().height % 20, 0);
 });

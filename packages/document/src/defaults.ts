@@ -14,7 +14,7 @@ export const DEFAULT_PROPS: { [K in RNPrimitive]: PropsByType[K] } = {
 
 export const DEFAULT_STYLE: { [K in RNPrimitive]: RNStyle } = {
   View: {},
-  Text: { fontSize: 14, color: "#111111" },
+  Text: { fontFamily: "Inter", fontSize: 14, color: "#111111" },
   Image: { width: 64, height: 64 },
   Pressable: {},
   ScrollView: { flex: 1 },
@@ -24,6 +24,7 @@ export const DEFAULT_STYLE: { [K in RNPrimitive]: RNStyle } = {
     borderRadius: 4,
     paddingHorizontal: 8,
     paddingVertical: 6,
+    fontFamily: "Inter",
     fontSize: 14,
   },
   FlatList: { flex: 1 },

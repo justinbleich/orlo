@@ -26,6 +26,8 @@ export { ALL_STYLE_KEYS } from "./keys";
 
 export {
   createCanvasTextMeasurer,
+  DEFAULT_FONT_FAMILY,
+  DEFAULT_FONT_METRICS,
   type TextMeasurer,
   type TextMeasureInput,
   type TextMeasureResult,

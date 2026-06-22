@@ -6,13 +6,13 @@
 
 ## TL;DR
 
-BUILD Phases 0–3 are complete. The automated simulator branch proved the operational
+BUILD Phases 0–4 are implemented. The automated simulator branch proved the operational
 cost but ran ahead of the product: native tooling is local to each user and should not
 gate RN Canvas. V1 is now centered on the canvas ↔ document ↔ code loop.
 
-**Recommendation:** park simulator automation and pixel diff, remove its permanent
-chrome, then harden primitive insertion, Screens/Layers, and sidecar Sync Code. Spike
-`serve-sim` later as an optional local iOS preview adapter.
+**Recommendation:** keep simulator automation and pixel diff parked, manually exercise
+the completed Phase 4 shell once local browser automation is re-enabled, then begin the
+Phase 5 MCP agent loop. Spike `serve-sim` later as an optional local iOS preview adapter.
 
 ---
 
@@ -24,7 +24,7 @@ chrome, then harden primitive insertion, Screens/Layers, and sidecar Sync Code. 
 | 1 — document model + canvas shell | `packages/document` + `packages/styles`, tldraw `RNFrame`, inspector, **tree editing** | ✅ complete |
 | 2 — live render + layout fidelity | all 7 primitives, Yoga across tree, **text/font**, culling + **LOD** | 🟢 verifiable scope done; only font-parity deferred (sim-gated) |
 | 3 — codegen (emit) + sidecar | document → idiomatic RN + `*.rncanvas.json` | ✅ complete: emit + sidecar + repo-aware Sync Code, validated sidecar reopen, and multi-root generation as independently registerable native screen modules. Git actions remain explicit/deferred. |
-| 4 — canvas/code workflow hardening | primitive rail, Screens/Layers, sidecar workflow, optional preview | 🟡 starting from completed Phase 3 checkpoint |
+| 4 — canvas/code workflow hardening | primitive rail, Screens/Layers, sidecar workflow, optional preview | 🟢 implemented: all seven primitives insert through the document store; Screens/Layers are document-derived; codegen sidecar identity and metadata isolation pass. Final manual interaction pass remains. |
 | 5 — MCP / agent loop | `packages/mcp-server` tools | ⬜ not started |
 | 6 — round-trip + polish | parse external RN → document | ⬜ not started |
 
@@ -66,9 +66,10 @@ Notes:
 1. **Freeze the chrome.** No new regions/placeholders/polish until the feature behind a
    region lands. The shell is a frame to drop panels into, not ongoing work.
 2. Remove the fixed ground-truth pane and simulator actions from v1 chrome.
-3. Make the rail create all seven primitives through document-store operations.
-4. Make Screens/Layers real views derived from the document and selection stores.
-5. Re-verify sidecar open → edit → Sync Code → reopen before Phase 5 MCP.
+3. ✅ The rail creates all seven primitives through one validated document-store action.
+4. ✅ Screens/Layers are real views derived from document roots and the single selection.
+5. ✅ Sidecar serialization/reopen identity and sidecar-only design metadata are covered by
+   passing codegen tests; perform one final manual Studio interaction pass before Phase 5.
 
 Rationale: if we can't export RN, the prettiest shell is worthless; if we can, the thesis
 is proven. Effort should follow the substrate, not the chrome.
@@ -93,6 +94,9 @@ not before.
 
 ## Open gates / known issues
 
+- **Manual Phase 4 UI pass remains** — the primitive rail was verified in the running Studio,
+  but browser automation was subsequently disabled for the local URL before Screens/Layers
+  could be clicked through. The production build and all package tests pass.
 - **Native preview is unavailable here** until macOS/Xcode is updated. This no longer blocks v1.
 - **tldraw dev warning** — benign dev-only React "useMemo deps changed size" from
   `TldrawUiComponentsProvider` when `components`/`overrides` are supplied. No prod impact.
@@ -106,3 +110,8 @@ not before.
 Current branch: `codex/v1-canvas-code-focus`, based on the completed Phase 3 checkpoint
 `f7905f9`. The full simulator experiment remains preserved on
 `codex/phase4-simulator-ground-truth` and is intentionally not merged.
+
+Uncommitted Phase 4 work is intentionally split into two logical checkpoints:
+`Wire primitive tools to document store`, then `Build document-derived Screens and Layers`.
+The first commit attempt was blocked by the local approval service usage limit; no git
+workaround was attempted.

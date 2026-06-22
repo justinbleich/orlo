@@ -14,11 +14,13 @@ import {
   useDocumentStore,
   type Node,
   type NodeId,
+  type RNPrimitive,
 } from "@rn-canvas/document";
 import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
 import { Inspector } from "./Inspector";
 import { color, layout, radius, space, text } from "./studio-theme";
 import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
+import { insertPrimitive } from "./document-actions";
 
 const shapeUtils = [RNFrameShapeUtil];
 const RNFRAME = RNFrameShapeUtil.type;
@@ -224,6 +226,24 @@ export default function App() {
     store.setSelection([root.id]);
   }, []);
 
+  const addPrimitive = useCallback(
+    (type: RNPrimitive) => {
+      if (!focusedRoot) return;
+      try {
+        insertPrimitive(focusedRoot, selection[0] ?? null, type);
+        setStatus(`Added ${type}`);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : `Could not add ${type}`);
+      }
+    },
+    [focusedRoot, selection],
+  );
+
+  const selectTool = useCallback(() => {
+    editorRef.current?.setCurrentTool("select");
+    setStatus("Select tool active");
+  }, []);
+
   const requestCodegen = useCallback(
     async (mode: "preview" | "sync") => {
       if (!focusedRoot) {
@@ -376,8 +396,13 @@ export default function App() {
 
       {/* WORKBENCH: rail · left panel · canvas · right column */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <ToolRail onAddFrame={addFrame} />
-        <LeftPanel />
+        <ToolRail
+          onSelect={selectTool}
+          onAddFrame={addFrame}
+          onAddPrimitive={addPrimitive}
+          canAddPrimitive={!!focusedRoot}
+        />
+        <LeftPanel onAddFrame={addFrame} />
 
         <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           <div style={{ position: "relative", flex: 1, minHeight: 0 }}>

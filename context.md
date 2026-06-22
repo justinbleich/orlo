@@ -342,3 +342,21 @@ retarget to `@rn-canvas/document`.
   spike for iOS after Xcode is available; boot/install automation, Android parity,
   interaction automation, and pixel diff are post-v1.
 - The fixed ground-truth pane is removed from v1 so canvas and inspector retain the space.
+
+## Phase 4 canvas/code checkpoint
+
+- The tool rail exposes Frame plus all seven v1 RN primitives. Frame creates an `RNFrame` root;
+  primitives use one shared `insertPrimitive` action and become document children/siblings,
+  never tldraw shapes.
+- Screens is derived from document roots and supports create/select/delete. Layers is derived
+  from the focused root and single document selection, with validated select/reorder/delete.
+  Locked nodes cannot be selected, moved, or deleted; the Layers tree provides an explicit
+  unlock action. Inspector now edits selected-node properties only.
+- Sidecar/code invariants remain covered by the codegen suite: serialization round-trips to an
+  identical tree, and design metadata appears only in the sidecar. Full styles/document/codegen
+  tests and the monorepo production build pass.
+- Manual browser verification confirmed primitive-rail insertion. Local browser automation was
+  then disabled before the Screens/Layers click-through, so that final interaction pass remains.
+- Commit boundary 1: primitive action + rail wiring. Commit boundary 2: document tree,
+  Screens/Layers, and Inspector simplification. Git writes were blocked by approval-service
+  quota after implementation; keep these boundaries when committing later.

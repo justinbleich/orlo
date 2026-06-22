@@ -4,7 +4,17 @@
  * everything here is theme-token-styled and never touches RN artboard content.
  */
 import { useState } from "react";
+import {
+  childrenOf,
+  findNode,
+  findRootContaining,
+  getParent,
+  useDocumentStore,
+  type NodeId,
+  type RNPrimitive,
+} from "@rn-canvas/document";
 import { color, layout, radius, space, text } from "./studio-theme";
+import { DocumentTree } from "./DocumentTree";
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
@@ -56,21 +66,33 @@ export function Tabs({
   );
 }
 
-function Placeholder({ children }: { children: React.ReactNode }) {
-  return (
-    <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0, lineHeight: 1.6 }}>
-      {children}
-    </p>
-  );
-}
-
-/** Left creation-tool rail. v1 canvas creation is Frame only (child primitives are
- *  added via the inspector tree, not canvas draw tools). Rectangle/Text/Image/
- *  Component/Icon/Connect tools are phase2.md/phase3 authoring — not shown in v1. */
-export function ToolRail({ onAddFrame }: { onAddFrame: () => void }) {
-  const tools: { glyph: string; label: string; onClick?: () => void }[] = [
-    { glyph: "⌖", label: "Select" },
+/** tldraw owns frame placement; every other tool inserts a document node. */
+export function ToolRail({
+  onSelect,
+  onAddFrame,
+  onAddPrimitive,
+  canAddPrimitive,
+}: {
+  onSelect: () => void;
+  onAddFrame: () => void;
+  onAddPrimitive: (type: RNPrimitive) => void;
+  canAddPrimitive: boolean;
+}) {
+  const tools: {
+    glyph: string;
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+  }[] = [
+    { glyph: "⌖", label: "Select", onClick: onSelect },
     { glyph: "▭", label: "Frame", onClick: onAddFrame },
+    { glyph: "□", label: "View", onClick: () => onAddPrimitive("View"), disabled: !canAddPrimitive },
+    { glyph: "T", label: "Text", onClick: () => onAddPrimitive("Text"), disabled: !canAddPrimitive },
+    { glyph: "▧", label: "Image", onClick: () => onAddPrimitive("Image"), disabled: !canAddPrimitive },
+    { glyph: "◉", label: "Pressable", onClick: () => onAddPrimitive("Pressable"), disabled: !canAddPrimitive },
+    { glyph: "↕", label: "ScrollView", onClick: () => onAddPrimitive("ScrollView"), disabled: !canAddPrimitive },
+    { glyph: "▤", label: "TextInput", onClick: () => onAddPrimitive("TextInput"), disabled: !canAddPrimitive },
+    { glyph: "☷", label: "FlatList", onClick: () => onAddPrimitive("FlatList"), disabled: !canAddPrimitive },
   ];
   return (
     <nav
@@ -87,21 +109,20 @@ export function ToolRail({ onAddFrame }: { onAddFrame: () => void }) {
       }}
     >
       {tools.map((t) => {
-        const wired = !!t.onClick;
         return (
           <button
             key={t.label}
             type="button"
-            title={wired ? t.label : `${t.label} — coming soon`}
+            title={t.label}
             onClick={t.onClick}
-            disabled={!wired}
+            disabled={t.disabled}
             style={{
               width: 36,
               height: 36,
               borderRadius: radius.sm,
               border: `1px solid ${color.line}`,
               background: color.chrome2,
-              color: wired ? color.ink : color.inkFaint,
+              color: t.disabled ? color.inkFaint : color.ink,
               fontSize: text.base,
               display: "flex",
               alignItems: "center",
@@ -116,9 +137,67 @@ export function ToolRail({ onAddFrame }: { onAddFrame: () => void }) {
   );
 }
 
-/** Left panel: Screens / Layers / Library tabs. Placeholder bodies for now. */
-export function LeftPanel() {
+const panelButton: React.CSSProperties = {
+  border: `1px solid ${color.line}`,
+  borderRadius: radius.sm,
+  padding: `${space.xs} ${space.sm}`,
+  background: color.raised,
+  color: color.ink,
+  fontSize: text.sm,
+};
+
+/** Document navigation. Screens are roots; Layers is the focused root's tree. */
+export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
   const [tab, setTab] = useState("Screens");
+  const roots = useDocumentStore((state) => state.roots);
+  const selection = useDocumentStore((state) => state.selection);
+  const setSelection = useDocumentStore((state) => state.setSelection);
+  const removeRoot = useDocumentStore((state) => state.removeRoot);
+  const removeNode = useDocumentStore((state) => state.removeNode);
+  const reorderChild = useDocumentStore((state) => state.reorderChild);
+  const selectedId = selection[0] ?? null;
+  const rootList = Object.values(roots);
+  const focusedRoot = findRootContaining(rootList, selectedId ?? "");
+  const selectedNode =
+    focusedRoot && selectedId ? findNode(focusedRoot, selectedId) : undefined;
+  const selectedParent =
+    focusedRoot && selectedId ? getParent(focusedRoot, selectedId) : undefined;
+  const selectedSiblings = selectedParent ? childrenOf(selectedParent) : [];
+  const selectedIndex = selectedSiblings.findIndex((node) => node.id === selectedId);
+  const canMoveUp = selectedIndex > 0 && !selectedNode?.design?.locked;
+  const canMoveDown =
+    selectedIndex >= 0 &&
+    selectedIndex < selectedSiblings.length - 1 &&
+    !selectedNode?.design?.locked;
+  const canDeleteLayer =
+    !!selectedId &&
+    selectedId !== focusedRoot?.id &&
+    !selectedNode?.design?.locked;
+
+  function deleteScreen(rootId: NodeId) {
+    const remaining = rootList.filter((root) => root.id !== rootId);
+    removeRoot(rootId);
+    setSelection(remaining[0] ? [remaining[0].id] : []);
+  }
+
+  function moveSelected(direction: -1 | 1) {
+    if (!focusedRoot || !selectedId) return;
+    const parent = getParent(focusedRoot, selectedId);
+    if (!parent) return;
+    const siblings = childrenOf(parent);
+    const from = siblings.findIndex((node) => node.id === selectedId);
+    const to = from + direction;
+    if (to < 0 || to >= siblings.length) return;
+    reorderChild(focusedRoot.id, parent.id, from, to);
+  }
+
+  function deleteSelected() {
+    if (!focusedRoot || !selectedId || selectedId === focusedRoot.id) return;
+    const parent = getParent(focusedRoot, selectedId);
+    removeNode(focusedRoot.id, selectedId);
+    setSelection(parent ? [parent.id] : [focusedRoot.id]);
+  }
+
   return (
     <aside
       style={{
@@ -133,10 +212,97 @@ export function LeftPanel() {
         overflowY: "auto",
       }}
     >
-      {/* Library (components/tokens) is post-v1 — not shown in v1. */}
       <Tabs tabs={["Screens", "Layers"]} active={tab} onSelect={setTab} />
-      {tab === "Screens" && <Placeholder>Screen list — frames you add appear on the canvas. Management UI lands with navigation (phase 3).</Placeholder>}
-      {tab === "Layers" && <Placeholder>Node tree — currently in the Inspector’s Design tab; moves here as the layers panel fills in.</Placeholder>}
+      {tab === "Screens" && (
+        <section style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Eyebrow>Screens</Eyebrow>
+            <button type="button" style={panelButton} onClick={onAddFrame} title="Add screen">
+              +
+            </button>
+          </div>
+          {rootList.map((root, index) => {
+            const active = root.id === focusedRoot?.id;
+            const locked = !!root.design?.locked;
+            return (
+              <div key={root.id} style={{ display: "flex", gap: space.xs }}>
+                <button
+                  type="button"
+                  disabled={locked}
+                  onClick={() => setSelection([root.id])}
+                  style={{
+                    ...panelButton,
+                    flex: 1,
+                    textAlign: "left",
+                    background: active ? color.accent : color.chrome2,
+                    color: root.design?.hidden ? color.inkFaint : color.ink,
+                  }}
+                >
+                  {root.design?.name ?? `Screen ${index + 1}`}
+                </button>
+                <button
+                  type="button"
+                  disabled={locked}
+                  onClick={() => deleteScreen(root.id)}
+                  style={panelButton}
+                  title="Delete screen"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </section>
+      )}
+      {tab === "Layers" && (
+        <section style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
+          <Eyebrow>Layers</Eyebrow>
+          {focusedRoot ? (
+            <>
+              <div style={{ background: color.chrome2, borderRadius: radius.base, padding: space.xs }}>
+                <DocumentTree
+                  node={focusedRoot}
+                  rootId={focusedRoot.id}
+                  selectedId={selectedId}
+                />
+              </div>
+              <div style={{ display: "flex", gap: space.xs }}>
+                <button
+                  type="button"
+                  style={panelButton}
+                  onClick={() => moveSelected(-1)}
+                  disabled={!canMoveUp}
+                  title="Move up"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  style={panelButton}
+                  onClick={() => moveSelected(1)}
+                  disabled={!canMoveDown}
+                  title="Move down"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  style={panelButton}
+                  onClick={deleteSelected}
+                  disabled={!canDeleteLayer}
+                  title="Delete layer"
+                >
+                  ×
+                </button>
+              </div>
+            </>
+          ) : (
+            <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
+              Select a screen to inspect its layers.
+            </p>
+          )}
+        </section>
+      )}
     </aside>
   );
 }

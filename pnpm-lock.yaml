@@ -63,9 +63,6 @@ importers:
       '@rn-canvas/render-web':
         specifier: workspace:*
         version: link:../../packages/render-web
-      '@rn-canvas/sim-bridge':
-        specifier: workspace:*
-        version: link:../../packages/sim-bridge
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -88,12 +85,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^4.3.4
         version: 4.7.0(vite@6.4.3(@types/node@25.9.3)(lightningcss@1.27.0)(terser@5.48.0)(tsx@4.22.4))
-      pngjs:
-        specifier: ^7.0.0
-        version: 7.0.0
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.4
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -4347,10 +4338,6 @@ packages:
   pngjs@3.4.0:
     resolution: {integrity: sha512-NCrCHhWmnQklfH4MtJMRjZ2a8c80qXeMlQMv2uVp9ISJMTt562SbGd6n2oq0PaPgKm7Z6pL9E2UlLIhC+SHL3w==}
     engines: {node: '>=4.0.0'}
-
-  pngjs@7.0.0:
-    resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
-    engines: {node: '>=14.19.0'}
 
   postcss-value-parser@4.2.0:
     resolution: {integrity: sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==}
@@ -10013,8 +10000,6 @@ snapshots:
       xmlbuilder: 15.1.1
 
   pngjs@3.4.0: {}
-
-  pngjs@7.0.0: {}
 
   postcss-value-parser@4.2.0: {}
 

@@ -2,17 +2,6 @@ declare module "react-native-web" {
   export * from "react-native";
 }
 
-declare module "pngjs" {
-  export class PNG {
-    width: number;
-    height: number;
-    data: Buffer;
-    static sync: {
-      read(buffer: Buffer): PNG;
-    };
-  }
-}
-
 declare module "react-native" {
   import type { ComponentType, ReactNode } from "react";
 

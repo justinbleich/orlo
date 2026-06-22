@@ -4,9 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "turbo dev",
-    "build": "turbo build",
-    "capture:sim": "pnpm --filter @rn-canvas/sim-bridge capture",
-    "diff": "pnpm --filter @rn-canvas/studio diff"
+    "build": "turbo build"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

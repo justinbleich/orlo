@@ -141,6 +141,7 @@ export function simScreenshotPlugin(): Plugin {
     { res: import("node:http").ServerResponse; timeout: ReturnType<typeof setTimeout> }
   >();
   let nextCommandId = 1;
+  let activeClient: { id: string; lastSeen: number } | null = null;
 
   return {
     name: "studio-node-api",
@@ -247,6 +248,23 @@ export function simScreenshotPlugin(): Plugin {
           sendJson(res, 405, { error: "GET required" });
           return;
         }
+        const clientId = new URL(req.url ?? "", "http://localhost").searchParams.get(
+          "clientId",
+        );
+        if (!clientId) {
+          sendJson(res, 400, { error: "clientId is required" });
+          return;
+        }
+        const now = Date.now();
+        if (!activeClient || now - activeClient.lastSeen > 2_000) {
+          activeClient = { id: clientId, lastSeen: now };
+        }
+        if (activeClient.id !== clientId) {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+        activeClient.lastSeen = now;
         const command = commandQueue.shift();
         if (!command) {
           res.statusCode = 204;

@@ -13,11 +13,15 @@ export type BrowserCommandHandler = (command: BrowserCommand) => Promise<unknown
 /** Poll commands from the local Vite host and execute them against the live Studio. */
 export function startMcpBridge(handler: BrowserCommandHandler): () => void {
   const controller = new AbortController();
+  const clientId = crypto.randomUUID();
 
   const loop = async () => {
     while (!controller.signal.aborted) {
       try {
-        const response = await fetch("/api/mcp/next", { signal: controller.signal });
+        const response = await fetch(
+          `/api/mcp/next?clientId=${encodeURIComponent(clientId)}`,
+          { signal: controller.signal },
+        );
         if (response.status === 204) {
           await new Promise((resolve) => setTimeout(resolve, 100));
           continue;

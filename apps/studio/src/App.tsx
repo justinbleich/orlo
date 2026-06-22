@@ -22,6 +22,7 @@ import { color, layout, radius, space, text } from "./studio-theme";
 import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
 import { insertPrimitive } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
+import { handleMcpCommand } from "./mcp-command-handler";
 
 const shapeUtils = [RNFrameShapeUtil];
 const RNFRAME = RNFrameShapeUtil.type;
@@ -141,14 +142,7 @@ export default function App() {
   const undo = useDocumentStore((s) => s.undo);
   const redo = useDocumentStore((s) => s.redo);
 
-  useEffect(
-    () =>
-      startMcpBridge(async (command) => {
-        if (command.type === "get_tree") return useDocumentStore.getState().roots;
-        throw new Error(`Unsupported Studio command: ${command.type}`);
-      }),
-    [],
-  );
+  useEffect(() => startMcpBridge(handleMcpCommand), []);
 
   const onMount = useCallback((editor: Editor) => {
     editorRef.current = editor;

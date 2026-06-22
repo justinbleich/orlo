@@ -7,6 +7,11 @@ import { StudioBridge } from "./bridge";
 export function createMcpServer(bridge = new StudioBridge()) {
   const server = new McpServer({ name: "rn-canvas", version: "0.1.0" });
 
+  const result = (value: unknown) => ({
+    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+    structuredContent: { result: value },
+  });
+
   server.registerTool(
     "get_tree",
     {
@@ -22,6 +27,58 @@ export function createMcpServer(bridge = new StudioBridge()) {
         structuredContent: { roots: selectedRoots },
       };
     },
+  );
+
+  server.registerTool(
+    "create_frame",
+    {
+      description: "Create a new RN View frame in the live document.",
+      inputSchema: {
+        style: z.record(z.unknown()).optional(),
+        design: z.record(z.unknown()).optional(),
+      },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "create_frame", payload })),
+  );
+
+  server.registerTool(
+    "delete_frame",
+    {
+      description: "Delete a document root and its canvas frame.",
+      inputSchema: { rootId: z.string().min(1) },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "delete_frame", payload })),
+  );
+
+  server.registerTool(
+    "update_node",
+    {
+      description: "Update validated primitive props and/or design metadata on a node.",
+      inputSchema: {
+        rootId: z.string().min(1),
+        nodeId: z.string().min(1),
+        props: z.record(z.unknown()).optional(),
+        design: z.record(z.unknown()).optional(),
+      },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "update_node", payload })),
+  );
+
+  server.registerTool(
+    "set_style",
+    {
+      description: "Apply a validated RNStyle patch to a document node.",
+      inputSchema: {
+        rootId: z.string().min(1),
+        nodeId: z.string().min(1),
+        style: z.record(z.unknown()),
+      },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "set_style", payload })),
   );
 
   return server;

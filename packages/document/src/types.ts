@@ -5,14 +5,17 @@
  */
 import type { RNStyle } from "@rn-canvas/styles";
 
-export type RNPrimitive =
-  | "View"
-  | "Text"
-  | "Image"
-  | "Pressable"
-  | "ScrollView"
-  | "TextInput"
-  | "FlatList";
+export const RN_PRIMITIVES = [
+  "View",
+  "Text",
+  "Image",
+  "Pressable",
+  "ScrollView",
+  "TextInput",
+  "FlatList",
+] as const;
+
+export type RNPrimitive = (typeof RN_PRIMITIVES)[number];
 
 export type NodeId = string;
 

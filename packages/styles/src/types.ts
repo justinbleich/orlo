@@ -6,7 +6,8 @@
  */
 
 export type Color = string; // hex / rgb[a]() / hsl[a]() / named; gradients are post-v1
-export type Dimension = number | `${number}%` | "auto"; // unitless number = dp
+export type Dimension = number | `${number}%`; // unitless number = dp
+export type AutoDimension = Dimension | "auto";
 
 export type FontWeight =
   | "normal"
@@ -47,14 +48,14 @@ export interface RNStyle {
   flex?: number;
   flexGrow?: number;
   flexShrink?: number;
-  flexBasis?: Dimension;
+  flexBasis?: AutoDimension;
   gap?: number;
   rowGap?: number;
   columnGap?: number;
 
   // Dimensions (layout)
-  width?: Dimension;
-  height?: Dimension;
+  width?: AutoDimension;
+  height?: AutoDimension;
   minWidth?: Dimension;
   maxWidth?: Dimension;
   minHeight?: Dimension;
@@ -77,13 +78,13 @@ export interface RNStyle {
   paddingRight?: Dimension;
   paddingBottom?: Dimension;
   paddingLeft?: Dimension;
-  margin?: Dimension;
-  marginHorizontal?: Dimension;
-  marginVertical?: Dimension;
-  marginTop?: Dimension;
-  marginRight?: Dimension;
-  marginBottom?: Dimension;
-  marginLeft?: Dimension;
+  margin?: AutoDimension;
+  marginHorizontal?: AutoDimension;
+  marginVertical?: AutoDimension;
+  marginTop?: AutoDimension;
+  marginRight?: AutoDimension;
+  marginBottom?: AutoDimension;
+  marginLeft?: AutoDimension;
 
   // Border (border widths affect the layout box; the rest is visual)
   borderWidth?: number;

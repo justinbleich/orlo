@@ -26,6 +26,13 @@ test("rejects unit strings", () => {
   }
 });
 
+test("accepts auto only for Yoga-supported dimensions", () => {
+  assert.equal(validateStyle({ width: "auto", marginLeft: "auto" }).ok, true);
+  assert.equal(validateStyle({ padding: "auto" }).ok, false);
+  assert.equal(validateStyle({ top: "auto" }).ok, false);
+  assert.equal(validateStyle({ minWidth: "auto" }).ok, false);
+});
+
 test("rejects CSS shorthand", () => {
   const result = validateStyle({ margin: "10px 20px" });
   assert.equal(result.ok, false);

@@ -105,7 +105,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       set({ roots, selection: nextSelection, past: [], future: [] });
     },
 
-    addRoot: (root) => commit({ ...get().roots, [root.id]: root }),
+    addRoot: (root) => {
+      const errors = validateTree(root);
+      if (errors.length > 0) {
+        const first = errors[0];
+        throw new Error(`Invalid document root ${root.id}: ${first.key} ${first.reason}`);
+      }
+      commit({ ...get().roots, [root.id]: root });
+    },
     removeRoot: (rootId) => {
       const next = { ...get().roots };
       delete next[rootId];

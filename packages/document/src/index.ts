@@ -23,7 +23,7 @@ export type {
   PropsByType,
   AnyProps,
 } from "./types";
-export { canHaveChildren, isContainer, childrenOf } from "./types";
+export { RN_PRIMITIVES, canHaveChildren, isContainer, childrenOf } from "./types";
 
 export {
   createNode,
@@ -42,6 +42,7 @@ export {
 
 export {
   validateProps,
+  validateDesign,
   validateNode,
   validateTree,
   type PropError,

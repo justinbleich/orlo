@@ -17,7 +17,7 @@ import {
   Wrap,
 } from "yoga-layout";
 import type { Node as YogaNode } from "yoga-layout/load";
-import type { Dimension, RNStyle } from "./types";
+import type { AutoDimension, Dimension, RNStyle } from "./types";
 import { LAYOUT_STYLE_KEYS, VISUAL_STYLE_KEYS } from "./keys";
 
 export { LAYOUT_STYLE_KEYS, VISUAL_STYLE_KEYS };
@@ -55,12 +55,12 @@ const WRAP: Record<string, Wrap> = {
 
 /** width/height/flexBasis/margin accept number | "auto" | "x%". */
 type YogaDim = number | "auto" | `${number}%`;
-function dimAuto(v: Dimension): YogaDim {
+function dimAuto(v: AutoDimension): YogaDim {
   return v as YogaDim;
 }
 /** padding/position/min/max accept number | "%" but NOT "auto" (RN matches). */
-function dimNoAuto(v: Dimension): number | `${number}%` | undefined {
-  return v === "auto" ? undefined : (v as number | `${number}%`);
+function dimNoAuto(v: Dimension): number | `${number}%` {
+  return v;
 }
 
 /**

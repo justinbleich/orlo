@@ -1,6 +1,7 @@
 export type {
   Color,
   Dimension,
+  AutoDimension,
   FontWeight,
   TransformOp,
   RNStyle,

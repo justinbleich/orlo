@@ -14,6 +14,8 @@ import {
   validateTree,
   childrenOf,
   useDocumentStore,
+  validateDesign,
+  validateProps,
 } from "./index";
 import { sampleDocument } from "./sample";
 
@@ -27,6 +29,56 @@ test("createNode applies defaults and a fresh id", () => {
 
 test("createNode rejects an invalid style", () => {
   assert.throws(() => createNode("View", { style: { width: "10px" } as never }), /Invalid RNStyle/);
+});
+
+test("prop validation is fail-closed for every primitive", () => {
+  for (const type of [
+    "View",
+    "Text",
+    "Image",
+    "Pressable",
+    "ScrollView",
+    "TextInput",
+    "FlatList",
+  ] as const) {
+    assert.match(validateProps(type, { unexpected: true })[0]?.reason ?? "", /unknown/);
+  }
+});
+
+test("prop validation checks every optional primitive field", () => {
+  assert.ok(validateProps("Text", { text: "x", numberOfLines: -1 }).length > 0);
+  assert.ok(
+    validateProps("Image", { source: { uri: "a", require: "b" } }).length > 0,
+  );
+  assert.ok(validateProps("Pressable", { disabled: "yes" }).length > 0);
+  assert.ok(validateProps("ScrollView", { horizontal: 1 }).length > 0);
+  assert.ok(validateProps("ScrollView", { showsScrollIndicator: "yes" }).length > 0);
+  assert.ok(validateProps("TextInput", { placeholder: 1 }).length > 0);
+  assert.ok(validateProps("TextInput", { value: false }).length > 0);
+  assert.ok(validateProps("TextInput", { secureTextEntry: "yes" }).length > 0);
+  assert.ok(validateProps("TextInput", { editable: "yes" }).length > 0);
+  assert.ok(validateProps("FlatList", { data: [], horizontal: "yes" }).length > 0);
+});
+
+test("FlatList data must be JSON-serializable", () => {
+  assert.deepEqual(validateProps("FlatList", { data: [{ id: "1" }] }), []);
+  assert.ok(validateProps("FlatList", { data: [undefined] }).length > 0);
+  assert.ok(validateProps("FlatList", { data: [Number.NaN] }).length > 0);
+});
+
+test("design metadata validation is fail-closed", () => {
+  assert.deepEqual(
+    validateDesign({
+      name: "Card",
+      locked: false,
+      hidden: true,
+      annotations: [{ id: "a", text: "note" }],
+    }),
+    [],
+  );
+  assert.ok(validateDesign({ locked: "yes" }).length > 0);
+  assert.ok(validateDesign({ annotations: [{ id: "a", text: 2 }] }).length > 0);
+  assert.ok(validateDesign({ custom: true }).length > 0);
 });
 
 test("createNode rejects children on a leaf type", () => {
@@ -120,6 +172,19 @@ test("updateDesign sets metadata (locked/hidden)", () => {
 
 test("sampleDocument is a valid tree", () => {
   assert.deepEqual(validateTree(sampleDocument), []);
+});
+
+test("tree validation rejects duplicate ids and malformed children", () => {
+  const duplicate = {
+    ...createNode("View", { id: "same" }),
+    children: [createNode("Text", { id: "same" })],
+  };
+  assert.ok(
+    validateTree(duplicate as never).some((error) => error.reason === "duplicate node id"),
+  );
+
+  const malformed = { ...createNode("View"), children: [null] } as never;
+  assert.ok(validateTree(malformed).some((error) => error.key === "children"));
 });
 
 test("loadRoots atomically opens a document with fresh history", () => {

@@ -5,11 +5,8 @@
  */
 import type { StyleKey } from "./types";
 
-/** Keys whose value is a Dimension (number dp | "%" | "auto"). */
+/** Keys whose value is a Dimension (number dp | "%"). */
 export const DIMENSION_KEYS: ReadonlySet<StyleKey> = new Set<StyleKey>([
-  "flexBasis",
-  "width",
-  "height",
   "minWidth",
   "maxWidth",
   "minHeight",
@@ -25,6 +22,13 @@ export const DIMENSION_KEYS: ReadonlySet<StyleKey> = new Set<StyleKey>([
   "paddingRight",
   "paddingBottom",
   "paddingLeft",
+]);
+
+/** Dimension keys for which RN/Yoga also accept `auto`. */
+export const AUTO_DIMENSION_KEYS: ReadonlySet<StyleKey> = new Set<StyleKey>([
+  "flexBasis",
+  "width",
+  "height",
   "margin",
   "marginHorizontal",
   "marginVertical",
@@ -114,6 +118,7 @@ export const ENUM_VALUES: Partial<Record<StyleKey, ReadonlySet<string>>> = {
 /** All recognized style keys. Anything outside this set is rejected. */
 export const ALL_STYLE_KEYS: ReadonlySet<StyleKey> = new Set<StyleKey>([
   ...DIMENSION_KEYS,
+  ...AUTO_DIMENSION_KEYS,
   ...NUMBER_KEYS,
   ...COLOR_KEYS,
   ...(Object.keys(ENUM_VALUES) as StyleKey[]),

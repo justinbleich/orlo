@@ -6,6 +6,7 @@
 import type { RNStyle, StyleKey, TransformOp } from "./types";
 import {
   ALL_STYLE_KEYS,
+  AUTO_DIMENSION_KEYS,
   COLOR_KEYS,
   DIMENSION_KEYS,
   ENUM_VALUES,
@@ -42,21 +43,21 @@ function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
-function isDimension(v: unknown): boolean {
+function isDimension(v: unknown, allowAuto: boolean): boolean {
   if (isFiniteNumber(v)) return true;
-  if (v === "auto") return true;
+  if (allowAuto && v === "auto") return true;
   if (typeof v === "string") return PERCENT_RE.test(v);
   return false;
 }
 
-function dimensionReason(v: unknown): string {
+function dimensionReason(v: unknown, allowAuto: boolean): string {
   if (typeof v === "string" && UNIT_RE.test(v)) {
-    return "unit strings are not allowed; use a unitless number (dp), a \"%\" string, or \"auto\"";
+    return `unit strings are not allowed; use a unitless number (dp) or a "%" string${allowAuto ? ', or "auto"' : ""}`;
   }
   if (typeof v === "string" && /\s/.test(v.trim())) {
     return "shorthand strings are not allowed; set each side individually";
   }
-  return "expected a number (dp), a \"%\" string, or \"auto\"";
+  return `expected a number (dp) or a "%" string${allowAuto ? ', or "auto"' : ""}`;
 }
 
 function isValidTransform(v: unknown): v is TransformOp[] {
@@ -87,7 +88,10 @@ function validateValue(key: StyleKey, value: unknown): string | null {
   if (value === undefined) return null;
 
   if (DIMENSION_KEYS.has(key)) {
-    return isDimension(value) ? null : dimensionReason(value);
+    return isDimension(value, false) ? null : dimensionReason(value, false);
+  }
+  if (AUTO_DIMENSION_KEYS.has(key)) {
+    return isDimension(value, true) ? null : dimensionReason(value, true);
   }
   if (NUMBER_KEYS.has(key)) {
     return isFiniteNumber(value) ? null : "expected a finite number";

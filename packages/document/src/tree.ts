@@ -14,7 +14,7 @@ import type {
 } from "./types";
 import { canHaveChildren, childrenOf, isContainer } from "./types";
 import { DEFAULT_PROPS, DEFAULT_STYLE } from "./defaults";
-import { validateProps } from "./validate";
+import { validateDesign, validateProps, validateTree } from "./validate";
 
 function newId(): NodeId {
   return globalThis.crypto?.randomUUID
@@ -43,6 +43,12 @@ export function createNode<T extends RNPrimitive>(
     );
   }
   const style = assertStyle({ ...DEFAULT_STYLE[type], ...(init.style ?? {}) });
+  const designErrors = validateDesign(init.design);
+  if (designErrors.length > 0) {
+    throw new Error(
+      `Invalid design metadata — ${designErrors.map((e) => `${e.key}: ${e.reason}`).join("; ")}`,
+    );
+  }
 
   // Omit `design` entirely when not provided, so nodes don't carry an `undefined`
   // key (keeps them JSON-stable for sidecar round-trips).
@@ -54,7 +60,13 @@ export function createNode<T extends RNPrimitive>(
   if (init.design) base.design = init.design;
 
   if (canHaveChildren(type)) {
-    return { ...base, type, children: init.children ?? [] } as Node;
+    const node = { ...base, type, children: init.children ?? [] } as Node;
+    const errors = validateTree(node);
+    if (errors.length > 0) {
+      const first = errors[0];
+      throw new Error(`Invalid ${type} tree — ${first.key}: ${first.reason}`);
+    }
+    return node;
   }
   if (init.children && init.children.length > 0) {
     throw new Error(`${type} cannot have children`);
@@ -118,6 +130,11 @@ export function insertChild(
   child: Node,
   index?: number,
 ): Node {
+  const childErrors = validateTree(child);
+  if (childErrors.length > 0) {
+    const first = childErrors[0];
+    throw new Error(`Invalid child tree — ${first.key}: ${first.reason}`);
+  }
   let inserted = false;
   const result = updateNodeById(tree, parentId, (parent) => {
     assertCanHold(parent, 1);
@@ -228,8 +245,15 @@ export function updateDesign(
 ): Node {
   let found = false;
   const result = updateNodeById(tree, id, (node) => {
+    const design = { ...node.design, ...partial };
+    const errors = validateDesign(design);
+    if (errors.length > 0) {
+      throw new Error(
+        `Invalid design metadata — ${errors.map((e) => `${e.key}: ${e.reason}`).join("; ")}`,
+      );
+    }
     found = true;
-    return { ...node, design: { ...node.design, ...partial } } as Node;
+    return { ...node, design } as Node;
   });
   if (!found) throw new Error(`Node not found: ${id}`);
   return result;

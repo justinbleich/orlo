@@ -360,3 +360,21 @@ retarget to `@rn-canvas/document`.
 - Commit boundary 1: primitive action + rail wiring. Commit boundary 2: document tree,
   Screens/Layers, and Inspector simplification. Git writes were blocked by approval-service
   quota after implementation; keep these boundaries when committing later.
+
+## Phase 4.5 conformance checkpoint
+
+- The document and style boundaries now fail closed across all seven primitives, typed props,
+  design metadata, tree structure, JSON-safe FlatList data, and Yoga-supported dimensions.
+- Renderer, native harness, and codegen primitive semantics are aligned. Generated source is an
+  explicit serialization only; no codegen/transpile path participates in interactive rendering.
+- A deterministic full-contract corpus plus 100 bounded fast-check documents assert Babel parse,
+  React Native TypeScript compilation, identical sidecar round-trip, and sidecar-only design data.
+- Render/layout work is instrumented. Layout snapshots are indexed by node ID and unchanged node
+  layers with unchanged geometry are memoized.
+- `RNNodeOverlay` provides Yoga-geometry hit-testing, selection, resize, absolute move, and flex
+  reorder. All writes use document-store actions and one gesture produces one undo entry.
+- Studio and the Expo harness load `@expo-google-fonts/inter` 0.4.2. The styles package owns
+  Inter's pinned normalized hhea metrics (1984 / -494 / 0 at 2048 units/em) for text measurement.
+- The Phase 0 simulator/diff implementation remains parked, but its root and Studio commands are
+  removed. Optional native preview remains separate from codegen correctness.
+- Phase 4.5 passes. Phase 5 MCP is next; `phase2.md` and `phase3.md` remain post-v1.

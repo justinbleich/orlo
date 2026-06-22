@@ -72,19 +72,19 @@
 via rnw+Yoga, and that we can measure its gap against a real device.
 
 Tasks:
-- [ ] Scaffold the monorepo (pnpm + Turborepo) with `apps/studio`, `apps/harness`,
+- [x] Scaffold the monorepo (pnpm + Turborepo) with `apps/studio`, `apps/harness`,
       `packages/render-web`, `packages/sim-bridge`.
-- [ ] Hardcode one RN node tree in a fixture (a `View` with `flexDirection: row`, two children:
+- [x] Hardcode one RN node tree in a fixture (a `View` with `flexDirection: row`, two children:
       a `Text` and an `Image`).
-- [ ] `packages/render-web`: render that fixture with `react-native-web`, with **Yoga (WASM)**
+- [x] `packages/render-web`: render that fixture with `react-native-web`, with **Yoga (WASM)**
       computing the box layout (do not let the browser do flow layout).
-- [ ] `apps/studio`: place the rendered frame inside a CSS-`transform` container; implement
+- [x] `apps/studio`: place the rendered frame inside a CSS-`transform` container; implement
       pan (drag) and zoom (wheel/pinch). Verify it stays crisp and 60fps. (You may drop in
       `tldraw` here already, or a bare transform container — bare is fine for the spike.)
-- [ ] `apps/harness` + `packages/sim-bridge`: render the *same* fixture in the Expo app, boot an
+- [x] `apps/harness` + `packages/sim-bridge`: render the *same* fixture in the Expo app, boot an
       iOS simulator, and capture a screenshot programmatically
       (`xcrun simctl io booted screenshot`).
-- [ ] Show canvas render and simulator screenshot side by side; compute a simple visual diff
+- [x] Show canvas render and simulator screenshot side by side; compute a simple visual diff
       (e.g. pixel diff or SSIM) and print the score.
 
 **Done when:** the side-by-side renders the same tree, pan/zoom is smooth, and you can state a
@@ -94,27 +94,27 @@ concrete, acceptable fidelity number. If unacceptable, STOP and report.
 
 **Goal:** real editable document + freeform canvas, no fidelity work yet.
 
-- [ ] `packages/document`: define the node schema for the v1 primitive set
+- [x] `packages/document`: define the node schema for the v1 primitive set
       (`View`, `Text`, `Image`, `Pressable`, `ScrollView`, `TextInput`, `FlatList`),
       typed props per primitive, and an RN-subset `style` object.
-- [ ] Tree operations: add/remove/reorder children, edit props, edit style, with validation.
-- [ ] Zustand document store; document is source of truth.
-- [ ] `packages/styles`: encode the RN style subset + a validator that rejects web-only CSS.
-- [ ] `apps/studio`: integrate `tldraw`; define a custom `RNFrame` shape. tldraw holds frame
+- [x] Tree operations: add/remove/reorder children, edit props, edit style, with validation.
+- [x] Zustand document store; document is source of truth.
+- [x] `packages/styles`: encode the RN style subset + a validator that rejects web-only CSS.
+- [x] `apps/studio`: integrate `tldraw`; define a custom `RNFrame` shape. tldraw holds frame
       spatial data; shape props reference a document subtree by id.
-- [ ] Frame create/move/resize/delete + multi-select via tldraw.
-- [ ] Inspector panel: edit selected node's props and styles (RN-subset controls only).
+- [x] Frame create/move/resize/delete + multi-select via tldraw.
+- [x] Inspector panel: edit selected node's props and styles (RN-subset controls only).
 
 **Done when:** you can create multiple frames, build/edit a node tree per frame through the
 inspector, and the store remains the single source of truth.
 
 ## Phase 2 — Live render + layout fidelity
 
-- [ ] `packages/render-web`: full renderer for all v1 primitives via `react-native-web`.
-- [ ] Integrate Yoga (WASM) for layout across the whole tree; map RN styles → Yoga inputs in
+- [x] `packages/render-web`: full renderer for all v1 primitives via `react-native-web`.
+- [x] Integrate Yoga (WASM) for layout across the whole tree; map RN styles → Yoga inputs in
       `packages/styles`.
-- [ ] Text/font handling: load the fonts the harness uses; document known metric-divergence.
-- [ ] Canvas: viewport culling + level-of-detail (cheap proxy for off-focus/zoomed-out frames);
+- [x] Text/font handling: load the fonts the harness uses; document known metric-divergence.
+- [x] Canvas: viewport culling + level-of-detail (cheap proxy for off-focus/zoomed-out frames);
       keep only a few frames "live."
 
 **Done when:** multi-frame canvas renders real RN trees with Yoga-driven layout, smoothly, and
@@ -122,15 +122,16 @@ off-focus frames are cheap.
 
 ## Phase 3 — Code generation (emit)
 
-- [ ] `packages/codegen`: document subtree → typed AST → RN JSX via `@babel/generator`.
-- [ ] Emit `StyleSheet.create`, function components, correct `react-native` imports.
-- [ ] "Pages" → React Navigation screen stubs (not web routes).
-- [ ] **Sidecar emit:** alongside each generated file, write a committed `*.rncanvas.json`
+- [x] `packages/codegen`: document subtree → typed AST → RN JSX via `@babel/generator`.
+- [x] Emit `StyleSheet.create`, function components, correct `react-native` imports.
+- [x] "Pages" → React Navigation screen stubs (not web routes).
+- [x] **Sidecar emit:** alongside each generated file, write a committed `*.rncanvas.json`
       holding the canonical node tree + design-time metadata (§7.1 `design`). Generated code stays
       clean; the sidecar is the in-repo persistence and is what the studio loads. The code is
       never reverse-engineered into the document.
-- [ ] Invariant: design metadata is emitted **only** into the sidecar, never into the code.
-- [ ] Snapshot tests: fixtures → expected RN source + sidecar; assert the code compiles.
+- [x] Invariant: design metadata is emitted **only** into the sidecar, never into the code.
+- [x] Contract/property tests: fixtures and arbitrary valid trees → expected RN source + sidecar;
+      assert the code parses and typechecks.
 
 > Component extraction is post-v1 (`phase2.md` 2C) and is not built in this phase.
 
@@ -139,12 +140,12 @@ within the known gap, and writes a sidecar that reloads into an identical docume
 
 ## Phase 4 — Canvas/code workflow hardening
 
-- [ ] Tool rail creates all seven RN primitives as document nodes inside the focused frame;
+- [x] Tool rail creates all seven RN primitives as document nodes inside the focused frame;
       they never become tldraw shapes.
-- [ ] Screens panel lists document roots and supports create/select/delete without duplicating state.
-- [ ] Layers panel exposes the focused document tree and selection/reorder operations through
+- [x] Screens panel lists document roots and supports create/select/delete without duplicating state.
+- [x] Layers panel exposes the focused document tree and selection/reorder operations through
       the document store.
-- [ ] Code workflow clearly supports sidecar open → canvas edit → Sync Code → sidecar reopen.
+- [x] Code workflow clearly supports sidecar open → canvas edit → Sync Code → sidecar reopen.
 - [ ] Optional local **Open Preview** action is feature-detected and non-blocking. Prefer a thin
       `serve-sim` adapter for iOS after a dedicated spike; external preview is acceptable.
 
@@ -156,21 +157,21 @@ canvas shell, sync/reopen code without state drift, and use the product without 
 **Goal:** prove the document/codegen contract and make the canvas the primary editing surface
 before exposing it to agents. This is v1 primitive authoring, not post-v1 components or behavior.
 
-- [ ] Close the model boundary: reject unknown props; validate every field for all seven
+- [x] Close the model boundary: reject unknown props; validate every field for all seven
       primitives; make accepted RNStyle dimensions agree exactly with Yoga and generated RN.
-- [ ] Align primitive semantics across the canvas renderer, native harness, and codegen.
-- [ ] Property tests generate bounded arbitrary valid trees across all primitives, props, and
+- [x] Align primitive semantics across the canvas renderer, native harness, and codegen.
+- [x] Property tests generate bounded arbitrary valid trees across all primitives, props, and
       RNStyle keys; generated RN parses and typechecks, sidecars round-trip identically, and
       design metadata remains sidecar-only. A deterministic corpus guarantees every branch/key.
-- [ ] Codegen remains explicit serialization (Generate/Sync), never an automatic render input.
-- [ ] Instrument render/layout work. Edits never repaint another frame; unchanged node layers
+- [x] Codegen remains explicit serialization (Generate/Sync), never an automatic render input.
+- [x] Instrument render/layout work. Edits never repaint another frame; unchanged node layers
       with unchanged geometry do not repaint. Keep frame-level Yoga unless measurement shows
       active-frame edits exceed the 16 ms interaction budget.
-- [ ] Direct RN-node selection uses Yoga geometry inside the selected RNFrame. Hidden/locked
+- [x] Direct RN-node selection uses Yoga geometry inside the selected RNFrame. Hidden/locked
       nodes are not selectable; RN nodes never become tldraw shapes.
-- [ ] Resize writes validated width/height. Drag updates left/top for absolute nodes and reorders
+- [x] Resize writes validated width/height. Drag updates left/top for absolute nodes and reorders
       flex-managed siblings. One gesture is one document undo entry.
-- [ ] Pin the default canvas/harness font and FontMetricsTable. Keep native preview optional and
+- [x] Pin the default canvas/harness font and FontMetricsTable. Keep native preview optional and
       separate from codegen correctness.
 
 **Done when:** generated RN is mechanically trustworthy over the full supported vocabulary, and a

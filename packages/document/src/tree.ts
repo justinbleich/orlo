@@ -22,6 +22,35 @@ function newId(): NodeId {
     : `n_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
 
+function mergeDefined<T extends object>(base: T, partial: object): T {
+  const next = { ...base } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(partial)) {
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+  }
+  return next as T;
+}
+
+function canonicalizeProps(type: RNPrimitive, props: AnyProps): AnyProps {
+  if (type === "Image") {
+    return { ...props, source: { ...(props as PropsByType["Image"]).source } } as AnyProps;
+  }
+  if (type === "FlatList") {
+    const data = (props as PropsByType["FlatList"]).data;
+    return { ...props, data: JSON.parse(JSON.stringify(data)) as unknown[] } as AnyProps;
+  }
+  return props;
+}
+
+function canonicalizeDesign(design: DesignMeta): DesignMeta {
+  return {
+    ...design,
+    ...(design.annotations
+      ? { annotations: design.annotations.map((annotation) => ({ ...annotation })) }
+      : {}),
+  };
+}
+
 export interface CreateNodeInit<T extends RNPrimitive> {
   id?: NodeId;
   props?: Partial<PropsByType[T]>;
@@ -35,14 +64,15 @@ export function createNode<T extends RNPrimitive>(
   type: T,
   init: CreateNodeInit<T> = {},
 ): Node {
-  const props = { ...DEFAULT_PROPS[type], ...(init.props ?? {}) } as AnyProps;
+  let props = mergeDefined(DEFAULT_PROPS[type] as AnyProps, init.props ?? {});
   const propErrors = validateProps(type, props);
   if (propErrors.length > 0) {
     throw new Error(
       `Invalid props for ${type} — ${propErrors.map((e) => `${e.key}: ${e.reason}`).join("; ")}`,
     );
   }
-  const style = assertStyle({ ...DEFAULT_STYLE[type], ...(init.style ?? {}) });
+  props = canonicalizeProps(type, props);
+  const style = assertStyle(mergeDefined(DEFAULT_STYLE[type], init.style ?? {}));
   const designErrors = validateDesign(init.design);
   if (designErrors.length > 0) {
     throw new Error(
@@ -57,7 +87,7 @@ export function createNode<T extends RNPrimitive>(
     props,
     style,
   };
-  if (init.design) base.design = init.design;
+  if (init.design) base.design = canonicalizeDesign(init.design);
 
   if (canHaveChildren(type)) {
     const node = { ...base, type, children: init.children ?? [] } as Node;
@@ -209,13 +239,14 @@ export function updateProps(
 ): Node {
   let found = false;
   const result = updateNodeById(tree, id, (node) => {
-    const props = { ...(node.props as object), ...partial } as AnyProps;
+    let props = mergeDefined(node.props as AnyProps, partial);
     const errors = validateProps(node.type, props);
     if (errors.length > 0) {
       throw new Error(
         `Invalid props for ${node.type} — ${errors.map((e) => `${e.key}: ${e.reason}`).join("; ")}`,
       );
     }
+    props = canonicalizeProps(node.type, props);
     found = true;
     return { ...node, props } as Node;
   });
@@ -230,7 +261,7 @@ export function updateStyle(
 ): Node {
   let found = false;
   const result = updateNodeById(tree, id, (node) => {
-    const style = assertStyle({ ...node.style, ...partial });
+    const style = assertStyle(mergeDefined(node.style, partial));
     found = true;
     return { ...node, style } as Node;
   });
@@ -245,7 +276,7 @@ export function updateDesign(
 ): Node {
   let found = false;
   const result = updateNodeById(tree, id, (node) => {
-    const design = { ...node.design, ...partial };
+    const design = mergeDefined(node.design ?? {}, partial);
     const errors = validateDesign(design);
     if (errors.length > 0) {
       throw new Error(
@@ -253,7 +284,11 @@ export function updateDesign(
       );
     }
     found = true;
-    return { ...node, design } as Node;
+    if (Object.keys(design).length === 0) {
+      const { design: _removed, ...withoutDesign } = node;
+      return withoutDesign as Node;
+    }
+    return { ...node, design: canonicalizeDesign(design) } as Node;
   });
   if (!found) throw new Error(`Node not found: ${id}`);
   return result;

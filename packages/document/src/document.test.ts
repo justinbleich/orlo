@@ -164,6 +164,21 @@ test("updateStyle validates at the boundary", () => {
   assert.throws(() => updateStyle(t, "sample-root", { padding: "24px" as never }), /Invalid RNStyle/);
 });
 
+test("undefined updates remove optional fields for JSON-stable sidecars", () => {
+  const input = createNode("Text", {
+    props: { text: "body", numberOfLines: 2 },
+    style: { fontSize: 16 },
+    design: { name: "Label" },
+  });
+  let next = updateProps(input, input.id, { numberOfLines: undefined });
+  next = updateStyle(next, input.id, { fontSize: undefined });
+  next = updateDesign(next, input.id, { name: undefined });
+  assert.equal("numberOfLines" in next.props, false);
+  assert.equal("fontSize" in next.style, false);
+  assert.equal("design" in next, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(next)), next);
+});
+
 test("updateDesign sets metadata (locked/hidden)", () => {
   const t = updateDesign(sampleDocument, "sample-image", { locked: true, name: "logo" });
   assert.equal(findNode(t, "sample-image")!.design?.locked, true);

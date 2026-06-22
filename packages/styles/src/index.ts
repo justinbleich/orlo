@@ -22,6 +22,8 @@ export {
   VISUAL_STYLE_KEYS,
 } from "./yoga-map";
 
+export { ALL_STYLE_KEYS } from "./keys";
+
 export {
   createCanvasTextMeasurer,
   type TextMeasurer,

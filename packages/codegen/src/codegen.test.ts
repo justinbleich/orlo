@@ -111,9 +111,9 @@ test("emits all v1 primitives and parses", () => {
   assert.match(code, /numberOfLines=\{2\}/);
   assert.match(code, /disabled/);
   assert.match(code, /showsHorizontalScrollIndicator=\{false\}/);
-  assert.match(code, /value="Ada"/);
+  assert.match(code, /value=\{"Ada"\}/);
   assert.match(code, /editable=\{false\}/);
-  assert.match(code, /keyboardType="email-address"/);
+  assert.match(code, /keyboardType=\{"email-address"\}/);
 });
 
 test("emits require image sources and vertical scroll indicators", () => {

@@ -73,7 +73,7 @@ function exprAttr(name: string, expr: t.Expression): t.JSXAttribute {
   return t.jsxAttribute(t.jsxIdentifier(name), t.jsxExpressionContainer(expr));
 }
 function strAttr(name: string, value: string): t.JSXAttribute {
-  return t.jsxAttribute(t.jsxIdentifier(name), t.stringLiteral(value));
+  return exprAttr(name, t.stringLiteral(value));
 }
 function boolAttr(name: string): t.JSXAttribute {
   // Bare attribute renders as `name` (=== true) — idiomatic JSX.
@@ -159,11 +159,12 @@ export function emitScreen(root: Node, opts: EmitOptions = {}): string {
           ),
         );
         const template = visibleChildren(node)[0];
-        if (template) {
-          attrs.push(
-            exprAttr("renderItem", t.arrowFunctionExpression([], buildJSX(template))),
-          );
-        }
+        attrs.push(
+          exprAttr(
+            "renderItem",
+            t.arrowFunctionExpression([], template ? buildJSX(template) : t.nullLiteral()),
+          ),
+        );
         if (node.props.horizontal) attrs.push(boolAttr("horizontal"));
         break;
       }

@@ -151,6 +151,32 @@ within the known gap, and writes a sidecar that reloads into an identical docume
 **Done when:** a user can build and organize a multi-frame primitive document primarily from the
 canvas shell, sync/reopen code without state drift, and use the product without native tooling.
 
+## Phase 4.5 — Conformance + direct manipulation (GATES MCP)
+
+**Goal:** prove the document/codegen contract and make the canvas the primary editing surface
+before exposing it to agents. This is v1 primitive authoring, not post-v1 components or behavior.
+
+- [ ] Close the model boundary: reject unknown props; validate every field for all seven
+      primitives; make accepted RNStyle dimensions agree exactly with Yoga and generated RN.
+- [ ] Align primitive semantics across the canvas renderer, native harness, and codegen.
+- [ ] Property tests generate bounded arbitrary valid trees across all primitives, props, and
+      RNStyle keys; generated RN parses and typechecks, sidecars round-trip identically, and
+      design metadata remains sidecar-only. A deterministic corpus guarantees every branch/key.
+- [ ] Codegen remains explicit serialization (Generate/Sync), never an automatic render input.
+- [ ] Instrument render/layout work. Edits never repaint another frame; unchanged node layers
+      with unchanged geometry do not repaint. Keep frame-level Yoga unless measurement shows
+      active-frame edits exceed the 16 ms interaction budget.
+- [ ] Direct RN-node selection uses Yoga geometry inside the selected RNFrame. Hidden/locked
+      nodes are not selectable; RN nodes never become tldraw shapes.
+- [ ] Resize writes validated width/height. Drag updates left/top for absolute nodes and reorders
+      flex-managed siblings. One gesture is one document undo entry.
+- [ ] Pin the default canvas/harness font and FontMetricsTable. Keep native preview optional and
+      separate from codegen correctness.
+
+**Done when:** generated RN is mechanically trustworthy over the full supported vocabulary, and a
+user can select, resize, and move/reorder RN nodes directly on the canvas while the document store
+remains canonical and interaction stays within the frame budget.
+
 ## Phase 5 — MCP / agent loop
 
 - [ ] `packages/mcp-server`: implement tools — `get_tree`, `create_frame`, `delete_frame`,

@@ -182,6 +182,7 @@ The document remains the single source of truth. Design-time metadata is preserv
 * Frame create/move/resize/delete
 * Multi-select
 * Live RN rendering via react-native-web
+* Direct RN-node selection and manipulation using Yoga-derived geometry
 * Viewport culling
 * Level-of-detail rendering for distant frames
 
@@ -348,6 +349,7 @@ Validate that design → RN code is valuable.
 A user or agent can:
 
 * Build screens visually
+* Select, resize, and move/reorder RN nodes directly on the canvas
 * Optionally open a selected frame in a local native preview
 * Export production-ready RN code
 * Avoid manual design-to-RN porting

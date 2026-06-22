@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   Image,
   Pressable,
@@ -10,11 +10,29 @@ import {
 } from "react-native-web";
 import type { Node } from "@rn-canvas/document";
 import { pickVisualStyle } from "@rn-canvas/styles";
-import { computeLayout, type LayoutBox } from "./yoga-layout";
+import {
+  computeLayout,
+  createLayoutSnapshot,
+  type LayoutBox,
+  type LayoutSnapshot,
+} from "./yoga-layout";
+
+export type RenderInstrumentation = {
+  onLayout?: (metrics: { durationMs: number; boxes: number }) => void;
+  onNodePaint?: (metrics: { instanceKey: string; nodeId: string }) => void;
+};
+
+export type LayoutReadyResult = {
+  layout: LayoutBox;
+  snapshot: LayoutSnapshot;
+  width: number;
+  height: number;
+};
 
 type RNFrameRendererProps = {
   root: Node;
-  onLayoutReady?: (layout: LayoutBox, width: number, height: number) => void;
+  onLayoutReady?: (result: LayoutReadyResult) => void;
+  instrumentation?: RenderInstrumentation;
 };
 
 /**
@@ -106,9 +124,46 @@ function renderLayoutBox(box: LayoutBox): React.ReactNode {
   }
 }
 
-export function RNFrameRenderer({ root, onLayoutReady }: RNFrameRendererProps) {
+function sameLayoutBox(a: LayoutBox, b: LayoutBox): boolean {
+  return (
+    a.instanceKey === b.instanceKey &&
+    a.node === b.node &&
+    a.left === b.left &&
+    a.top === b.top &&
+    a.width === b.width &&
+    a.height === b.height
+  );
+}
+
+const RenderedLayoutBox = memo(
+  function RenderedLayoutBox({
+    box,
+    onNodePaint,
+  }: {
+    box: LayoutBox;
+    onNodePaint?: RenderInstrumentation["onNodePaint"];
+  }) {
+    useEffect(() => {
+      onNodePaint?.({ instanceKey: box.instanceKey, nodeId: box.node.id });
+    });
+    return renderLayoutBox(box);
+  },
+  (previous, next) =>
+    previous.onNodePaint === next.onNodePaint && sameLayoutBox(previous.box, next.box),
+);
+
+export function RNFrameRenderer({
+  root,
+  onLayoutReady,
+  instrumentation,
+}: RNFrameRendererProps) {
+  const onLayoutReadyRef = useRef(onLayoutReady);
+  const instrumentationRef = useRef(instrumentation);
+  onLayoutReadyRef.current = onLayoutReady;
+  instrumentationRef.current = instrumentation;
   const [layoutState, setLayoutState] = useState<{
     layout: LayoutBox;
+    snapshot: LayoutSnapshot;
     width: number;
     height: number;
   } | null>(null);
@@ -116,12 +171,20 @@ export function RNFrameRenderer({ root, onLayoutReady }: RNFrameRendererProps) {
 
   useEffect(() => {
     let cancelled = false;
+    setError(null);
+    const started = globalThis.performance?.now() ?? Date.now();
 
     computeLayout(root)
       .then(({ layout, rootWidth, rootHeight }) => {
         if (cancelled) return;
-        setLayoutState({ layout, width: rootWidth, height: rootHeight });
-        onLayoutReady?.(layout, rootWidth, rootHeight);
+        const snapshot = createLayoutSnapshot(layout);
+        const result = { layout, snapshot, width: rootWidth, height: rootHeight };
+        setLayoutState(result);
+        onLayoutReadyRef.current?.(result);
+        instrumentationRef.current?.onLayout?.({
+          durationMs: (globalThis.performance?.now() ?? Date.now()) - started,
+          boxes: flattenLayout(layout).length,
+        });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -131,7 +194,7 @@ export function RNFrameRenderer({ root, onLayoutReady }: RNFrameRendererProps) {
     return () => {
       cancelled = true;
     };
-  }, [root, onLayoutReady]);
+  }, [root]);
 
   if (error) {
     return (
@@ -154,10 +217,16 @@ export function RNFrameRenderer({ root, onLayoutReady }: RNFrameRendererProps) {
 
   return (
     <View style={{ position: "relative", width, height, overflow: "hidden" }}>
-      {flat.map((box) => renderLayoutBox(box))}
+      {flat.map((box) => (
+        <RenderedLayoutBox
+          key={box.instanceKey}
+          box={box}
+          onNodePaint={instrumentation?.onNodePaint}
+        />
+      ))}
     </View>
   );
 }
 
 export { computeLayout, computePixelDiff } from "./yoga-layout";
-export type { LayoutBox } from "./yoga-layout";
+export type { LayoutBox, LayoutSnapshot } from "./yoga-layout";

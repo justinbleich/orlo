@@ -18,6 +18,20 @@ export type LayoutBox = {
   children: LayoutBox[];
 };
 
+export type LayoutSnapshot = ReadonlyMap<string, readonly LayoutBox[]>;
+
+export function createLayoutSnapshot(layout: LayoutBox): LayoutSnapshot {
+  const mutable = new Map<string, LayoutBox[]>();
+  const visit = (box: LayoutBox) => {
+    const boxes = mutable.get(box.node.id) ?? [];
+    boxes.push(box);
+    mutable.set(box.node.id, boxes);
+    box.children.forEach(visit);
+  };
+  visit(layout);
+  return mutable;
+}
+
 type YogaTree = {
   instanceKey: string;
   yogaNode: YogaNode;

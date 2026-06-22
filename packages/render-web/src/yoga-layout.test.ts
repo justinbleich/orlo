@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createNode } from "@rn-canvas/document";
-import { computeLayout } from "./yoga-layout";
+import { computeLayout, createLayoutSnapshot } from "./yoga-layout";
 
 test("hidden nodes do not participate in Yoga layout", async () => {
   const root = createNode("View", {
@@ -37,4 +37,5 @@ test("FlatList lays out one template instance per sample row", async () => {
     layout.children.map((box) => box.left),
     [0, 20, 40],
   );
+  assert.equal(createLayoutSnapshot(layout).get("row")?.length, 3);
 });

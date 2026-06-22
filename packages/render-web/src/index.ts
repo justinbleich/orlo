@@ -1,5 +1,10 @@
 export { RNFrameRenderer, computeLayout, computePixelDiff } from "./RNFrameRenderer";
-export type { LayoutBox } from "./yoga-layout";
+export type {
+  LayoutReadyResult,
+  RenderInstrumentation,
+} from "./RNFrameRenderer";
+export { createLayoutSnapshot } from "./yoga-layout";
+export type { LayoutBox, LayoutSnapshot } from "./yoga-layout";
 export {
   cropToContent,
   resizeNearest,

@@ -32,8 +32,12 @@ export interface DocumentState {
   selection: NodeId[];
   past: Snapshot[];
   future: Snapshot[];
+  interaction: Snapshot | null;
 
   setSelection(ids: NodeId[]): void;
+  beginInteraction(): void;
+  commitInteraction(): void;
+  cancelInteraction(): void;
 
   /** Replace the open document atomically. Used by sidecar loading; opening a
    *  document starts a fresh undo history rather than mixing document sessions. */
@@ -62,9 +66,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
   /** Commit a new roots map, snapshotting the previous tree + selection for undo. */
   const commit = (next: Roots) => {
     set((state) => ({
-      past: [...state.past, { roots: state.roots, selection: state.selection }].slice(
-        -HISTORY_LIMIT,
-      ),
+      past: state.interaction
+        ? state.past
+        : [...state.past, { roots: state.roots, selection: state.selection }].slice(
+            -HISTORY_LIMIT,
+          ),
       future: [],
       roots: next,
     }));
@@ -85,8 +91,35 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     selection: [],
     past: [],
     future: [],
+    interaction: null,
 
     setSelection: (ids) => set({ selection: ids }),
+    beginInteraction: () => {
+      const state = get();
+      if (state.interaction) throw new Error("A document interaction is already active");
+      set({ interaction: { roots: state.roots, selection: state.selection } });
+    },
+    commitInteraction: () => {
+      const state = get();
+      if (!state.interaction) return;
+      const changed = state.roots !== state.interaction.roots;
+      set({
+        interaction: null,
+        past: changed
+          ? [...state.past, state.interaction].slice(-HISTORY_LIMIT)
+          : state.past,
+        future: changed ? [] : state.future,
+      });
+    },
+    cancelInteraction: () => {
+      const state = get();
+      if (!state.interaction) return;
+      set({
+        roots: state.interaction.roots,
+        selection: state.interaction.selection,
+        interaction: null,
+      });
+    },
 
     loadRoots: (roots, selection) => {
       for (const [rootId, root] of Object.entries(roots)) {
@@ -102,7 +135,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         }
       }
       const nextSelection = selection ?? Object.keys(roots).slice(0, 1);
-      set({ roots, selection: nextSelection, past: [], future: [] });
+      set({ roots, selection: nextSelection, past: [], future: [], interaction: null });
     },
 
     addRoot: (root) => {
@@ -147,6 +180,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
             { roots: state.roots, selection: state.selection },
             ...state.future,
           ].slice(0, HISTORY_LIMIT),
+          interaction: null,
         };
       }),
     redo: () =>
@@ -160,6 +194,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
             -HISTORY_LIMIT,
           ),
           future: state.future.slice(1),
+          interaction: null,
         };
       }),
   };

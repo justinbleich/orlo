@@ -227,3 +227,32 @@ test("loadRoots validates the sidecar tree boundary", () => {
     /Invalid document root/,
   );
 });
+
+test("an interaction commits many writes as one undo entry", () => {
+  const root = createNode("View", { id: "gesture-root" });
+  const store = useDocumentStore.getState();
+  store.loadRoots({ [root.id]: root }, [root.id]);
+  store.beginInteraction();
+  store.updateStyle(root.id, root.id, { width: 100 });
+  store.updateStyle(root.id, root.id, { width: 120 });
+  store.updateStyle(root.id, root.id, { width: 140 });
+  assert.equal(useDocumentStore.getState().past.length, 0);
+  store.commitInteraction();
+  assert.equal(useDocumentStore.getState().past.length, 1);
+  store.undo();
+  assert.equal(useDocumentStore.getState().roots[root.id].style.width, undefined);
+});
+
+test("cancelling an interaction restores roots and selection", () => {
+  const root = createNode("View", { id: "cancel-root" });
+  const store = useDocumentStore.getState();
+  store.loadRoots({ [root.id]: root }, [root.id]);
+  store.beginInteraction();
+  store.updateStyle(root.id, root.id, { height: 200 });
+  store.setSelection([]);
+  store.cancelInteraction();
+  const state = useDocumentStore.getState();
+  assert.equal(state.roots[root.id].style.height, undefined);
+  assert.deepEqual(state.selection, [root.id]);
+  assert.equal(state.past.length, 0);
+});

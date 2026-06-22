@@ -6,9 +6,10 @@ import {
   type TextMeasurer,
 } from "@rn-canvas/styles";
 import type { Node as YogaNode, Yoga } from "yoga-layout/load";
-import { Direction, MeasureMode } from "yoga-layout";
+import { Direction, FlexDirection, MeasureMode } from "yoga-layout";
 
 export type LayoutBox = {
+  instanceKey: string;
   node: Node;
   left: number;
   top: number;
@@ -18,6 +19,7 @@ export type LayoutBox = {
 };
 
 type YogaTree = {
+  instanceKey: string;
   yogaNode: YogaNode;
   node: Node;
   children: YogaTree[];
@@ -27,11 +29,19 @@ function buildYogaTree(
   Yoga: Yoga,
   node: Node,
   measurer: TextMeasurer,
+  instanceKey: string,
 ): YogaTree {
   const yogaNode = Yoga.Node.create();
 
   // The single authority maps style → Yoga; the renderer never maps layout itself.
   applyLayoutStyle(yogaNode, node.style);
+  if (
+    node.type === "FlatList" &&
+    node.props.horizontal &&
+    node.style.flexDirection === undefined
+  ) {
+    yogaNode.setFlexDirection(FlexDirection.Row);
+  }
 
   if (node.type === "Text") {
     const { text, numberOfLines } = node.props;
@@ -41,22 +51,34 @@ function buildYogaTree(
     });
   }
 
-  const children = childrenOf(node).map((child) =>
-    buildYogaTree(Yoga, child, measurer),
-  );
+  const documentChildren = childrenOf(node).filter((child) => !child.design?.hidden);
+  const children =
+    node.type === "FlatList" && documentChildren[0]
+      ? node.props.data.map((_, index) =>
+          buildYogaTree(
+            Yoga,
+            documentChildren[0],
+            measurer,
+            `${instanceKey}:item:${index}`,
+          ),
+        )
+      : documentChildren.map((child) =>
+          buildYogaTree(Yoga, child, measurer, `${instanceKey}:${child.id}`),
+        );
   children.forEach((child, i) => yogaNode.insertChild(child.yogaNode, i));
 
-  return { yogaNode, node, children };
+  return { instanceKey, yogaNode, node, children };
 }
 
 function collectLayout(tree: YogaTree, offsetLeft = 0, offsetTop = 0): LayoutBox {
-  const { yogaNode, node, children } = tree;
+  const { instanceKey, yogaNode, node, children } = tree;
   const left = offsetLeft + yogaNode.getComputedLeft();
   const top = offsetTop + yogaNode.getComputedTop();
   const width = yogaNode.getComputedWidth();
   const height = yogaNode.getComputedHeight();
 
   return {
+    instanceKey,
     node,
     left,
     top,
@@ -82,7 +104,7 @@ export async function computeLayout(
   opts: { measurer?: TextMeasurer } = {},
 ): Promise<{ layout: LayoutBox; rootWidth: number; rootHeight: number }> {
   const Yoga = await loadYogaModule();
-  const tree = buildYogaTree(Yoga, root, opts.measurer ?? defaultMeasurer);
+  const tree = buildYogaTree(Yoga, root, opts.measurer ?? defaultMeasurer, root.id);
 
   tree.yogaNode.calculateLayout(undefined, undefined, Direction.LTR);
 

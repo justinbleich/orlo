@@ -122,16 +122,26 @@ export function emitScreen(root: Node, opts: EmitOptions = {}): string {
         if (node.props.resizeMode) attrs.push(strAttr("resizeMode", node.props.resizeMode));
         break;
       }
+      case "Pressable":
+        if (node.props.disabled) attrs.push(boolAttr("disabled"));
+        break;
       case "ScrollView":
         if (node.props.horizontal) attrs.push(boolAttr("horizontal"));
         if (node.props.showsScrollIndicator === false) {
-          attrs.push(exprAttr("showsVerticalScrollIndicator", t.booleanLiteral(false)));
+          attrs.push(
+            exprAttr(
+              node.props.horizontal
+                ? "showsHorizontalScrollIndicator"
+                : "showsVerticalScrollIndicator",
+              t.booleanLiteral(false),
+            ),
+          );
         }
         break;
       case "TextInput": {
         const p = node.props;
         if (p.placeholder !== undefined) attrs.push(strAttr("placeholder", p.placeholder));
-        if (p.value !== undefined) attrs.push(strAttr("defaultValue", p.value));
+        if (p.value !== undefined) attrs.push(strAttr("value", p.value));
         if (p.secureTextEntry) attrs.push(boolAttr("secureTextEntry"));
         if (p.editable === false) attrs.push(exprAttr("editable", t.booleanLiteral(false)));
         if (p.keyboardType) attrs.push(strAttr("keyboardType", p.keyboardType));
@@ -192,7 +202,7 @@ export function emitScreen(root: Node, opts: EmitOptions = {}): string {
   }
 
   // Build the tree first so `used` + `styleEntries` are populated.
-  const tree = buildJSX(root);
+  const tree: t.Expression = root.design?.hidden ? t.nullLiteral() : buildJSX(root);
 
   const importNames = [...new Set<string>([...used, "StyleSheet"])].sort();
   const importDecl = t.importDeclaration(

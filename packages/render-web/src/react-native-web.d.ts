@@ -26,11 +26,17 @@ declare module "react-native" {
     resizeMode?: string;
   }>;
 
-  export const Pressable: ComponentType<{ style?: Style; children?: ReactNode }>;
+  export const Pressable: ComponentType<{
+    style?: Style;
+    disabled?: boolean;
+    children?: ReactNode;
+  }>;
 
   export const ScrollView: ComponentType<{
     style?: Style;
     horizontal?: boolean;
+    showsHorizontalScrollIndicator?: boolean;
+    showsVerticalScrollIndicator?: boolean;
     children?: ReactNode;
   }>;
 
@@ -41,5 +47,6 @@ declare module "react-native" {
     value?: string;
     editable?: boolean;
     secureTextEntry?: boolean;
+    keyboardType?: string;
   }>;
 }

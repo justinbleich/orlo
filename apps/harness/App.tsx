@@ -50,20 +50,31 @@ function renderNode(node: Node, key?: number): ReactNode {
           key={key}
           style={style}
           placeholder={node.props.placeholder}
-          defaultValue={node.props.value}
+          value={node.props.value}
           editable={node.props.editable}
           secureTextEntry={node.props.secureTextEntry}
+          keyboardType={node.props.keyboardType}
         />
       );
     case "ScrollView":
       return (
-        <ScrollView key={key} style={style} horizontal={node.props.horizontal}>
+        <ScrollView
+          key={key}
+          style={style}
+          horizontal={node.props.horizontal}
+          showsHorizontalScrollIndicator={
+            node.props.horizontal ? node.props.showsScrollIndicator : undefined
+          }
+          showsVerticalScrollIndicator={
+            node.props.horizontal ? undefined : node.props.showsScrollIndicator
+          }
+        >
           {node.children.map((child, i) => renderNode(child, i))}
         </ScrollView>
       );
     case "Pressable":
       return (
-        <Pressable key={key} style={style}>
+        <Pressable key={key} style={style} disabled={node.props.disabled}>
           {node.children.map((child, i) => renderNode(child, i))}
         </Pressable>
       );

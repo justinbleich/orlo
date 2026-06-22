@@ -32,7 +32,7 @@ function flattenLayout(box: LayoutBox, result: LayoutBox[] = []): LayoutBox[] {
 }
 
 function renderLayoutBox(box: LayoutBox): React.ReactNode {
-  const { node, left, top, width, height } = box;
+  const { instanceKey, node, left, top, width, height } = box;
   const positionStyle = {
     position: "absolute" as const,
     left,
@@ -45,7 +45,7 @@ function renderLayoutBox(box: LayoutBox): React.ReactNode {
   switch (node.type) {
     case "Text":
       return (
-        <Text key={node.id} style={positionStyle} numberOfLines={node.props.numberOfLines}>
+        <Text key={instanceKey} style={positionStyle} numberOfLines={node.props.numberOfLines}>
           {node.props.text}
         </Text>
       );
@@ -54,7 +54,7 @@ function renderLayoutBox(box: LayoutBox): React.ReactNode {
         "uri" in node.props.source ? { uri: node.props.source.uri } : undefined;
       return (
         <Image
-          key={node.id}
+          key={instanceKey}
           source={source as ImageSourcePropType}
           style={positionStyle}
           resizeMode={node.props.resizeMode ?? "cover"}
@@ -64,23 +64,45 @@ function renderLayoutBox(box: LayoutBox): React.ReactNode {
     case "TextInput":
       return (
         <TextInput
-          key={node.id}
+          key={instanceKey}
           style={positionStyle}
           placeholder={node.props.placeholder}
-          defaultValue={node.props.value}
+          value={node.props.value}
           editable={node.props.editable}
           secureTextEntry={node.props.secureTextEntry}
+          keyboardType={node.props.keyboardType}
         />
       );
     case "Pressable":
-      return <Pressable key={node.id} style={positionStyle} />;
+      return (
+        <Pressable key={instanceKey} style={positionStyle} disabled={node.props.disabled} />
+      );
     case "ScrollView":
+      return (
+        <ScrollView
+          key={instanceKey}
+          style={positionStyle}
+          horizontal={node.props.horizontal}
+          showsHorizontalScrollIndicator={
+            node.props.horizontal ? node.props.showsScrollIndicator : undefined
+          }
+          showsVerticalScrollIndicator={
+            node.props.horizontal ? undefined : node.props.showsScrollIndicator
+          }
+        />
+      );
     case "FlatList":
       // Children are drawn as their own absolute boxes; the container itself is
       // just a positioned surface in the canvas preview.
-      return <ScrollView key={node.id} style={positionStyle} />;
+      return (
+        <ScrollView
+          key={instanceKey}
+          style={positionStyle}
+          horizontal={node.props.horizontal}
+        />
+      );
     default:
-      return <View key={node.id} style={positionStyle} />;
+      return <View key={instanceKey} style={positionStyle} />;
   }
 }
 

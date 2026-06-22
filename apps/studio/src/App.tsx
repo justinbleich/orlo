@@ -309,14 +309,6 @@ export default function App() {
     }
   }, [sidecarPath]);
 
-  useEffect(() => {
-    if (inspectorTab !== "Code" || !focusedRoot) return;
-    void requestCodegen("preview");
-    // Preview once when entering Code or changing frames. Name/path edits are
-    // explicit via Preview/Sync so they don't spawn a Node codegen process per key.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusedRootId, inspectorTab]);
-
   const btn: React.CSSProperties = {
     background: color.chrome2,
     color: color.ink,

@@ -163,12 +163,18 @@ importers:
         specifier: 3.2.1
         version: 3.2.1
     devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.21
       '@types/react':
         specifier: ^18.3.12
         version: 18.3.31
       '@types/react-dom':
         specifier: ^18.3.1
         version: 18.3.7(@types/react@18.3.31)
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

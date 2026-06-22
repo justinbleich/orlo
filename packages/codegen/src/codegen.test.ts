@@ -80,13 +80,25 @@ test("hidden nodes are omitted from code but kept in the sidecar", () => {
 test("emits all v1 primitives and parses", () => {
   const root = createNode("View", {
     children: [
-      createNode("Text", { props: { text: "t" } }),
-      createNode("Image", { props: { source: { uri: "u" } } }),
-      createNode("Pressable", {}),
-      createNode("ScrollView", { props: { horizontal: true } }),
-      createNode("TextInput", { props: { placeholder: "name", secureTextEntry: true } }),
+      createNode("Text", { props: { text: "t", numberOfLines: 2 } }),
+      createNode("Image", {
+        props: { source: { uri: "u" }, resizeMode: "contain" },
+      }),
+      createNode("Pressable", { props: { disabled: true } }),
+      createNode("ScrollView", {
+        props: { horizontal: true, showsScrollIndicator: false },
+      }),
+      createNode("TextInput", {
+        props: {
+          placeholder: "name",
+          value: "Ada",
+          secureTextEntry: true,
+          editable: false,
+          keyboardType: "email-address",
+        },
+      }),
       createNode("FlatList", {
-        props: { data: [{ id: "1" }, { id: "2" }] },
+        props: { data: [{ id: "1" }, { id: "2" }], horizontal: true },
         children: [createNode("Text", { props: { text: "row" } })],
       }),
     ],
@@ -96,6 +108,38 @@ test("emits all v1 primitives and parses", () => {
   assert.match(code, /data=\{\[/);
   assert.match(code, /renderItem=\{\(\) =>/);
   assert.match(code, /keyExtractor=/);
+  assert.match(code, /numberOfLines=\{2\}/);
+  assert.match(code, /disabled/);
+  assert.match(code, /showsHorizontalScrollIndicator=\{false\}/);
+  assert.match(code, /value="Ada"/);
+  assert.match(code, /editable=\{false\}/);
+  assert.match(code, /keyboardType="email-address"/);
+});
+
+test("emits require image sources and vertical scroll indicators", () => {
+  const root = createNode("View", {
+    children: [
+      createNode("Image", { props: { source: { require: "./asset.png" } } }),
+      createNode("ScrollView", { props: { showsScrollIndicator: false } }),
+    ],
+  });
+  const code = emitScreen(root);
+  assert.match(code, /require\("\.\/asset\.png"\)/);
+  assert.match(code, /showsVerticalScrollIndicator=\{false\}/);
+  assertParses(code);
+});
+
+test("a hidden root emits no render tree but remains in the sidecar", () => {
+  const root = createNode("View", {
+    design: { hidden: true, name: "HiddenRoot" },
+    children: [createNode("Text", { props: { text: "secret body" } })],
+  });
+  const { code, sidecar } = generateScreen(root);
+  assert.match(code, /return null/);
+  assert.ok(!code.includes("secret body"));
+  assert.ok(!code.includes("HiddenRoot"));
+  assert.ok(sidecar.includes("HiddenRoot"));
+  assertParses(code);
 });
 
 test("sidecar round-trips to an identical tree", () => {

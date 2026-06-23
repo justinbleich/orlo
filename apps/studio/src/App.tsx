@@ -347,6 +347,18 @@ export default function App() {
                 isLocked: shouldLock,
               } as unknown as UpdatePartial);
             }
+            // Mirror the screen size from the root so a document undo of a frame
+            // resize restores the box too. Only when it differs (a live drag has
+            // already matched them, so this won't fight tldraw mid-gesture).
+            const frame = asRNFrame(shape);
+            const { w, h } = rootSize(root);
+            if (frame.props.w !== w || frame.props.h !== h) {
+              editor.updateShape({
+                id: shape.id,
+                type: RNFRAME,
+                props: { ...frame.props, w, h },
+              } as unknown as UpdatePartial);
+            }
           }
           const selectedId = useDocumentStore.getState().selection[0] ?? "";
           const selectedRoot = findRootContaining(Object.values(roots), selectedId);

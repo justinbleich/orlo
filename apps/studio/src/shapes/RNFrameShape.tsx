@@ -74,6 +74,46 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
     return true;
   }
 
+  // Resizing the frame is resizing the *screen*: the new box size is written to
+  // the root node's width/height so Yoga reflows the content (responsive, like a
+  // device). The whole drag is one document interaction → one undo entry; the
+  // App-side reconcile mirrors the shape box back from the root on undo.
+  // tldraw is untyped in this build, so these handlers are loosely typed.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override onResizeStart(shape: RNFrameShape): any {
+    try {
+      useDocumentStore.getState().beginInteraction();
+    } catch {
+      /* an interaction may already be active; resize still applies */
+    }
+    return undefined;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override onResize(shape: RNFrameShape, info: any): any {
+    const w = Math.max(40, Math.round(info.initialShape.props.w * info.scaleX));
+    const h = Math.max(40, Math.round(info.initialShape.props.h * info.scaleY));
+    const { rootId } = shape.props;
+    try {
+      useDocumentStore.getState().updateStyle(rootId, rootId, { width: w, height: h });
+    } catch {
+      /* transient invalid size during drag — keep the last valid layout */
+    }
+    return {
+      id: shape.id,
+      type: shape.type,
+      x: info.newPoint.x,
+      y: info.newPoint.y,
+      props: { ...shape.props, w, h },
+    };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override onResizeEnd(): any {
+    useDocumentStore.getState().commitInteraction();
+    return undefined;
+  }
+
   override getGeometry(shape: RNFrameShape): Geometry2d {
     return new Rectangle2d({
       width: shape.props.w,

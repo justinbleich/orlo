@@ -103,6 +103,7 @@ export function RNNodeOverlay({
   const selection = useDocumentStore((state) => state.selection);
   const [instanceKey, setInstanceKey] = useState<string | null>(null);
   const [marquee, setMarquee] = useState<Rect | null>(null);
+  const [editing, setEditing] = useState<{ id: NodeId; value: string } | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
 
@@ -194,8 +195,40 @@ export function RNNodeOverlay({
     setMarquee(rectOf(start, start));
   }
 
+  function onDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (!active) return;
+    const point = localPoint(
+      overlayRef.current ?? (event.currentTarget as HTMLDivElement),
+      event.clientX,
+      event.clientY,
+    );
+    const hit = hitTestLayout(result.layout, point);
+    if (!hit) return;
+    const node = hit.node;
+    if (node.type === "Text" && !node.design?.locked) {
+      useDocumentStore.getState().setSelection([node.id]);
+      setInstanceKey(hit.instanceKey);
+      // type === "Text" guarantees TextProps at runtime; LayoutBox.node isn't
+      // narrowed by the discriminant here, so read text through a narrow cast.
+      setEditing({ id: node.id, value: (node.props as { text: string }).text });
+    }
+  }
+
+  function commitEdit() {
+    if (!editing) return;
+    const node = findNode(root, editing.id);
+    if (node && (node.props as { text?: string }).text !== editing.value) {
+      try {
+        useDocumentStore.getState().updateProps(root.id, editing.id, { text: editing.value });
+      } catch {
+        /* keep editing on invalid input */
+      }
+    }
+    setEditing(null);
+  }
+
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (!active || gesture.current) return;
+    if (!active || gesture.current || editing) return;
     const additive = event.shiftKey || event.metaKey || event.ctrlKey;
     const hit = hitTestLayout(result.layout, eventPoint(event));
 
@@ -374,8 +407,9 @@ export function RNNodeOverlay({
       onPointerMove={onPointerMove}
       onPointerUp={(event) => finishGesture(event)}
       onPointerCancel={(event) => finishGesture(event, true)}
+      onDoubleClick={onDoubleClick}
       onKeyDown={(event) => {
-        if (event.key === "Escape") selectParent();
+        if (event.key === "Escape" && !editing) selectParent();
       }}
       style={{
         position: "absolute",
@@ -440,6 +474,55 @@ export function RNNodeOverlay({
           }}
         />
       )}
+
+      {/* Inline text editing — a textarea laid over the selected Text box. */}
+      {active &&
+        editing &&
+        (() => {
+          const box = result.snapshot.get(editing.id)?.[0];
+          if (!box) return null;
+          const style = box.node.style;
+          return (
+            <textarea
+              autoFocus
+              value={editing.value}
+              onChange={(e) => setEditing({ id: editing.id, value: e.target.value })}
+              onBlur={commitEdit}
+              onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setEditing(null);
+                } else if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  commitEdit();
+                }
+              }}
+              style={{
+                position: "absolute",
+                left: box.left,
+                top: box.top,
+                width: Math.max(box.width, 24),
+                height: Math.max(box.height, 18),
+                margin: 0,
+                padding: 0,
+                border: `1px solid ${color.accent}`,
+                borderRadius: radius.sm,
+                resize: "none",
+                outline: "none",
+                background: "#ffffff",
+                color: typeof style.color === "string" ? style.color : "#000000",
+                fontSize: typeof style.fontSize === "number" ? style.fontSize : 14,
+                fontWeight: (style.fontWeight as number | undefined) ?? 400,
+                lineHeight:
+                  typeof style.lineHeight === "number" ? `${style.lineHeight}px` : "normal",
+                textAlign: (style.textAlign as React.CSSProperties["textAlign"]) ?? "left",
+                pointerEvents: "auto",
+              }}
+            />
+          );
+        })()}
     </div>
   );
 }

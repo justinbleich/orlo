@@ -10,6 +10,7 @@ import {
 import "tldraw/tldraw.css";
 import {
   createNode,
+  findNode,
   findRootContaining,
   sampleDocument,
   useDocumentStore,
@@ -21,7 +22,7 @@ import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
 import { Inspector } from "./Inspector";
 import { color, layout, radius, space, text } from "./studio-theme";
 import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
-import { insertPrimitive } from "./document-actions";
+import { deleteNodes, duplicateNodes, insertPrimitive } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
 
@@ -289,7 +290,39 @@ export default function App() {
         return;
       }
 
+      // Duplicate selected document nodes (⌘/Ctrl-D).
+      if (modifier && event.key.toLowerCase() === "d") {
+        const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
+        const nodeIds = focused
+          ? store.selection.filter((id) => id !== focused.id && findNode(focused, id))
+          : [];
+        if (nodeIds.length > 0) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          duplicateNodes(focused!.id, nodeIds);
+          setStatus(`Duplicated ${nodeIds.length} layer${nodeIds.length > 1 ? "s" : ""}`);
+        }
+        return;
+      }
+
       if (event.key !== "Backspace" && event.key !== "Delete") return;
+
+      // Delete selected document nodes first; only fall back to frame deletion
+      // when the selection is the frame itself (no inner node selected).
+      const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
+      const nodeIds = focused
+        ? store.selection.filter(
+            (id) => id !== focused.id && findNode(focused, id) && !findNode(focused, id)?.design?.locked,
+          )
+        : [];
+      if (nodeIds.length > 0) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        deleteNodes(focused!.id, nodeIds);
+        setStatus(`Deleted ${nodeIds.length} layer${nodeIds.length > 1 ? "s" : ""}`);
+        return;
+      }
+
       const editor = editorRef.current;
       if (!editor) return;
       const selectedRootIds = editor

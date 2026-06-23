@@ -9,8 +9,10 @@ import {
   ArrowRight,
   ArrowUp,
   Boxes,
+  Copy,
   Eye,
   EyeOff,
+  Group as GroupIcon,
   Image as ImageIcon,
   Lock,
   MousePointerClick,
@@ -18,22 +20,32 @@ import {
   List as ListIcon,
   Square,
   TextCursorInput,
+  Trash2,
   Type as TypeIcon,
+  Ungroup as UngroupIcon,
   Unlock,
   type LucideIcon,
 } from "lucide-react";
 import {
   canHaveChildren,
   findNode,
+  isContainer,
   useDocumentStore,
   type Node,
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
 import {
+  deleteNodes,
+  duplicateNodes,
+  groupNodes,
+  ungroupNode,
+} from "./document-actions";
+import {
   ColorField,
   Field,
   FieldGrid,
+  IconButton,
   IconToggle,
   NumberField,
   Section,
@@ -151,6 +163,14 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  const runAction = (fn: () => void) => {
+    try {
+      setError(null);
+      fn();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   if (!root) {
     return (
@@ -195,6 +215,15 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         onName={(name) => setDesignAll({ name })}
         onLock={(locked) => setDesignAll({ locked })}
         onHide={(hidden) => setDesignAll({ hidden })}
+      />
+
+      <ActionRow
+        canUngroup={!multi && isContainer(primary)}
+        canGroup={multi}
+        onDuplicate={() => runAction(() => duplicateNodes(root.id, nodes.map((n) => n.id)))}
+        onGroup={() => runAction(() => groupNodes(root.id, nodes.map((n) => n.id)))}
+        onUngroup={() => runAction(() => ungroupNode(root.id, primary.id))}
+        onDelete={() => runAction(() => deleteNodes(root.id, nodes.map((n) => n.id)))}
       />
 
       <Section title="Layout">
@@ -348,6 +377,44 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         </div>
       )}
     </Shell>
+  );
+}
+
+function ActionRow({
+  canGroup,
+  canUngroup,
+  onDuplicate,
+  onGroup,
+  onUngroup,
+  onDelete,
+}: {
+  canGroup: boolean;
+  canUngroup: boolean;
+  onDuplicate: () => void;
+  onGroup: () => void;
+  onUngroup: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-xs border-b border-line-soft px-md py-sm">
+      <IconButton title="Duplicate (⌘D)" onClick={onDuplicate}>
+        <Copy size={14} aria-hidden="true" />
+      </IconButton>
+      {canGroup && (
+        <IconButton title="Group into a View" onClick={onGroup}>
+          <GroupIcon size={14} aria-hidden="true" />
+        </IconButton>
+      )}
+      {canUngroup && (
+        <IconButton title="Ungroup" onClick={onUngroup}>
+          <UngroupIcon size={14} aria-hidden="true" />
+        </IconButton>
+      )}
+      <div className="flex-1" />
+      <IconButton title="Delete (⌫)" onClick={onDelete}>
+        <Trash2 size={14} aria-hidden="true" />
+      </IconButton>
+    </div>
   );
 }
 

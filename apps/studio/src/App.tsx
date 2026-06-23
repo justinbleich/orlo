@@ -90,8 +90,7 @@ function rootSize(root: Node): { w: number; h: number } {
 }
 
 /** Create a tldraw shape for any document root that doesn't have one yet. */
-function syncShapes(editor: Editor) {
-  const { roots } = useDocumentStore.getState();
+function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   const existing = new Set(
     editor
       .getCurrentPageShapes()
@@ -114,8 +113,18 @@ function syncShapes(editor: Editor) {
   }
 }
 
+/** RNFrame records derive from document roots, so reconciliation must never
+ *  become an independent tldraw undo entry. */
+function syncShapes(editor: Editor) {
+  editor.run(
+    () => createMissingShapes(editor, useDocumentStore.getState().roots),
+    { history: "ignore", ignoreShapeLock: true },
+  );
+}
+
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
+  const reconcilingShapesRef = useRef(false);
 
   const [status, setStatus] = useState("Frame: drag · Resize: handles · Add: tool rail");
   const [inspectorTab, setInspectorTab] = useState("Design");
@@ -151,15 +160,16 @@ export default function App() {
 
     const store = useDocumentStore.getState();
     if (Object.keys(store.roots).length === 0) {
-      store.addRoot(sampleDocument);
+      store.loadRoots({ [sampleDocument.id]: sampleDocument }, [sampleDocument.id]);
     }
     syncShapes(editor);
-    store.setSelection([sampleDocument.id]);
+    if (store.selection.length === 0) store.setSelection(Object.keys(store.roots).slice(0, 1));
 
     // Canvas → store: selecting a frame selects its root node (unless the current
     // selection already lives in that frame, e.g. a child node is selected).
     editor.store.listen(
       () => {
+        if (reconcilingShapesRef.current) return;
         const sel = editor.getOnlySelectedShape();
         if (!sel || !isRNFrame(sel)) return;
         const rootId = asRNFrame(sel).props.rootId;
@@ -184,27 +194,110 @@ export default function App() {
     }
   }, [focusedRoot]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const store = useDocumentStore.getState();
+      const modifier = event.metaKey || event.ctrlKey;
+      if (modifier && event.key.toLowerCase() === "z") {
+        const redoRequested = event.shiftKey;
+        if (redoRequested ? store.canRedo() : store.canUndo()) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (redoRequested) {
+            store.redo();
+            setStatus("Redid document change");
+          } else {
+            store.undo();
+            setStatus("Undid document change");
+          }
+        }
+        return;
+      }
+
+      if (event.key !== "Backspace" && event.key !== "Delete") return;
+      const editor = editorRef.current;
+      if (!editor) return;
+      const selectedRootIds = editor
+        .getSelectedShapes()
+        .filter(isRNFrame)
+        .map((shape) => asRNFrame(shape).props.rootId)
+        .filter((rootId) => {
+          const root = store.roots[rootId];
+          return !!root && !root.design?.locked;
+        });
+      if (selectedRootIds.length === 0) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      store.beginInteraction();
+      try {
+        for (const rootId of selectedRootIds) {
+          useDocumentStore.getState().removeRoot(rootId);
+        }
+        useDocumentStore.getState().commitInteraction();
+      } catch (error) {
+        useDocumentStore.getState().cancelInteraction();
+        throw error;
+      }
+      const remaining = Object.keys(useDocumentStore.getState().roots);
+      useDocumentStore.getState().setSelection(remaining.slice(0, 1));
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   // Reconcile shapes with roots: add shapes for new roots, prune shapes whose root
   // is gone (e.g. undo of Add frame), and mirror design.locked → shape lock.
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    syncShapes(editor);
-    for (const shape of editor.getCurrentPageShapes()) {
-      if (!isRNFrame(shape)) continue;
-      const root = roots[asRNFrame(shape).props.rootId];
-      if (!root) {
-        editor.deleteShapes([shape.id]);
-        continue;
-      }
-      const shouldLock = !!root.design?.locked;
-      if (shape.isLocked !== shouldLock) {
-        editor.updateShape({
-          id: shape.id,
-          type: RNFRAME,
-          isLocked: shouldLock,
-        } as unknown as UpdatePartial);
-      }
+    reconcilingShapesRef.current = true;
+    try {
+      editor.run(
+        () => {
+          createMissingShapes(editor, roots);
+          for (const shape of editor.getCurrentPageShapes()) {
+            if (!isRNFrame(shape)) continue;
+            const root = roots[asRNFrame(shape).props.rootId];
+            if (!root) {
+              editor.deleteShapes([shape.id]);
+              continue;
+            }
+            const shouldLock = !!root.design?.locked;
+            if (shape.isLocked !== shouldLock) {
+              editor.updateShape({
+                id: shape.id,
+                type: RNFRAME,
+                isLocked: shouldLock,
+              } as unknown as UpdatePartial);
+            }
+          }
+          const selectedId = useDocumentStore.getState().selection[0] ?? "";
+          const selectedRoot = findRootContaining(Object.values(roots), selectedId);
+          const selectedShape = selectedRoot
+            ? editor
+                .getCurrentPageShapes()
+                .find(
+                  (shape) =>
+                    isRNFrame(shape) && asRNFrame(shape).props.rootId === selectedRoot.id,
+                )
+            : undefined;
+          if (selectedShape) editor.select(selectedShape.id);
+        },
+        { history: "ignore", ignoreShapeLock: true },
+      );
+    } finally {
+      reconcilingShapesRef.current = false;
     }
   }, [roots]);
 
@@ -225,8 +318,6 @@ export default function App() {
     });
     const store = useDocumentStore.getState();
     store.addRoot(root);
-    const editor = editorRef.current;
-    if (editor) syncShapes(editor);
     store.setSelection([root.id]);
   }, []);
 

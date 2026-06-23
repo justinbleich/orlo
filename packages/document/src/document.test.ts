@@ -243,6 +243,32 @@ test("an interaction commits many writes as one undo entry", () => {
   assert.equal(useDocumentStore.getState().roots[root.id].style.width, undefined);
 });
 
+test("undo restores a removed root with its complete subtree", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots({ [sampleDocument.id]: sampleDocument }, [sampleDocument.id]);
+
+  store.removeRoot(sampleDocument.id);
+  assert.deepEqual(useDocumentStore.getState().roots, {});
+  store.undo();
+
+  assert.deepEqual(useDocumentStore.getState().roots[sampleDocument.id], sampleDocument);
+  assert.deepEqual(useDocumentStore.getState().selection, [sampleDocument.id]);
+});
+
+test("undo removes an inserted child and restores the prior selection", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots({ [sampleDocument.id]: sampleDocument }, ["sample-text"]);
+  const child = createNode("Text", { props: { text: "Temporary" } });
+
+  store.insertChild(sampleDocument.id, sampleDocument.id, child);
+  store.setSelection([child.id]);
+  assert.ok(findNode(useDocumentStore.getState().roots[sampleDocument.id], child.id));
+  store.undo();
+
+  assert.equal(findNode(useDocumentStore.getState().roots[sampleDocument.id], child.id), undefined);
+  assert.deepEqual(useDocumentStore.getState().selection, ["sample-text"]);
+});
+
 test("cancelling an interaction restores roots and selection", () => {
   const root = createNode("View", { id: "cancel-root" });
   const store = useDocumentStore.getState();

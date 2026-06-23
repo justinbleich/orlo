@@ -11,9 +11,11 @@ import type { LayoutBox, LayoutReadyResult } from "@rn-canvas/render-web";
 import { color, radius } from "./studio-theme";
 
 type Point = { x: number; y: number };
+type Rect = { x0: number; y0: number; x1: number; y1: number };
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
+type GroupMember = { nodeId: NodeId; left: number; top: number };
 type Gesture = {
-  kind: "move" | "resize";
+  kind: "move" | "resize" | "marquee";
   pointerId: number;
   nodeId: NodeId;
   instanceKey: string;
@@ -21,6 +23,9 @@ type Gesture = {
   box: LayoutBox;
   parentBox?: LayoutBox;
   handle?: ResizeHandle;
+  /** Absolute-positioned selected nodes moved together during a group drag. */
+  group: GroupMember[];
+  additive: boolean;
   moved: boolean;
 };
 
@@ -43,6 +48,33 @@ export function hitTestLayout(box: LayoutBox, point: Point): LayoutBox | undefin
     if (hit) return hit;
   }
   return box;
+}
+
+/** Every descendant box (excludes the root box itself). */
+function descendantBoxes(box: LayoutBox, acc: LayoutBox[] = []): LayoutBox[] {
+  for (const child of box.children) {
+    acc.push(child);
+    descendantBoxes(child, acc);
+  }
+  return acc;
+}
+
+function rectOf(a: Point, b: Point): Rect {
+  return {
+    x0: Math.min(a.x, b.x),
+    y0: Math.min(a.y, b.y),
+    x1: Math.max(a.x, b.x),
+    y1: Math.max(a.y, b.y),
+  };
+}
+
+function boxIntersectsRect(box: LayoutBox, rect: Rect): boolean {
+  return (
+    box.left < rect.x1 &&
+    box.left + box.width > rect.x0 &&
+    box.top < rect.y1 &&
+    box.top + box.height > rect.y0
+  );
 }
 
 function localPoint(element: HTMLDivElement, clientX: number, clientY: number): Point {
@@ -69,25 +101,46 @@ export function RNNodeOverlay({
   active: boolean;
 }) {
   const selection = useDocumentStore((state) => state.selection);
-  const selectedId = selection[0] ?? null;
-  const selectedNode = selectedId ? findNode(root, selectedId) : undefined;
   const [instanceKey, setInstanceKey] = useState<string | null>(null);
+  const [marquee, setMarquee] = useState<Rect | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
+
+  // Selected nodes that actually live in this frame's tree.
+  const selectedInRoot = useMemo(
+    () => selection.filter((id) => id !== root.id && findNode(root, id)),
+    [selection, root],
+  );
+  const isSingle = selectedInRoot.length === 1;
+  const singleId = isSingle ? selectedInRoot[0] : null;
+  const singleNode = singleId ? findNode(root, singleId) : undefined;
 
   const eventPoint = (event: React.PointerEvent<HTMLDivElement>) =>
     localPoint(overlayRef.current ?? event.currentTarget, event.clientX, event.clientY);
 
-  const selectedBox = useMemo(() => {
-    if (!selectedId) return undefined;
-    const boxes = result.snapshot.get(selectedId);
-    return boxes?.find((box) => box.instanceKey === instanceKey) ?? boxes?.[0];
-  }, [instanceKey, result, selectedId]);
+  // Highlight box per selected node (instanceKey-matched for the single case so
+  // handles track the hovered instance of a repeated node).
+  const selectedBoxes = useMemo(() => {
+    return selectedInRoot
+      .map((id) => {
+        const boxes = result.snapshot.get(id);
+        if (!boxes) return undefined;
+        if (isSingle) return boxes.find((b) => b.instanceKey === instanceKey) ?? boxes[0];
+        return boxes[0];
+      })
+      .filter((b): b is LayoutBox => !!b);
+  }, [selectedInRoot, result, isSingle, instanceKey]);
+
+  const singleBox = isSingle ? selectedBoxes[0] : undefined;
+
+  function setSelection(ids: NodeId[]) {
+    useDocumentStore.getState().setSelection(ids);
+  }
 
   function beginGesture(
     event: React.PointerEvent<HTMLDivElement>,
     box: LayoutBox,
-    kind: Gesture["kind"],
+    kind: "move" | "resize",
     handle?: ResizeHandle,
   ) {
     event.preventDefault();
@@ -96,6 +149,16 @@ export function RNNodeOverlay({
     overlay.setPointerCapture(event.pointerId);
     overlay.focus();
     const parent = getParent(root, box.node.id);
+    // Capture original positions of every absolute selected node so a group drag
+    // moves them all from a stable origin.
+    const group: GroupMember[] = [];
+    for (const id of selectedInRoot) {
+      const node = findNode(root, id);
+      const nodeBox = firstBox(result, id);
+      if (node?.style.position === "absolute" && nodeBox) {
+        group.push({ nodeId: id, left: nodeBox.left, top: nodeBox.top });
+      }
+    }
     useDocumentStore.getState().beginInteraction();
     gesture.current = {
       kind,
@@ -106,18 +169,63 @@ export function RNNodeOverlay({
       box,
       parentBox: parent ? firstBox(result, parent.id) : undefined,
       handle,
+      group,
+      additive: false,
       moved: false,
     };
   }
 
+  function beginMarquee(event: React.PointerEvent<HTMLDivElement>, additive: boolean) {
+    const overlay = overlayRef.current ?? event.currentTarget;
+    overlay.setPointerCapture(event.pointerId);
+    overlay.focus();
+    const start = eventPoint(event);
+    gesture.current = {
+      kind: "marquee",
+      pointerId: event.pointerId,
+      nodeId: root.id,
+      instanceKey: "",
+      start,
+      box: result.layout,
+      group: [],
+      additive,
+      moved: false,
+    };
+    setMarquee(rectOf(start, start));
+  }
+
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (!active || gesture.current) return;
+    const additive = event.shiftKey || event.metaKey || event.ctrlKey;
     const hit = hitTestLayout(result.layout, eventPoint(event));
-    if (!hit) return;
+
+    // Empty space or the frame background → marquee (or clear when not additive).
+    if (!hit || hit.node.id === root.id) {
+      if (!additive) setSelection([]);
+      beginMarquee(event, additive);
+      return;
+    }
+
     const store = useDocumentStore.getState();
-    store.setSelection([hit.node.id]);
+    // Read selection fresh from the store (not the render closure) so rapid,
+    // back-to-back modifier clicks compose instead of clobbering each other.
+    const current = store.selection;
+    if (additive) {
+      // Toggle membership; don't start a drag.
+      const next = current.includes(hit.node.id)
+        ? current.filter((id) => id !== hit.node.id)
+        : [...current, hit.node.id];
+      store.setSelection(next);
+      setInstanceKey(hit.instanceKey);
+      return;
+    }
+
+    // Plain click: keep an existing multi-selection if the node is part of it
+    // (so the whole group can be dragged); otherwise select just this node.
+    if (!current.includes(hit.node.id)) {
+      store.setSelection([hit.node.id]);
+    }
     setInstanceKey(hit.instanceKey);
-    if (hit.node.id === root.id) return;
     beginGesture(event, hit, "move");
   }
 
@@ -125,20 +233,27 @@ export function RNNodeOverlay({
     event: React.PointerEvent<HTMLDivElement>,
     handle: ResizeHandle,
   ) {
-    if (!selectedBox || !selectedNode || selectedNode.design?.locked) return;
-    beginGesture(event, selectedBox, "resize", handle);
+    if (!singleBox || !singleNode || singleNode.design?.locked) return;
+    beginGesture(event, singleBox, "resize", handle);
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const current = gesture.current;
     if (!current || current.pointerId !== event.pointerId) return;
     const point = eventPoint(event);
+
+    if (current.kind === "marquee") {
+      setMarquee(rectOf(current.start, point));
+      return;
+    }
+
     const dx = point.x - current.start.x;
     const dy = point.y - current.start.y;
     if (!current.moved && Math.hypot(dx, dy) < 3) return;
     current.moved = true;
     const node = findNode(root, current.nodeId);
     if (!node) return;
+    const store = useDocumentStore.getState();
 
     if (current.kind === "resize") {
       const west = current.handle === "nw" || current.handle === "sw";
@@ -152,17 +267,23 @@ export function RNNodeOverlay({
         if (west) partial.left = current.box.left - parentLeft + dx;
         if (north) partial.top = current.box.top - parentTop + dy;
       }
-      useDocumentStore.getState().updateStyle(root.id, node.id, partial);
+      store.updateStyle(root.id, node.id, partial);
       return;
     }
 
-    if (node.style.position === "absolute") {
-      const parentLeft = current.parentBox?.left ?? 0;
-      const parentTop = current.parentBox?.top ?? 0;
-      useDocumentStore.getState().updateStyle(root.id, node.id, {
-        left: current.box.left - parentLeft + dx,
-        top: current.box.top - parentTop + dy,
-      });
+    // Move. Group-drag every absolute member from its captured origin.
+    if (current.group.length > 0) {
+      for (const member of current.group) {
+        const memberNode = findNode(root, member.nodeId);
+        const parent = memberNode ? getParent(root, member.nodeId) : undefined;
+        const parentBox = parent ? firstBox(result, parent.id) : undefined;
+        const parentLeft = parentBox?.left ?? 0;
+        const parentTop = parentBox?.top ?? 0;
+        store.updateStyle(root.id, member.nodeId, {
+          left: member.left - parentLeft + dx,
+          top: member.top - parentTop + dy,
+        });
+      }
     }
   }
 
@@ -172,7 +293,33 @@ export function RNNodeOverlay({
     event.preventDefault();
     event.stopPropagation();
 
-    if (!cancel && current.kind === "move" && current.moved) {
+    if (current.kind === "marquee") {
+      if (!cancel) {
+        const rect = rectOf(current.start, eventPoint(event));
+        const dragged = Math.hypot(rect.x1 - rect.x0, rect.y1 - rect.y0) >= 3;
+        if (dragged) {
+          const hits = descendantBoxes(result.layout)
+            .filter(
+              (box) =>
+                !box.node.design?.hidden &&
+                !box.node.design?.locked &&
+                boxIntersectsRect(box, rect),
+            )
+            .map((box) => box.node.id);
+          const unique = [...new Set(hits)];
+          const next = current.additive
+            ? [...new Set([...useDocumentStore.getState().selection, ...unique])]
+            : unique;
+          setSelection(next);
+        }
+      }
+      setMarquee(null);
+      gesture.current = null;
+      return;
+    }
+
+    // Single flex node dropped → reorder among siblings by midpoint.
+    if (!cancel && current.kind === "move" && current.moved && current.group.length === 0) {
       const node = findNode(root, current.nodeId);
       const parent = node ? getParent(root, node.id) : undefined;
       if (node && parent && node.style.position !== "absolute") {
@@ -185,9 +332,7 @@ export function RNNodeOverlay({
         for (let index = 0; index < siblings.length; index += 1) {
           const box = firstBox(result, siblings[index].id);
           if (!box) continue;
-          const midpoint = horizontal
-            ? box.left + box.width / 2
-            : box.top + box.height / 2;
+          const midpoint = horizontal ? box.left + box.width / 2 : box.top + box.height / 2;
           if (coordinate < midpoint) {
             to = index;
             break;
@@ -205,9 +350,9 @@ export function RNNodeOverlay({
   }
 
   function selectParent() {
-    if (!selectedId || selectedId === root.id) return;
-    const parent = getParent(root, selectedId);
-    useDocumentStore.getState().setSelection([parent?.id ?? root.id]);
+    if (!singleId || singleId === root.id) return;
+    const parent = getParent(root, singleId);
+    setSelection([parent?.id ?? root.id]);
     setInstanceKey(null);
   }
 
@@ -239,39 +384,61 @@ export function RNNodeOverlay({
         outline: "none",
       }}
     >
-      {active && selectedBox && selectedNode && (
+      {/* Selection outlines for every selected node in this frame. */}
+      {active &&
+        selectedBoxes.map((box, index) => (
+          <div
+            key={`${box.node.id}-${index}`}
+            style={{
+              position: "absolute",
+              left: box.left,
+              top: box.top,
+              width: box.width,
+              height: box.height,
+              border: `1px solid ${color.accent}`,
+              borderRadius: radius.sm,
+              pointerEvents: "none",
+            }}
+          >
+            {/* Resize handles only in the single-selection case. */}
+            {isSingle &&
+              singleNode &&
+              singleNode.id !== root.id &&
+              !singleNode.design?.locked &&
+              handles.map((handle) => (
+                <div
+                  key={handle}
+                  title={`Resize ${handle}`}
+                  onPointerDown={(event) => onResizePointerDown(event, handle)}
+                  style={{
+                    position: "absolute",
+                    width: 8,
+                    height: 8,
+                    border: `1px solid ${color.accent}`,
+                    borderRadius: radius.sm,
+                    background: color.chrome,
+                    pointerEvents: "auto",
+                    ...handlePosition[handle],
+                  }}
+                />
+              ))}
+          </div>
+        ))}
+
+      {/* Marquee rectangle. */}
+      {active && marquee && (
         <div
           style={{
             position: "absolute",
-            left: selectedBox.left,
-            top: selectedBox.top,
-            width: selectedBox.width,
-            height: selectedBox.height,
+            left: marquee.x0,
+            top: marquee.y0,
+            width: marquee.x1 - marquee.x0,
+            height: marquee.y1 - marquee.y0,
             border: `1px solid ${color.accent}`,
-            borderRadius: radius.sm,
+            background: color.accentSoft,
             pointerEvents: "none",
           }}
-        >
-          {selectedNode.id !== root.id &&
-            !selectedNode.design?.locked &&
-            handles.map((handle) => (
-              <div
-                key={handle}
-                title={`Resize ${handle}`}
-                onPointerDown={(event) => onResizePointerDown(event, handle)}
-                style={{
-                  position: "absolute",
-                  width: 8,
-                  height: 8,
-                  border: `1px solid ${color.accent}`,
-                  borderRadius: radius.sm,
-                  background: color.chrome,
-                  pointerEvents: "auto",
-                  ...handlePosition[handle],
-                }}
-              />
-            ))}
-        </div>
+        />
       )}
     </div>
   );

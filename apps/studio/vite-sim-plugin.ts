@@ -22,6 +22,10 @@ type SidecarRequest = {
   sidecarPath?: string;
 };
 
+type ExternalSourceRequest = {
+  sourcePath?: string;
+};
+
 type BrowserCommand = {
   id: string;
   type: string;
@@ -103,6 +107,18 @@ function resolveSidecarPath(input?: string) {
   return sidecarPath;
 }
 
+function resolveExternalSourcePath(input?: string) {
+  if (!input?.trim()) throw new Error("Enter a React Native source path");
+  const sourcePath = resolve(isAbsolute(input) ? input : join(repoRoot, input));
+  if (relative(repoRoot, sourcePath).startsWith("..")) {
+    throw new Error("Source path must stay inside the workspace");
+  }
+  if (![".tsx", ".jsx"].includes(extname(sourcePath))) {
+    throw new Error("Source path must end in .tsx or .jsx");
+  }
+  return sourcePath;
+}
+
 async function runCodegen(root: Node, screenName: string): Promise<GeneratedScreen> {
   const dir = await mkdtemp(join(tmpdir(), "rncanvas-codegen-"));
   const inputPath = join(dir, "input.json");
@@ -132,6 +148,18 @@ async function parseSidecar(sidecarPath: string) {
     sidecarPath,
   ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
   return JSON.parse(stdout) as { version: 1; screenName: string; root: Node };
+}
+
+async function parseExternalSource(sourcePath: string) {
+  const { stdout } = await execFileAsync("pnpm", [
+    "--filter",
+    "@rn-canvas/codegen",
+    "exec",
+    "tsx",
+    "src/cli-parse-external.ts",
+    sourcePath,
+  ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
+  return JSON.parse(stdout) as { screenName: string; root: Node };
 }
 
 export function simScreenshotPlugin(): Plugin {
@@ -213,6 +241,28 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Sidecar load failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/documents/import-code", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<ExternalSourceRequest>(req);
+          const sourcePath = resolveExternalSourcePath(body.sourcePath);
+          const document = await parseExternalSource(sourcePath);
+          const relativeSourcePath = relative(repoRoot, sourcePath);
+          sendJson(res, 200, {
+            ...document,
+            sourcePath: relativeSourcePath,
+            sidecarPath: relativeSourcePath.replace(/\.(tsx|jsx)$/, ".rncanvas.json"),
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "React Native import failed",
           });
         }
       });

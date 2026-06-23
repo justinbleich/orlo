@@ -84,6 +84,13 @@ type OpenDocumentResult = {
   sidecarPath: string;
 };
 
+type ImportSourceResult = {
+  screenName: string;
+  root: Node;
+  sourcePath: string;
+  sidecarPath: string;
+};
+
 function rootSize(root: Node): { w: number; h: number } {
   const w = typeof root.style.width === "number" ? root.style.width : 320;
   const h = typeof root.style.height === "number" ? root.style.height : 200;
@@ -405,6 +412,36 @@ export default function App() {
     }
   }, [sidecarPath]);
 
+  const importSource = useCallback(async () => {
+    setCodegenBusy(true);
+    setCodegenError(null);
+    try {
+      const res = await fetch("/api/documents/import-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourcePath: targetPath }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      const imported = body as ImportSourceResult;
+      useDocumentStore.getState().loadRoots(
+        { [imported.root.id]: imported.root },
+        [imported.root.id],
+      );
+      setScreenName(imported.screenName);
+      setTargetPath(imported.sourcePath);
+      setSidecarPath(imported.sidecarPath);
+      setCodegenResult(null);
+      setStatus(`Imported ${imported.sourcePath}`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "React Native import failed";
+      setCodegenError(message);
+      setStatus(message);
+    } finally {
+      setCodegenBusy(false);
+    }
+  }, [targetPath]);
+
   const btn: React.CSSProperties = {
     background: color.chrome2,
     color: color.ink,
@@ -596,10 +633,17 @@ export default function App() {
                     <input
                       value={targetPath}
                       onChange={(e) => setTargetPath(e.target.value)}
-                      onBlur={() => void requestCodegen("preview")}
                       style={fieldStyle}
                     />
                   </label>
+                  <button
+                    type="button"
+                    style={btn}
+                    disabled={codegenBusy}
+                    onClick={() => void importSource()}
+                  >
+                    Import RN Source
+                  </button>
                   <div style={{ display: "flex", gap: space.sm }}>
                     <button
                       type="button"

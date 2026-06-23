@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { AppRegistry } from "react-native-web";
 import App from "./App";
 import "./design-tokens.css";
+import "./tailwind.css";
 import "./index.css";
 
 AppRegistry.registerComponent("App", () => App);

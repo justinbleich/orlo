@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@base-ui/react": "^1.6.0",
     "@expo-google-fonts/inter": "0.4.2",
     "@rn-canvas/codegen": "workspace:*",
     "@rn-canvas/document": "workspace:*",
@@ -21,9 +22,11 @@
     "tldraw": "^5.1.1"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
   }

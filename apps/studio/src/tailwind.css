@@ -1,0 +1,76 @@
+/* =============================================================================
+   RN Canvas — Tailwind v4 entry for the studio chrome.
+
+   Tailwind is the chrome styling system (browser AND Electron are the same
+   Chromium target). It is wired to the existing design tokens in
+   design-tokens.css so utilities like `bg-chrome` / `text-ink` / `p-md` resolve
+   to the SAME CSS variables — design-tokens.css stays the single source of
+   values (STUDIO-UI.md discipline). Add a token there first, then map it here.
+
+   CHROME ONLY. Never style RN canvas content with these utilities — that
+   content is styled by the document's RNStyle.
+   ========================================================================== */
+
+/* Full Tailwind import INCLUDING preflight. Tailwind utilities (border-style,
+   button/appearance resets) assume preflight's baseline — without it native
+   <button>s keep UA chrome and `border` utilities render no line. The artboard
+   is safe: react-native-web applies explicit inline styles to everything it
+   renders, so preflight's element resets don't disturb RN content. */
+@import "tailwindcss";
+
+/* `inline` so utilities reference the source token directly (var(--chrome)),
+   keeping a single source of truth rather than re-emitting a second variable. */
+@theme inline {
+  /* --- Chrome surfaces --- */
+  --color-canvas: var(--canvas);
+  --color-chrome: var(--chrome);
+  --color-chrome-2: var(--chrome-2);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+
+  /* --- Ink --- */
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-faint: var(--ink-faint);
+
+  /* --- Accents (one job each — see design-tokens.css) --- */
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+  --color-live: var(--live);
+  --color-live-soft: var(--live-soft);
+  --color-amber: var(--amber);
+
+  /* --- Artboard scaffolding (frame chrome only, not RN content) --- */
+  --color-art: var(--art);
+  --color-art-2: var(--art-2);
+  --color-art-ink: var(--art-ink);
+  --color-art-dim: var(--art-dim);
+  --color-art-line: var(--art-line);
+
+  /* --- Typography --- */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --text-micro: var(--text-micro);
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  --text-lg: var(--text-lg);
+  --text-xl: var(--text-xl);
+
+  /* --- Spacing (named scale → p-md, gap-sm, etc.) --- */
+  --spacing-xs: var(--space-xs);
+  --spacing-sm: var(--space-sm);
+  --spacing-md: var(--space-md);
+  --spacing-lg: var(--space-lg);
+  --spacing-xl: var(--space-xl);
+  --spacing-2xl: var(--space-2xl);
+
+  /* --- Radii --- */
+  --radius-sm: var(--radius-sm);
+  --radius-DEFAULT: var(--radius);
+  --radius-lg: var(--radius-lg);
+  --radius-pill: var(--radius-pill);
+}

@@ -408,3 +408,13 @@ retarget to `@rn-canvas/document`.
 - Visible and keyboard undo/redo now cover both document edits and tldraw-owned frame geometry.
   Selection-only tldraw checkpoints are skipped so frame move undo/redo restores exact geometry.
 - Phase 6 and the v1 BUILD sequence pass. Optional Yjs and both post-v1 roadmap files remain parked.
+
+## V1 release checkpoint
+
+- A live two-frame authoring pass exercised frame creation, RN Text insertion/editing, flex reorder,
+  per-frame Sync Code, sidecar validation, external-source parsing, and sidecar reopen without drift.
+- Document open/import now clears tldraw history as part of the same new-session boundary as
+  `loadRoots`, so Undo cannot target frame operations from the previously open document.
+- Temporary release-check artifacts were removed after validation. The standard full test/build
+  gate passes; the opt-in MCP live test could not be rerun because execution approval was unavailable,
+  so the completed Phase 5 live pass remains the current agent-loop evidence.

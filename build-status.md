@@ -6,7 +6,7 @@
 
 ## Current position
 
-BUILD Phases 0-6 are complete. External emitted-subset RN source imports into the live Studio
+BUILD Phases 0-6 and the interactive v1 release checkpoint are complete. External emitted-subset RN source imports into the live Studio
 without a sidecar, and canvas/document undo controls are coordinated. Post-v1 component systems, interactions,
 device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 
@@ -69,6 +69,17 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 - Browser verification covered valid source import, workspace confinement, and exact frame geometry
   across move → undo → redo. Codegen tests and production package builds pass.
 
+## V1 release checkpoint
+
+- The live Studio built and organized two RNFrame documents, inserted and reordered an RN Text
+  node through document actions, and serialized both frames to idiomatic RN plus adjacent sidecars.
+- Both generated modules parsed through the external-source boundary and both sidecars validated.
+  Reopening the edited sidecar restored its tree and visible content without drift.
+- Opening/importing a document now clears tldraw history alongside document history, preventing
+  frame operations from a previous document session leaking into the newly opened document.
+- The opt-in MCP live acceptance test was not rerun at this checkpoint because local execution
+  approval was unavailable. Its Phase 5 pass remains the latest agent-loop evidence.
+
 ## Deliberately parked
 
 - `packages/sim-bridge` and the render-web image-diff utility remain as Phase 0 evidence, but
@@ -91,6 +102,6 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 
 ## Recommendation
 
-V1's BUILD sequence is complete. Hold the external parser at the proven emitted subset unless a
-specific real-world import fixture justifies widening it. Next, run the v1 definition-of-done flow
-as a release checkpoint; only then choose a post-v1 roadmap slice. Yjs remains optional and parked.
+V1 is at release-candidate quality against the BUILD definition of done. Hold the external parser
+at the proven emitted subset unless a specific real-world fixture justifies widening it. The next
+decision is product sequencing among the post-v1 roadmap slices; Yjs remains optional and parked.

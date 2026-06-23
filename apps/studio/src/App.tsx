@@ -234,6 +234,12 @@ export default function App() {
     else if (editorRef.current) stepCanvasHistory(editorRef.current, "redo");
   }, [redo]);
 
+  const resetCanvasHistory = useCallback(() => {
+    editorRef.current?.clearHistory();
+    setCanvasCanUndo(false);
+    setCanvasCanRedo(false);
+  }, []);
+
   // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
   // can't ping-pong with the listener above.
   useEffect(() => {
@@ -450,6 +456,7 @@ export default function App() {
         { [opened.root.id]: opened.root },
         [opened.root.id],
       );
+      resetCanvasHistory();
       setScreenName(opened.screenName);
       setTargetPath(opened.targetPath);
       setSidecarPath(opened.sidecarPath);
@@ -462,7 +469,7 @@ export default function App() {
     } finally {
       setCodegenBusy(false);
     }
-  }, [sidecarPath]);
+  }, [resetCanvasHistory, sidecarPath]);
 
   const importSource = useCallback(async () => {
     setCodegenBusy(true);
@@ -480,6 +487,7 @@ export default function App() {
         { [imported.root.id]: imported.root },
         [imported.root.id],
       );
+      resetCanvasHistory();
       setScreenName(imported.screenName);
       setTargetPath(imported.sourcePath);
       setSidecarPath(imported.sidecarPath);
@@ -492,7 +500,7 @@ export default function App() {
     } finally {
       setCodegenBusy(false);
     }
-  }, [targetPath]);
+  }, [resetCanvasHistory, targetPath]);
 
   const btn: React.CSSProperties = {
     background: color.chrome2,

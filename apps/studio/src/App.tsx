@@ -401,7 +401,10 @@ export default function App() {
         <LeftPanel onAddFrame={addFrame} />
 
         <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+          <div
+            data-testid="rn-canvas-surface"
+            style={{ position: "relative", flex: 1, minHeight: 0 }}
+          >
             <Tldraw
               onMount={onMount}
               shapeUtils={shapeUtils}

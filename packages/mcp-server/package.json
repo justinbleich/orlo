@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@rn-canvas/codegen": "workspace:*",
     "@rn-canvas/document": "workspace:*",
     "zod": "^3.25.76"
   },

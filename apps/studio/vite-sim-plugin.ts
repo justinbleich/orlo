@@ -233,7 +233,7 @@ export function simScreenshotPlugin(): Plugin {
               ok: false,
               error: "Studio did not answer the command before timeout",
             });
-          }, 9_000);
+          }, 30_000);
           pending.set(id, { res, timeout });
         } catch (error) {
           sendJson(res, 400, {

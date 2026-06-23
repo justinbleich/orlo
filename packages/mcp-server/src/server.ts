@@ -1,10 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Roots } from "@rn-canvas/document";
+import { generateScreen } from "@rn-canvas/codegen";
 import { z } from "zod";
-import { StudioBridge } from "./bridge";
+import { StudioBridge, type StudioCommandBridge } from "./bridge";
 
-export function createMcpServer(bridge = new StudioBridge()) {
+export function createMcpServer(bridge: StudioCommandBridge = new StudioBridge()) {
   const server = new McpServer({ name: "rn-canvas", version: "0.1.0" });
 
   const result = (value: unknown) => ({
@@ -79,6 +80,61 @@ export function createMcpServer(bridge = new StudioBridge()) {
     },
     async (payload) =>
       result(await bridge.command({ type: "set_style", payload })),
+  );
+
+  server.registerTool(
+    "get_code",
+    {
+      description: "Serialize one live document root to RN source and its sidecar.",
+      inputSchema: {
+        rootId: z.string().min(1),
+        screenName: z.string().regex(/^[A-Z][A-Za-z0-9_$]*$/).optional(),
+      },
+    },
+    async ({ rootId, screenName }) => {
+      const roots = await bridge.command<Roots>({ type: "get_tree", payload: {} });
+      const root = roots[rootId];
+      if (!root) throw new Error(`Root not found: ${rootId}`);
+      const generated = generateScreen(root, { screenName: screenName ?? "Screen" });
+      return {
+        content: [{ type: "text" as const, text: generated.code }],
+        structuredContent: { ...generated, source: "document" },
+      };
+    },
+  );
+
+  server.registerTool(
+    "get_canvas_screenshot",
+    {
+      description: "Capture the live Studio canvas. The image source is always canvas.",
+      inputSchema: { rootId: z.string().min(1).optional() },
+    },
+    async (payload) => {
+      const screenshot = await bridge.command<{
+        source: "canvas";
+        mimeType: "image/png";
+        data: string;
+        width: number;
+        height: number;
+        rootId: string;
+      }>({ type: "get_canvas_screenshot", payload });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Canvas screenshot (${screenshot.width}x${screenshot.height})`,
+          },
+          { type: "image" as const, data: screenshot.data, mimeType: screenshot.mimeType },
+        ],
+        structuredContent: {
+          source: screenshot.source,
+          mimeType: screenshot.mimeType,
+          width: screenshot.width,
+          height: screenshot.height,
+          rootId: screenshot.rootId,
+        },
+      };
+    },
   );
 
   return server;

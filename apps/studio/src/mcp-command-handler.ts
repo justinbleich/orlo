@@ -1,11 +1,13 @@
 import {
   createNode,
   findNode,
+  findRootContaining,
   useDocumentStore,
   type AnyProps,
   type DesignMeta,
 } from "@rn-canvas/document";
 import type { RNStyle } from "@rn-canvas/styles";
+import { toPng } from "html-to-image";
 import type { BrowserCommandHandler } from "./mcp-bridge";
 
 type CommandPayload = Record<string, unknown>;
@@ -101,6 +103,37 @@ export const handleMcpCommand: BrowserCommandHandler = async (command) => {
         .getState()
         .updateStyle(rootId, nodeId, payload.style as Partial<RNStyle>);
       return useDocumentStore.getState().roots[rootId];
+    }
+
+    case "get_canvas_screenshot": {
+      const store = useDocumentStore.getState();
+      const requestedRootId =
+        payload.rootId === undefined ? undefined : requiredString(payload, "rootId");
+      const root = requestedRootId
+        ? store.roots[requestedRootId]
+        : findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
+      if (!root) throw new Error("Select a frame or provide rootId");
+      const surface = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-rn-root-id]"),
+      ).find((element) => element.dataset.rnRootId === root.id);
+      if (!surface) throw new Error(`Canvas frame is not mounted: ${root.id}`);
+      await document.fonts.ready;
+      const canvasColor = getComputedStyle(document.documentElement)
+        .getPropertyValue("--canvas")
+        .trim();
+      const dataUrl = await toPng(surface, {
+        backgroundColor: canvasColor,
+        cacheBust: true,
+        pixelRatio: 1,
+      });
+      return {
+        source: "canvas",
+        mimeType: "image/png",
+        data: dataUrl.replace(/^data:image\/png;base64,/, ""),
+        width: surface.clientWidth,
+        height: surface.clientHeight,
+        rootId: root.id,
+      };
     }
 
     default:

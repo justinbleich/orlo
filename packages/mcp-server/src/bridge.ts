@@ -9,11 +9,15 @@ export interface StudioCommandResult<T = unknown> {
   error?: string;
 }
 
-export class StudioBridge {
+export interface StudioCommandBridge {
+  command<T>(command: StudioCommand): Promise<T>;
+}
+
+export class StudioBridge implements StudioCommandBridge {
   constructor(
     private readonly baseUrl = process.env.RN_CANVAS_STUDIO_URL ??
       "http://127.0.0.1:5173",
-    private readonly timeoutMs = 10_000,
+    private readonly timeoutMs = 35_000,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 

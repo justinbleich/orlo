@@ -105,6 +105,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
     const live = selected || largeEnough;
     return (
       <HTMLContainer
+        data-rn-root-id={shape.props.rootId}
         style={{
           width: shape.props.w,
           height: shape.props.h,

@@ -1,11 +1,56 @@
+import { useState } from "react";
 import {
   childrenOf,
+  findNode,
+  getParent,
+  isContainer,
   useDocumentStore,
   type Node,
   type NodeId,
 } from "@rn-canvas/document";
 import { EyeOff, LockOpen } from "lucide-react";
 import { color, radius, space, text } from "./studio-theme";
+
+// One drag at a time; module-scoped so every recursive row shares it.
+let draggedNodeId: NodeId | null = null;
+
+/**
+ * Move the dragged node relative to a drop target: onto a container reparents it
+ * (appended); onto a leaf makes it that leaf's next sibling. Guards self/descendant
+ * drops (moveNode also throws on those) and fixes the index for same-parent moves,
+ * since moveNode removes the node before re-inserting.
+ */
+function dropOnto(rootId: NodeId, target: Node) {
+  const dragged = draggedNodeId;
+  if (!dragged || dragged === target.id) return;
+  const store = useDocumentStore.getState();
+  const root = store.roots[rootId];
+  if (!root || dragged === root.id) return;
+  const draggedNode = findNode(root, dragged);
+  if (!draggedNode || findNode(draggedNode, target.id)) return; // can't drop into own subtree
+
+  let parentId: NodeId;
+  let index: number;
+  if (isContainer(target)) {
+    parentId = target.id;
+    index = childrenOf(target).length;
+  } else {
+    const parent = getParent(root, target.id);
+    if (!parent) return;
+    parentId = parent.id;
+    const sibs = childrenOf(parent);
+    const targetIdx = sibs.findIndex((s) => s.id === target.id);
+    const draggedIdx = sibs.findIndex((s) => s.id === dragged);
+    index = targetIdx + 1;
+    if (draggedIdx !== -1 && draggedIdx < targetIdx) index -= 1; // removal shifts target down
+  }
+  try {
+    store.moveNode(rootId, dragged, parentId, index);
+    store.setSelection([dragged]);
+  } catch {
+    /* invalid move (e.g. into own descendant) — ignore */
+  }
+}
 
 export function DocumentTree({
   node,
@@ -20,6 +65,7 @@ export function DocumentTree({
 }) {
   const setSelection = useDocumentStore((state) => state.setSelection);
   const updateDesign = useDocumentStore((state) => state.updateDesign);
+  const [over, setOver] = useState(false);
   const selected = node.id === selectedId;
   const locked = !!node.design?.locked;
   const label = node.design?.name ?? node.type;
@@ -27,6 +73,28 @@ export function DocumentTree({
   return (
     <>
       <div
+        draggable={!locked && depth > 0}
+        onDragStart={(event) => {
+          draggedNodeId = node.id;
+          event.dataTransfer.effectAllowed = "move";
+        }}
+        onDragOver={(event) => {
+          if (draggedNodeId && draggedNodeId !== node.id) {
+            event.preventDefault();
+            if (!over) setOver(true);
+          }
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setOver(false);
+          dropOnto(rootId, node);
+          draggedNodeId = null;
+        }}
+        onDragEnd={() => {
+          draggedNodeId = null;
+          setOver(false);
+        }}
         onClick={() => {
           if (!locked) setSelection([node.id]);
         }}
@@ -35,9 +103,10 @@ export function DocumentTree({
           paddingLeft: `calc(${space.sm} + ${depth} * ${space.md})`,
           cursor: locked ? "not-allowed" : "pointer",
           fontSize: text.sm,
-          background: selected ? color.accent : "transparent",
+          background: selected ? color.accent : over ? color.accentSoft : "transparent",
           color: node.design?.hidden ? color.inkFaint : color.ink,
           borderRadius: radius.sm,
+          boxShadow: over ? `inset 0 0 0 1px ${color.accentLine}` : "none",
           display: "flex",
           alignItems: "center",
           gap: space.xs,

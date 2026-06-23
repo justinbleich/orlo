@@ -29,7 +29,9 @@ import {
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
+import { Menu } from "@base-ui/react/menu";
 import { color, layout, radius, space, text } from "./studio-theme";
+import { cn } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
@@ -82,7 +84,28 @@ export function Tabs({
   );
 }
 
-/** tldraw owns frame placement; every other tool inserts a document node. */
+type RailTool = { icon: LucideIcon; label: string; onClick: () => void; disabled?: boolean };
+type InsertItem = { icon: LucideIcon; label: string; type: RNPrimitive };
+
+/** Semantic primitives that live behind the Insert menu rather than the rail —
+ *  keeps the rail to the core authoring tools (parity with Figma's lean rail). */
+const INSERT_ITEMS: InsertItem[] = [
+  { icon: MousePointerClick, label: "Pressable", type: "Pressable" },
+  { icon: MoveVertical, label: "ScrollView", type: "ScrollView" },
+  { icon: TextCursorInput, label: "TextInput", type: "TextInput" },
+  { icon: List, label: "FlatList", type: "FlatList" },
+];
+
+const railButton =
+  "flex size-9 items-center justify-center rounded-sm border border-line bg-chrome-2 text-ink " +
+  "transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line " +
+  "disabled:cursor-not-allowed disabled:bg-chrome-2 disabled:text-ink-faint disabled:hover:bg-chrome-2";
+
+/**
+ * tldraw owns frame placement; every other tool inserts a document node. The rail
+ * carries the core tools (Select, Frame, View, Text, Image); the remaining
+ * semantic primitives sit in the Insert menu so the rail stays uncluttered.
+ */
 export function ToolRail({
   onSelect,
   onAddFrame,
@@ -94,36 +117,15 @@ export function ToolRail({
   onAddPrimitive: (type: RNPrimitive) => void;
   canAddPrimitive: boolean;
 }) {
-  const tools: {
-    icon: LucideIcon;
-    label: string;
-    onClick: () => void;
-    disabled?: boolean;
-  }[] = [
+  const tools: RailTool[] = [
     { icon: MousePointer2, label: "Select", onClick: onSelect },
     { icon: Frame, label: "Frame", onClick: onAddFrame },
     { icon: Square, label: "View", onClick: () => onAddPrimitive("View"), disabled: !canAddPrimitive },
     { icon: Type, label: "Text", onClick: () => onAddPrimitive("Text"), disabled: !canAddPrimitive },
     { icon: Image, label: "Image", onClick: () => onAddPrimitive("Image"), disabled: !canAddPrimitive },
-    { icon: MousePointerClick, label: "Pressable", onClick: () => onAddPrimitive("Pressable"), disabled: !canAddPrimitive },
-    { icon: MoveVertical, label: "ScrollView", onClick: () => onAddPrimitive("ScrollView"), disabled: !canAddPrimitive },
-    { icon: TextCursorInput, label: "TextInput", onClick: () => onAddPrimitive("TextInput"), disabled: !canAddPrimitive },
-    { icon: List, label: "FlatList", onClick: () => onAddPrimitive("FlatList"), disabled: !canAddPrimitive },
   ];
   return (
-    <nav
-      style={{
-        flex: `0 0 ${layout.rail}px`,
-        width: layout.rail,
-        background: color.chrome,
-        borderRight: `1px solid ${color.line}`,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: space.xs,
-        padding: `${space.sm} 0`,
-      }}
-    >
+    <nav className="flex w-[var(--w-rail)] shrink-0 flex-col items-center gap-xs border-r border-line bg-chrome py-sm">
       {tools.map((t) => {
         const Icon = t.icon;
         return (
@@ -131,26 +133,60 @@ export function ToolRail({
             key={t.label}
             type="button"
             title={t.label}
+            aria-label={t.label}
             onClick={t.onClick}
             disabled={t.disabled}
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: radius.sm,
-              border: `1px solid ${color.line}`,
-              background: color.chrome2,
-              color: t.disabled ? color.inkFaint : color.ink,
-              fontSize: text.base,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
+            className={railButton}
           >
             <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
           </button>
         );
       })}
+      <div className="my-xs h-px w-5 bg-line" aria-hidden="true" />
+      <InsertMenu onAdd={onAddPrimitive} disabled={!canAddPrimitive} />
     </nav>
+  );
+}
+
+/** Insert menu for the semantic primitives. Disabled until a frame is focused. */
+function InsertMenu({
+  onAdd,
+  disabled,
+}: {
+  onAdd: (type: RNPrimitive) => void;
+  disabled: boolean;
+}) {
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        title="Insert…"
+        aria-label="Insert element"
+        disabled={disabled}
+        className={cn(railButton, "data-[popup-open]:bg-raised data-[popup-open]:ring-2 data-[popup-open]:ring-accent-line")}
+      >
+        <Plus size={18} strokeWidth={1.75} aria-hidden="true" />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner side="right" align="start" sideOffset={8} className="z-50">
+          <Menu.Popup className="min-w-44 rounded-md border border-line bg-chrome p-[3px] shadow-[0_8px_24px_rgba(0,0,0,0.4)] outline-none">
+            <div className="eyebrow px-sm py-xs">Insert</div>
+            {INSERT_ITEMS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Menu.Item
+                  key={item.type}
+                  onClick={() => onAdd(item.type)}
+                  className="flex cursor-default items-center gap-sm rounded-sm px-sm py-[6px] text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink"
+                >
+                  <Icon size={15} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />
+                  {item.label}
+                </Menu.Item>
+              );
+            })}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }
 

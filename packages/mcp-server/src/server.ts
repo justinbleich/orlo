@@ -97,7 +97,10 @@ export function createMcpServer(bridge: StudioCommandBridge = new StudioBridge()
       if (!root) throw new Error(`Root not found: ${rootId}`);
       const generated = generateScreen(root, { screenName: screenName ?? "Screen" });
       return {
-        content: [{ type: "text" as const, text: generated.code }],
+        content: [
+          { type: "text" as const, text: generated.code },
+          { type: "text" as const, text: generated.sidecar },
+        ],
         structuredContent: { ...generated, source: "document" },
       };
     },

@@ -49,6 +49,21 @@ function transact<T>(run: () => T): T {
   }
 }
 
+async function waitForFrameSurface(rootId: string): Promise<HTMLElement> {
+  const find = () =>
+    Array.from(document.querySelectorAll<HTMLElement>("[data-rn-root-id]")).find(
+      (element) => element.dataset.rnRootId === rootId,
+    );
+  const deadline = Date.now() + 1_500;
+  let surface = find();
+  while (!surface && Date.now() < deadline) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    surface = find();
+  }
+  if (!surface) throw new Error(`Canvas frame is not mounted: ${rootId}`);
+  return surface;
+}
+
 /** Execute MCP commands only through the canonical, validated document store. */
 export const handleMcpCommand: BrowserCommandHandler = async (command) => {
   const payload = payloadOf(command.payload);
@@ -113,10 +128,7 @@ export const handleMcpCommand: BrowserCommandHandler = async (command) => {
         ? store.roots[requestedRootId]
         : findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
       if (!root) throw new Error("Select a frame or provide rootId");
-      const surface = Array.from(
-        document.querySelectorAll<HTMLElement>("[data-rn-root-id]"),
-      ).find((element) => element.dataset.rnRootId === root.id);
-      if (!surface) throw new Error(`Canvas frame is not mounted: ${root.id}`);
+      const surface = await waitForFrameSurface(root.id);
       await document.fonts.ready;
       const canvasColor = getComputedStyle(document.documentElement)
         .getPropertyValue("--canvas")

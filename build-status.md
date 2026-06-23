@@ -6,8 +6,8 @@
 
 ## Current position
 
-BUILD Phases 0-5 are complete. The MCP agent loop passes against the live Studio, so Phase 6
-(external RN import + polish) is next. Post-v1 component systems, interactions,
+BUILD Phases 0-6 are complete. External emitted-subset RN source imports into the live Studio
+without a sidecar, and canvas/document undo controls are coordinated. Post-v1 component systems, interactions,
 device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 
 | Phase | Status | Evidence |
@@ -19,7 +19,7 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 | 4 - canvas/code hardening | complete | primitive rail, Screens/Layers, direct document workflows |
 | 4.5 - conformance | complete | closed validation, property/typecheck evidence, render instrumentation, direct manipulation |
 | 5 - MCP | complete | live stdio tools, validated browser bridge, code/screenshot inspection, passing e2e |
-| 6 - external RN import + polish | not started | next BUILD phase |
+| 6 - external RN import + polish | complete | static AST importer, Studio import workflow, coordinated canvas/document undo |
 
 ## Phase 4.5 evidence
 
@@ -55,6 +55,20 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 - Protocol tests cover tool registration/forwarding/code/screenshot. The opt-in live test creates
   and edits a frame, reads it, reloads the generated sidecar, captures it, and cleans it up.
 
+## Phase 6 evidence
+
+- `packages/codegen` parses the exact static RN subset emitted by codegen without executing source.
+  It reconstructs `StyleSheet.create` references, all seven primitives, typed props, image sources,
+  FlatList templates, and the supported RNStyle subset, then validates the resulting document tree.
+- Emit → external parse → emit is exact over a fixture spanning the full primitive vocabulary.
+  Dynamic expressions, unknown props, unsupported styles, and non-workspace import paths fail closed.
+- Studio keeps sidecar opening as the normal document load path and exposes external source import as
+  a separate explicit action. Babel remains Node-side and never enters the browser or render hot path.
+- Undo/redo controls observe both document history and tldraw's frame-spatial history. Canvas fallback
+  skips selection-only tldraw checkpoints so one visible action restores one visible frame operation.
+- Browser verification covered valid source import, workspace confinement, and exact frame geometry
+  across move → undo → redo. Codegen tests and production package builds pass.
+
 ## Deliberately parked
 
 - `packages/sim-bridge` and the render-web image-diff utility remain as Phase 0 evidence, but
@@ -77,6 +91,6 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 
 ## Recommendation
 
-Proceed to Phase 6's external-RN import in a separate branch/checkpoint. Start with the exact
-AST subset emitted by codegen, prove import-to-document equivalence, then widen deliberately.
-Keep post-v1 UI and document vocabulary parked during that parser work.
+V1's BUILD sequence is complete. Hold the external parser at the proven emitted subset unless a
+specific real-world import fixture justifies widening it. Next, run the v1 definition-of-done flow
+as a release checkpoint; only then choose a post-v1 roadmap slice. Yjs remains optional and parked.

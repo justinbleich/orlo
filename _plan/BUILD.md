@@ -191,11 +191,11 @@ canvas reflects every change.
 
 ## Phase 6 — Round-trip + polish
 
-- [ ] `packages/codegen`: parse **external** RN source (`@babel/parser`/`traverse`) back into
+- [x] `packages/codegen`: parse **external** RN source (`@babel/parser`/`traverse`) back into
       document nodes — i.e. importing code that has no sidecar — reconstructing `StyleSheet`
       references into node `style` objects. Hardest parse step; start with the subset emit
       produces, then widen. (Normal load uses the Phase 3 sidecar and needs none of this.)
-- [ ] Undo/redo polish (lean on tldraw where possible). Persistence already lands in Phase 3
+- [x] Undo/redo polish (lean on tldraw where possible). Persistence already lands in Phase 3
       via the sidecar.
 - [ ] Optional: Yjs multiplayer.
 

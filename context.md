@@ -394,3 +394,17 @@ retarget to `@rn-canvas/document`.
   the real Studio bridge, creates/edits/reads a frame, round-trips its sidecar, captures it, and
   deletes it. Full package tests and monorepo build pass.
 - Phase 5 passes. Phase 6 external RN import + polish is next; post-v1 roadmaps remain parked.
+
+## Phase 6 round-trip + polish checkpoint
+
+- `packages/codegen` now has a fail-closed Babel AST importer for the static RN syntax emitted by
+  codegen. It covers all seven primitives, typed props, StyleSheet references, static inline styles,
+  Image sources, FlatList templates, and the complete validated RNStyle contract without executing code.
+- Emit → parse → emit equality is tested over the full primitive fixture. Dynamic expressions,
+  unknown props, and unsupported RN styles are rejected at the import boundary.
+- Studio exposes external `.tsx`/`.jsx` import separately from canonical sidecar opening through a
+  workspace-confined Node endpoint. Import starts a fresh document session and Babel stays out of the
+  foreground render path.
+- Visible and keyboard undo/redo now cover both document edits and tldraw-owned frame geometry.
+  Selection-only tldraw checkpoints are skipped so frame move undo/redo restores exact geometry.
+- Phase 6 and the v1 BUILD sequence pass. Optional Yjs and both post-v1 roadmap files remain parked.

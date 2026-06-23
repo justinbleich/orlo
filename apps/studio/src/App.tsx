@@ -130,6 +130,29 @@ function syncShapes(editor: Editor) {
   );
 }
 
+function canvasGeometrySignature(editor: Editor) {
+  return editor
+    .getCurrentPageShapes()
+    .filter(isRNFrame)
+    .map((shape) => {
+      const frame = asRNFrame(shape);
+      return [frame.id, frame.x, frame.y, frame.rotation, frame.props.w, frame.props.h];
+    })
+    .sort(([a], [b]) => String(a).localeCompare(String(b)))
+    .map((parts) => parts.join(":"))
+    .join("|");
+}
+
+function stepCanvasHistory(editor: Editor, direction: "undo" | "redo") {
+  const before = canvasGeometrySignature(editor);
+  for (let skipped = 0; skipped < 100; skipped += 1) {
+    const available = direction === "undo" ? editor.getCanUndo() : editor.getCanRedo();
+    if (!available) return;
+    editor[direction]();
+    if (canvasGeometrySignature(editor) !== before) return;
+  }
+}
+
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
@@ -142,6 +165,8 @@ export default function App() {
   const [codegenResult, setCodegenResult] = useState<CodegenResult | null>(null);
   const [codegenError, setCodegenError] = useState<string | null>(null);
   const [codegenBusy, setCodegenBusy] = useState(false);
+  const [canvasCanUndo, setCanvasCanUndo] = useState(false);
+  const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
   // The document store's selection is the single source of truth. The focused
   // frame is *derived* from it (the root whose subtree holds the selection), and
@@ -187,7 +212,27 @@ export default function App() {
       },
       { scope: "session" },
     );
+
+    const updateCanvasHistory = () => {
+      setCanvasCanUndo(editor.getCanUndo());
+      setCanvasCanRedo(editor.getCanRedo());
+    };
+    editor.store.listen(updateCanvasHistory, { scope: "document" });
+    updateCanvasHistory();
   }, []);
+
+  const undoAvailable = canUndo || canvasCanUndo;
+  const redoAvailable = canRedo || canvasCanRedo;
+
+  const undoLatest = useCallback(() => {
+    if (useDocumentStore.getState().canUndo()) undo();
+    else if (editorRef.current) stepCanvasHistory(editorRef.current, "undo");
+  }, [undo]);
+
+  const redoLatest = useCallback(() => {
+    if (useDocumentStore.getState().canRedo()) redo();
+    else if (editorRef.current) stepCanvasHistory(editorRef.current, "redo");
+  }, [redo]);
 
   // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
   // can't ping-pong with the listener above.
@@ -217,16 +262,23 @@ export default function App() {
       const modifier = event.metaKey || event.ctrlKey;
       if (modifier && event.key.toLowerCase() === "z") {
         const redoRequested = event.shiftKey;
-        if (redoRequested ? store.canRedo() : store.canUndo()) {
+        const documentAvailable = redoRequested ? store.canRedo() : store.canUndo();
+        const editor = editorRef.current;
+        const canvasAvailable = editor
+          ? redoRequested
+            ? editor.getCanRedo()
+            : editor.getCanUndo()
+          : false;
+        if (documentAvailable || canvasAvailable) {
           event.preventDefault();
           event.stopImmediatePropagation();
-          if (redoRequested) {
-            store.redo();
-            setStatus("Redid document change");
+          if (documentAvailable) {
+            if (redoRequested) store.redo();
+            else store.undo();
           } else {
-            store.undo();
-            setStatus("Undid document change");
+            stepCanvasHistory(editor!, redoRequested ? "redo" : "undo");
           }
+          setStatus(redoRequested ? "Redid change" : "Undid change");
         }
         return;
       }
@@ -499,8 +551,8 @@ export default function App() {
           <button
             type="button"
             style={iconBtn}
-            disabled={!canUndo}
-            onClick={() => undo()}
+            disabled={!undoAvailable}
+            onClick={undoLatest}
             title="Undo"
           >
             <Undo2 size={16} aria-hidden="true" />
@@ -508,8 +560,8 @@ export default function App() {
           <button
             type="button"
             style={iconBtn}
-            disabled={!canRedo}
-            onClick={() => redo()}
+            disabled={!redoAvailable}
+            onClick={redoLatest}
             title="Redo"
           >
             <Redo2 size={16} aria-hidden="true" />

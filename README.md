@@ -28,6 +28,35 @@ pnpm --filter @rn-canvas/harness ios
 The old automated screenshot capture and pixel-diff spike remains parked in
 `packages/sim-bridge` and `packages/render-web`; it is not part of the v1 workflow.
 
+### MCP agent connection
+
+Keep the Studio open in a browser, then configure an MCP client to launch the stdio server from
+this repository:
+
+```json
+{
+  "mcpServers": {
+    "rn-canvas": {
+      "command": "pnpm",
+      "args": [
+        "--dir",
+        "/absolute/path/to/react-canvas",
+        "--filter",
+        "@rn-canvas/mcp-server",
+        "start"
+      ],
+      "env": {
+        "RN_CANVAS_STUDIO_URL": "http://127.0.0.1:5173"
+      }
+    }
+  }
+}
+```
+
+The server exposes `get_tree`, `create_frame`, `delete_frame`, `update_node`, `set_style`,
+`get_code`, and `get_canvas_screenshot`. Mutations execute in the live browser against the
+validated document store; the MCP process does not own a parallel document.
+
 ## Monorepo layout
 
 | Path | Purpose |
@@ -38,6 +67,7 @@ The old automated screenshot capture and pixel-diff spike remains parked in
 | `packages/styles` | RN style contract, validation, Yoga mapping, text metrics |
 | `packages/render-web` | rnw renderer with Yoga WASM layout |
 | `packages/codegen` | Explicit RN source + sidecar serialization |
+| `packages/mcp-server` | Stdio MCP tools bridged to the live Studio document |
 | `packages/sim-bridge` | Parked Phase 0 simulator screenshot spike |
 | `_plan/` | BUILD.md and phase plans |
 

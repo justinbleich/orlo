@@ -6,8 +6,8 @@
 
 ## Current position
 
-BUILD Phases 0-4.5 are complete. Phase 4.5's conformance and direct-manipulation gate now
-passes, so Phase 5 (MCP / agent loop) is next. Post-v1 component systems, interactions,
+BUILD Phases 0-5 are complete. The MCP agent loop passes against the live Studio, so Phase 6
+(external RN import + polish) is next. Post-v1 component systems, interactions,
 device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 
 | Phase | Status | Evidence |
@@ -18,8 +18,8 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 | 3 - codegen | complete | explicit RN + sidecar serialization, reopen/sync workflow |
 | 4 - canvas/code hardening | complete | primitive rail, Screens/Layers, direct document workflows |
 | 4.5 - conformance | complete | closed validation, property/typecheck evidence, render instrumentation, direct manipulation |
-| 5 - MCP | not started | next BUILD phase |
-| 6 - external RN import + polish | not started | follows MCP |
+| 5 - MCP | complete | live stdio tools, validated browser bridge, code/screenshot inspection, passing e2e |
+| 6 - external RN import + polish | not started | next BUILD phase |
 
 ## Phase 4.5 evidence
 
@@ -39,6 +39,21 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
   extracted OpenType ascent/descent/line-gap table used by the Yoga TextMeasurer.
 - Browser verification covered selection, resize, one-step gesture undo, flex reorder, and
   exact Studio font loading. Package tests and the full production build pass.
+
+## Phase 5 evidence
+
+- `packages/mcp-server` uses the pinned stable v1 TypeScript SDK over stdio and exposes all
+  seven BUILD tools.
+- The server is intentionally stateless. A leased request/response bridge routes commands to
+  one live Studio tab, where reads and mutations execute against the canonical Zustand store.
+- Agent mutations pass through the existing document/style validators. Multi-field updates are
+  one undo transaction and roll back completely on validation failure.
+- `get_code` fetches the live root and invokes the existing codegen serializer; it returns both
+  RN source and the canonical sidecar. It does not enter the render path.
+- `get_canvas_screenshot` captures the focused live RNFrame DOM, labels the source `canvas`, and
+  does not invoke native preview or the parked pixel-diff path.
+- Protocol tests cover tool registration/forwarding/code/screenshot. The opt-in live test creates
+  and edits a frame, reads it, reloads the generated sidecar, captures it, and cleans it up.
 
 ## Deliberately parked
 
@@ -62,6 +77,6 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
 
 ## Recommendation
 
-Start Phase 5 in small commits: establish the MCP transport and validated document boundary,
-add read tools, then mutation/code/screenshot tools, then one end-to-end persistence test.
-Do not widen the UI or post-v1 document vocabulary while that agent loop is being proven.
+Proceed to Phase 6's external-RN import in a separate branch/checkpoint. Start with the exact
+AST subset emitted by codegen, prove import-to-document equivalence, then widen deliberately.
+Keep post-v1 UI and document vocabulary parked during that parser work.

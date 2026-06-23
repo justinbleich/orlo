@@ -378,3 +378,19 @@ retarget to `@rn-canvas/document`.
 - The Phase 0 simulator/diff implementation remains parked, but its root and Studio commands are
   removed. Optional native preview remains separate from codegen correctness.
 - Phase 4.5 passes. Phase 5 MCP is next; `phase2.md` and `phase3.md` remain post-v1.
+
+## Phase 5 MCP checkpoint
+
+- `packages/mcp-server` exposes the BUILD tool set over stdio using
+  `@modelcontextprotocol/sdk` 1.29.0: `get_tree`, `create_frame`, `delete_frame`,
+  `update_node`, `set_style`, `get_code`, and `get_canvas_screenshot`.
+- The MCP process does not own document state. A Vite-hosted command queue leases one live Studio
+  browser client and executes every operation against `useDocumentStore`.
+- Agent writes use the same validated store APIs as the Inspector and canvas. Combined prop/design
+  writes are one undo transaction; failed validation restores the pre-command snapshot.
+- `get_code` is an explicit document-to-code/sidecar serialization. `get_canvas_screenshot`
+  captures the actual mounted RNFrame DOM and labels it as canvas source.
+- Normal protocol tests use the SDK's in-memory transport. The opt-in live test connects through
+  the real Studio bridge, creates/edits/reads a frame, round-trips its sidecar, captures it, and
+  deletes it. Full package tests and monorepo build pass.
+- Phase 5 passes. Phase 6 external RN import + polish is next; post-v1 roadmaps remain parked.

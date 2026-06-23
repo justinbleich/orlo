@@ -180,10 +180,10 @@ remains canonical and interaction stays within the frame budget.
 
 ## Phase 5 — MCP / agent loop
 
-- [ ] `packages/mcp-server`: implement tools — `get_tree`, `create_frame`, `delete_frame`,
+- [x] `packages/mcp-server`: implement tools — `get_tree`, `create_frame`, `delete_frame`,
       `update_node`, `set_style`, `get_canvas_screenshot`, `get_code` (from codegen).
-- [ ] Wire the server so an agent (Cursor/Claude Code) can connect and operate the live document.
-- [ ] End-to-end test: agent creates a frame, sets styles, requests a screenshot, pulls code;
+- [x] Wire the server so an agent (Cursor/Claude Code) can connect and operate the live document.
+- [x] End-to-end test: agent creates a frame, sets styles, requests a screenshot, pulls code;
       changes appear on the canvas and survive a reload.
 
 **Done when:** an external agent can build and inspect a frame entirely through MCP, and the

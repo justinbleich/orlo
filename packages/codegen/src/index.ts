@@ -9,6 +9,11 @@ export {
   parseSidecar,
   type SidecarDocument,
 } from "./sidecar";
+export {
+  parseExternalScreen,
+  type ParseExternalOptions,
+  type ParsedExternalScreen,
+} from "./parse-external";
 
 export interface GeneratedScreen {
   screenName: string;

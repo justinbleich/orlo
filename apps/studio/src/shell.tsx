@@ -5,6 +5,22 @@
  */
 import { useState } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
+  Frame,
+  Image,
+  List,
+  MousePointer2,
+  MousePointerClick,
+  MoveVertical,
+  Plus,
+  Square,
+  TextCursorInput,
+  Trash2,
+  Type,
+  type LucideIcon,
+} from "lucide-react";
+import {
   childrenOf,
   findNode,
   findRootContaining,
@@ -79,20 +95,20 @@ export function ToolRail({
   canAddPrimitive: boolean;
 }) {
   const tools: {
-    glyph: string;
+    icon: LucideIcon;
     label: string;
     onClick: () => void;
     disabled?: boolean;
   }[] = [
-    { glyph: "⌖", label: "Select", onClick: onSelect },
-    { glyph: "▭", label: "Frame", onClick: onAddFrame },
-    { glyph: "□", label: "View", onClick: () => onAddPrimitive("View"), disabled: !canAddPrimitive },
-    { glyph: "T", label: "Text", onClick: () => onAddPrimitive("Text"), disabled: !canAddPrimitive },
-    { glyph: "▧", label: "Image", onClick: () => onAddPrimitive("Image"), disabled: !canAddPrimitive },
-    { glyph: "◉", label: "Pressable", onClick: () => onAddPrimitive("Pressable"), disabled: !canAddPrimitive },
-    { glyph: "↕", label: "ScrollView", onClick: () => onAddPrimitive("ScrollView"), disabled: !canAddPrimitive },
-    { glyph: "▤", label: "TextInput", onClick: () => onAddPrimitive("TextInput"), disabled: !canAddPrimitive },
-    { glyph: "☷", label: "FlatList", onClick: () => onAddPrimitive("FlatList"), disabled: !canAddPrimitive },
+    { icon: MousePointer2, label: "Select", onClick: onSelect },
+    { icon: Frame, label: "Frame", onClick: onAddFrame },
+    { icon: Square, label: "View", onClick: () => onAddPrimitive("View"), disabled: !canAddPrimitive },
+    { icon: Type, label: "Text", onClick: () => onAddPrimitive("Text"), disabled: !canAddPrimitive },
+    { icon: Image, label: "Image", onClick: () => onAddPrimitive("Image"), disabled: !canAddPrimitive },
+    { icon: MousePointerClick, label: "Pressable", onClick: () => onAddPrimitive("Pressable"), disabled: !canAddPrimitive },
+    { icon: MoveVertical, label: "ScrollView", onClick: () => onAddPrimitive("ScrollView"), disabled: !canAddPrimitive },
+    { icon: TextCursorInput, label: "TextInput", onClick: () => onAddPrimitive("TextInput"), disabled: !canAddPrimitive },
+    { icon: List, label: "FlatList", onClick: () => onAddPrimitive("FlatList"), disabled: !canAddPrimitive },
   ];
   return (
     <nav
@@ -109,6 +125,7 @@ export function ToolRail({
       }}
     >
       {tools.map((t) => {
+        const Icon = t.icon;
         return (
           <button
             key={t.label}
@@ -129,7 +146,7 @@ export function ToolRail({
               justifyContent: "center",
             }}
           >
-            {t.glyph}
+            <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
           </button>
         );
       })}
@@ -144,6 +161,17 @@ const panelButton: React.CSSProperties = {
   background: color.raised,
   color: color.ink,
   fontSize: text.sm,
+};
+
+const panelIconButton: React.CSSProperties = {
+  ...panelButton,
+  width: 28,
+  height: 28,
+  padding: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flex: "0 0 auto",
 };
 
 /** Document navigation. Screens are roots; Layers is the focused root's tree. */
@@ -217,8 +245,8 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
         <section style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <Eyebrow>Screens</Eyebrow>
-            <button type="button" style={panelButton} onClick={onAddFrame} title="Add screen">
-              +
+            <button type="button" style={panelIconButton} onClick={onAddFrame} title="Add screen">
+              <Plus size={16} aria-hidden="true" />
             </button>
           </div>
           {rootList.map((root, index) => {
@@ -244,10 +272,10 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                   type="button"
                   disabled={locked}
                   onClick={() => deleteScreen(root.id)}
-                  style={panelButton}
+                  style={panelIconButton}
                   title="Delete screen"
                 >
-                  ×
+                  <Trash2 size={15} aria-hidden="true" />
                 </button>
               </div>
             );
@@ -269,30 +297,30 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
               <div style={{ display: "flex", gap: space.xs }}>
                 <button
                   type="button"
-                  style={panelButton}
+                  style={panelIconButton}
                   onClick={() => moveSelected(-1)}
                   disabled={!canMoveUp}
                   title="Move up"
                 >
-                  ↑
+                  <ArrowUp size={16} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
-                  style={panelButton}
+                  style={panelIconButton}
                   onClick={() => moveSelected(1)}
                   disabled={!canMoveDown}
                   title="Move down"
                 >
-                  ↓
+                  <ArrowDown size={16} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
-                  style={panelButton}
+                  style={panelIconButton}
                   onClick={deleteSelected}
                   disabled={!canDeleteLayer}
                   title="Delete layer"
                 >
-                  ×
+                  <Trash2 size={15} aria-hidden="true" />
                 </button>
               </div>
             </>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Redo2, Undo2 } from "lucide-react";
 import {
   Tldraw,
   createShapeId,
@@ -412,6 +413,15 @@ export default function App() {
     padding: `${space.xs} ${space.md}`,
     fontSize: text.sm,
   };
+  const iconBtn: React.CSSProperties = {
+    ...btn,
+    width: 28,
+    height: 28,
+    padding: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
   // Top-bar placeholders (structure only; controls fill in across phases).
   const crumbStyle: React.CSSProperties = { color: color.inkDim, fontSize: text.base };
   const fieldStyle: React.CSSProperties = {
@@ -451,21 +461,21 @@ export default function App() {
         <div style={{ display: "flex", gap: space.xs }}>
           <button
             type="button"
-            style={btn}
+            style={iconBtn}
             disabled={!canUndo}
             onClick={() => undo()}
             title="Undo"
           >
-            ↶
+            <Undo2 size={16} aria-hidden="true" />
           </button>
           <button
             type="button"
-            style={btn}
+            style={iconBtn}
             disabled={!canRedo}
             onClick={() => redo()}
             title="Redo"
           >
-            ↷
+            <Redo2 size={16} aria-hidden="true" />
           </button>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: space.sm }}>

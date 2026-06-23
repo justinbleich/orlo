@@ -4,6 +4,7 @@ import {
   type Node,
   type NodeId,
 } from "@rn-canvas/document";
+import { EyeOff, LockOpen } from "lucide-react";
 import { color, radius, space, text } from "./studio-theme";
 
 export function DocumentTree({
@@ -37,6 +38,9 @@ export function DocumentTree({
           background: selected ? color.accent : "transparent",
           color: node.design?.hidden ? color.inkFaint : color.ink,
           borderRadius: radius.sm,
+          display: "flex",
+          alignItems: "center",
+          gap: space.xs,
         }}
       >
         {locked && (
@@ -50,16 +54,22 @@ export function DocumentTree({
             style={{
               border: 0,
               padding: 0,
-              marginRight: space.xs,
+              width: 16,
+              height: 16,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               background: "transparent",
               color: "inherit",
             }}
           >
-            L
+            <LockOpen size={13} aria-hidden="true" />
           </button>
         )}
-        {node.design?.hidden ? "◌ " : ""}
-        {label} <span style={{ color: color.inkFaint }}>· {node.type}</span>
+        {node.design?.hidden && <EyeOff size={13} aria-label="Hidden" />}
+        <span>
+          {label} <span style={{ color: color.inkFaint }}>· {node.type}</span>
+        </span>
       </div>
       {childrenOf(node).map((child) => (
         <DocumentTree

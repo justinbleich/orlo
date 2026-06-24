@@ -13,6 +13,7 @@ import {
 import type { LayoutBox, LayoutReadyResult } from "@rn-canvas/render-web";
 import { color, radius } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
+import { normalizeNodeSelection } from "./selection";
 
 type Point = { x: number; y: number };
 type Rect = { x0: number; y0: number; x1: number; y1: number };
@@ -286,9 +287,10 @@ export function RNNodeOverlay({
     if (additive) {
       // Toggle membership; don't start a drag. Falling back to the frame when
       // the last node is removed keeps a frame focused for the overlay.
-      const next = current.includes(hit.node.id)
+      const toggled = current.includes(hit.node.id)
         ? current.filter((id) => id !== hit.node.id)
         : [...current, hit.node.id];
+      const next = normalizeNodeSelection(root, toggled, { excludeRoot: true });
       store.setSelection(next.length ? next : [root.id]);
       setInstanceKey(hit.instanceKey);
       return;
@@ -400,7 +402,11 @@ export function RNNodeOverlay({
           const base = useDocumentStore
             .getState()
             .selection.filter((id) => id !== root.id);
-          const next = current.additive ? [...new Set([...base, ...unique])] : unique;
+          const next = normalizeNodeSelection(
+            root,
+            current.additive ? [...base, ...unique] : unique,
+            { excludeRoot: true },
+          );
           setSelection(next);
         }
       }

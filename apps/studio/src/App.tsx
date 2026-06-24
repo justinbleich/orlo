@@ -25,6 +25,7 @@ import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
 import { deleteNodes, duplicateNodes } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
+import { normalizeNodeSelection } from "./selection";
 
 const shapeUtils = [RNFrameShapeUtil];
 const RNFRAME = RNFrameShapeUtil.type;
@@ -182,6 +183,7 @@ export default function App() {
 
   const canUndo = useDocumentStore((s) => s.past.length > 0);
   const canRedo = useDocumentStore((s) => s.future.length > 0);
+  const hasActiveInteraction = useDocumentStore((s) => !!s.interaction);
   const undo = useDocumentStore((s) => s.undo);
   const redo = useDocumentStore((s) => s.redo);
 
@@ -222,10 +224,12 @@ export default function App() {
     updateCanvasHistory();
   }, []);
 
-  const undoAvailable = canUndo || canvasCanUndo;
+  const undoAvailable = canUndo || canvasCanUndo || hasActiveInteraction;
   const redoAvailable = canRedo || canvasCanRedo;
 
   const undoLatest = useCallback(() => {
+    const store = useDocumentStore.getState();
+    if (store.interaction) store.commitInteraction();
     if (useDocumentStore.getState().canUndo()) undo();
     else if (editorRef.current) stepCanvasHistory(editorRef.current, "undo");
   }, [undo]);
@@ -294,7 +298,7 @@ export default function App() {
       if (modifier && event.key.toLowerCase() === "d") {
         const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
         const nodeIds = focused
-          ? store.selection.filter((id) => id !== focused.id && findNode(focused, id))
+          ? normalizeNodeSelection(focused, store.selection, { excludeRoot: true })
           : [];
         if (nodeIds.length > 0) {
           event.preventDefault();
@@ -311,8 +315,8 @@ export default function App() {
       // when the selection is the frame itself (no inner node selected).
       const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
       const nodeIds = focused
-        ? store.selection.filter(
-            (id) => id !== focused.id && findNode(focused, id) && !findNode(focused, id)?.design?.locked,
+        ? normalizeNodeSelection(focused, store.selection, { excludeRoot: true }).filter(
+            (id) => !findNode(focused, id)?.design?.locked,
           )
         : [];
       if (nodeIds.length > 0) {
@@ -567,6 +571,7 @@ export default function App() {
     <div
       style={{
         height: "100vh",
+        minWidth: layout.workspaceMin,
         display: "flex",
         flexDirection: "column",
         background: color.canvas,
@@ -574,6 +579,7 @@ export default function App() {
     >
       {/* TOP BAR */}
       <header
+        className="studio-chrome"
         style={{
           flex: `0 0 ${layout.topbar}px`,
           height: layout.topbar,
@@ -642,6 +648,7 @@ export default function App() {
             />
           </div>
           <div
+            className="studio-chrome"
             style={{
               flex: "0 0 auto",
               padding: `${space.xs} ${space.md}`,
@@ -657,6 +664,7 @@ export default function App() {
 
         {/* RIGHT COLUMN: canvas/code inspector. Optional native preview is on demand. */}
         <div
+          className="studio-chrome"
           style={{
             flex: `0 0 ${layout.rightColumn}px`,
             width: layout.rightColumn,

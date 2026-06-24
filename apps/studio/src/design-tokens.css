@@ -76,6 +76,10 @@
 
   /* --- Spacing (4px base) --------------------------------------------------- */
   --space-xs:  4px;
+  --space-2xs: 2px;
+  --space-control: 3px;
+  --space-control-y: 5px;
+  --space-menu-y: 6px;
   --space-sm:  8px;
   --space-md:  12px;
   --space-lg:  16px;
@@ -84,6 +88,7 @@
 
   /* --- Radii ---------------------------------------------------------------- */
   --radius-sm:   6px;   /* small controls                                       */
+  --radius-xs:   4px;   /* compact segmented controls + swatches                 */
   --radius:      8px;   /* default controls, buttons, inputs                    */
   --radius-lg:   12px;  /* panels, cards, frames                                */
   --radius-pill: 20px;  /* pills / chips                                        */
@@ -94,6 +99,14 @@
   --w-left-panel:   246px;
   --w-right-column: 336px;
   --h-ground-truth: 300px;
+  --w-workspace-min:  960px;
+
+  /* --- Compact chrome details --------------------------------------------- */
+  --size-swatch: 18px;
+  --checker-color: #888888;
+  --checker-size: 8px;
+  --shadow-control: 0 1px 2px rgba(0,0,0,.25);
+  --shadow-popover: 0 8px 24px rgba(0,0,0,.40);
 }
 
 /* Micro-label convention: the "pro tool" register used for panel headers. */

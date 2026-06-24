@@ -1,5 +1,6 @@
 import { NumberField as BaseNumberField } from "@base-ui/react/number-field";
 import { cn } from "./cn";
+import type { EditLifecycle } from "./controls";
 
 /**
  * Scrubbable number input — the inspector's workhorse. The leading label/icon is
@@ -17,6 +18,9 @@ export function NumberField({
   disabled,
   mixed,
   placeholder,
+  onEditStart,
+  onEditEnd,
+  onEditCancel,
 }: {
   label: React.ReactNode;
   value: number | undefined;
@@ -27,15 +31,27 @@ export function NumberField({
   disabled?: boolean;
   mixed?: boolean;
   placeholder?: string;
-}) {
+} & EditLifecycle) {
   return (
     <BaseNumberField.Root
       value={mixed ? null : value ?? null}
-      onValueChange={(next) => onChange(next ?? undefined)}
+      onValueChange={(next) => {
+        onEditStart?.();
+        onChange(next ?? undefined);
+      }}
       min={min}
       max={max}
       step={step}
       disabled={disabled}
+      onFocusCapture={onEditStart}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as globalThis.Node | null)) {
+          onEditEnd?.();
+        }
+      }}
+      onPointerDownCapture={onEditStart}
+      onPointerUpCapture={onEditEnd}
+      onPointerCancelCapture={onEditCancel}
       className={cn(
         "group flex h-7 items-center rounded-sm border border-line bg-chrome-2",
         "transition-colors focus-within:border-accent-line focus-within:bg-raised",

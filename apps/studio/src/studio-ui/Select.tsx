@@ -47,8 +47,8 @@ export function Select<T extends string>({
         <BaseSelect.Positioner sideOffset={4} className="z-50">
           <BaseSelect.Popup
             className={cn(
-              "min-w-[var(--anchor-width)] rounded-md border border-line bg-chrome p-[3px]",
-              "shadow-[0_8px_24px_rgba(0,0,0,0.4)] outline-none",
+              "studio-popup min-w-[var(--anchor-width)] rounded-md border border-line bg-chrome p-control",
+              "shadow-popover outline-none",
             )}
           >
             {options.map((option) => (
@@ -56,7 +56,7 @@ export function Select<T extends string>({
                 key={option.value}
                 value={option.value}
                 className={cn(
-                  "flex cursor-default items-center justify-between gap-sm rounded-sm py-[5px] pl-sm pr-xs",
+                  "flex cursor-default items-center justify-between gap-sm rounded-sm py-control-y pl-sm pr-xs",
                   "text-sm text-ink-dim outline-none",
                   "data-[highlighted]:bg-raised data-[highlighted]:text-ink",
                   "data-[selected]:text-ink",

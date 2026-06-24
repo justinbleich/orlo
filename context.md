@@ -418,3 +418,17 @@ retarget to `@rn-canvas/document`.
 - Temporary release-check artifacts were removed after validation. The standard full test/build
   gate passes; the opt-in MCP live test could not be rerun because execution approval was unavailable,
   so the completed Phase 5 live pass remains the current agent-loop evidence.
+
+## Phase 2A interaction audit checkpoint
+
+- Root RNFrames are inspectable again. Canvas and Layers selections are normalized to non-overlapping
+  nodes, with modifier/range selection in Layers and hierarchy-safe group/duplicate/delete actions.
+- Continuous Inspector controls open one document interaction and commit on blur/pointer release;
+  one visible field edit now produces one undo step. Active edits also enable the top-bar Undo action.
+- Tailwind theme/utilities remain chrome-only, but global preflight is removed and replaced by resets
+  scoped to `.studio-chrome` / `.studio-popup`. RN artboard images are no longer CSS-constrained.
+- Narrow hosts use a tokenized 960px workspace minimum. Compact Inspector/menu measurements and
+  shadows moved into design tokens. Six Studio tests cover selection and subtree action boundaries.
+- Full workspace tests/build and live root-inspector, nested marquee/group, Layers multi-select,
+  narrow-width, CSS-isolation, and field-undo regressions pass. Freeform versus Yoga-flow creation is
+  the next design decision and was not changed.

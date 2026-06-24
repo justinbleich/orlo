@@ -73,6 +73,7 @@ export const layout = {
   leftPanel: 246,
   rightColumn: 336,
   groundTruth: 300,
+  workspaceMin: 960,
 } as const;
 
 export const theme = { color, font, text, space, radius, layout } as const;

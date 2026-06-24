@@ -11,12 +11,40 @@
    content is styled by the document's RNStyle.
    ========================================================================== */
 
-/* Full Tailwind import INCLUDING preflight. Tailwind utilities (border-style,
-   button/appearance resets) assume preflight's baseline — without it native
-   <button>s keep UA chrome and `border` utilities render no line. The artboard
-   is safe: react-native-web applies explicit inline styles to everything it
-   renders, so preflight's element resets don't disturb RN content. */
-@import "tailwindcss";
+/* Preflight must not touch react-native-web artboards: image constraints and
+   element resets can make browser paint disagree with Yoga geometry. Import
+   theme + utilities only and apply the small reset below to marked chrome. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@layer base {
+  .studio-chrome,
+  .studio-chrome *,
+  .studio-popup,
+  .studio-popup * {
+    box-sizing: border-box;
+  }
+
+  :is(.studio-chrome, .studio-popup) :is(button, input, optgroup, select, textarea) {
+    font: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
+    background-color: transparent;
+    border: 0 solid;
+    border-radius: 0;
+  }
+
+  :is(.studio-chrome, .studio-popup) button {
+    appearance: none;
+  }
+
+  :is(.studio-chrome, .studio-popup) :is(img, svg, video, canvas) {
+    display: block;
+    vertical-align: middle;
+  }
+}
 
 /* `inline` so utilities reference the source token directly (var(--chrome)),
    keeping a single source of truth rather than re-emitting a second variable. */
@@ -62,6 +90,11 @@
 
   /* --- Spacing (named scale → p-md, gap-sm, etc.) --- */
   --spacing-xs: var(--space-xs);
+  --spacing-2xs: var(--space-2xs);
+  --spacing-control: var(--space-control);
+  --spacing-control-y: var(--space-control-y);
+  --spacing-menu-y: var(--space-menu-y);
+  --spacing-swatch: var(--size-swatch);
   --spacing-sm: var(--space-sm);
   --spacing-md: var(--space-md);
   --spacing-lg: var(--space-lg);
@@ -70,7 +103,21 @@
 
   /* --- Radii --- */
   --radius-sm: var(--radius-sm);
+  --radius-xs: var(--radius-xs);
   --radius-DEFAULT: var(--radius);
   --radius-lg: var(--radius-lg);
   --radius-pill: var(--radius-pill);
+
+  --shadow-control: var(--shadow-control);
+  --shadow-popover: var(--shadow-popover);
+}
+
+@utility color-checker {
+  background-image: conic-gradient(
+    var(--checker-color) 0 25%,
+    transparent 0 50%,
+    var(--checker-color) 0 75%,
+    transparent 0
+  );
+  background-size: var(--checker-size) var(--checker-size);
 }

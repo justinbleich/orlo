@@ -2,13 +2,13 @@
 
 > Status snapshot checked against `_plan/PRD.md`, `_plan/BUILD.md`,
 > `_plan/RENDER-CODEGEN-MODEL.md`, `_plan/phase2.md`, and `_plan/phase3.md`.
-> Updated 2026-06-22.
+> Updated 2026-06-23.
 
 ## Current position
 
 BUILD Phases 0-6 and the interactive v1 release checkpoint are complete. External emitted-subset RN source imports into the live Studio
-without a sidecar, and canvas/document undo controls are coordinated. Post-v1 component systems, interactions,
-device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
+without a sidecar, and canvas/document undo controls are coordinated. Phase 2A core creation and direct-manipulation work is active;
+Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and theming roadmap remain parked.
 
 | Phase | Status | Evidence |
 |---|---|---|
@@ -68,6 +68,23 @@ device tooling, themes, and icons remain parked in `phase2.md` / `phase3.md`.
   skips selection-only tldraw checkpoints so one visible action restores one visible frame operation.
 - Browser verification covered valid source import, workspace confinement, and exact frame geometry
   across move → undo → redo. Codegen tests and production package builds pass.
+
+## Post-v1 Phase 2A status
+
+- Phase 2A direct-manipulation work is active: draw-to-create, inline Text editing, multi-select,
+  grouping, layer drag/reparent, frame resize, and the rebuilt Inspector are present.
+- The first interaction audit restored root-frame inspection, normalized nested selections so
+  actions never operate on an ancestor and descendant together, and added modifier/range selection
+  to Layers. Duplicate/delete/group now share the same hierarchy-safe boundary.
+- Inspector typing and numeric scrubbing use document interactions, so one focused edit or scrub is
+  one undo entry. Live regression verified `48 → 400 → Undo → 48`.
+- Tailwind preflight is disabled. A scoped chrome reset preserves the Studio controls without
+  applying image/layout rules to react-native-web artboards; rendered images now have no CSS
+  `max-width` constraint outside RNStyle/Yoga.
+- The shell has a tokenized 960px minimum workspace and scrolls at narrower host widths. New compact
+  chrome values are tokenized. Six Studio tests cover selection and subtree action regressions.
+- The freeform-versus-Yoga-flow creation model remains deliberately unresolved pending product
+  discussion; no document or codegen semantics changed in this pass.
 
 ## V1 release checkpoint
 

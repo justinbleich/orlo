@@ -13,3 +13,4 @@ export { ColorField } from "./ColorField";
 export { IconButton, IconToggle } from "./IconButton";
 export { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 export { Select, type SelectOption } from "./Select";
+export type { EditLifecycle } from "./controls";

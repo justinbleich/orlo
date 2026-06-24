@@ -10,6 +10,7 @@ import {
 } from "@rn-canvas/document";
 import { EyeOff, LockOpen } from "lucide-react";
 import { color, radius, space, text } from "./studio-theme";
+import { normalizeNodeSelection, selectionRange } from "./selection";
 
 // One drag at a time; module-scoped so every recursive row shares it.
 let draggedNodeId: NodeId | null = null;
@@ -55,18 +56,18 @@ function dropOnto(rootId: NodeId, target: Node) {
 export function DocumentTree({
   node,
   rootId,
-  selectedId,
+  selectedIds,
   depth = 0,
 }: {
   node: Node;
   rootId: NodeId;
-  selectedId: NodeId | null;
+  selectedIds: readonly NodeId[];
   depth?: number;
 }) {
   const setSelection = useDocumentStore((state) => state.setSelection);
   const updateDesign = useDocumentStore((state) => state.updateDesign);
   const [over, setOver] = useState(false);
-  const selected = node.id === selectedId;
+  const selected = selectedIds.includes(node.id);
   const locked = !!node.design?.locked;
   const label = node.design?.name ?? node.type;
 
@@ -95,8 +96,20 @@ export function DocumentTree({
           draggedNodeId = null;
           setOver(false);
         }}
-        onClick={() => {
-          if (!locked) setSelection([node.id]);
+        onClick={(event) => {
+          if (locked) return;
+          const root = useDocumentStore.getState().roots[rootId];
+          if (!root) return;
+          if (event.shiftKey && selectedIds.length > 0) {
+            setSelection(selectionRange(root, selectedIds[selectedIds.length - 1], node.id));
+          } else if (event.metaKey || event.ctrlKey) {
+            const next = selected
+              ? selectedIds.filter((id) => id !== node.id)
+              : [...selectedIds, node.id];
+            setSelection(normalizeNodeSelection(root, next));
+          } else {
+            setSelection([node.id]);
+          }
         }}
         style={{
           padding: `${space.xs} ${space.sm}`,
@@ -145,7 +158,7 @@ export function DocumentTree({
           key={child.id}
           node={child}
           rootId={rootId}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
           depth={depth + 1}
         />
       ))}

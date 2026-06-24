@@ -53,6 +53,7 @@ import {
   Select,
   TextField,
 } from "./studio-ui";
+import { normalizeNodeSelection, shareParent } from "./selection";
 
 const TYPE_ICON: Record<RNPrimitive, LucideIcon> = {
   View: Square,
@@ -126,8 +127,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   const [error, setError] = useState<string | null>(null);
 
   const nodes = root
-    ? selection
-        .filter((id) => id !== root.id)
+    ? normalizeNodeSelection(root, selection)
         .map((id) => findNode(root, id))
         .filter((n): n is Node => !!n)
     : [];
@@ -138,16 +138,26 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   // on validation failure. All writes go through the validated store actions.
   function batch(fn: (id: NodeId) => void) {
     const store = useDocumentStore.getState();
+    const ownsInteraction = !store.interaction;
     try {
       setError(null);
-      store.beginInteraction();
+      if (ownsInteraction) store.beginInteraction();
       for (const node of nodes) fn(node.id);
-      store.commitInteraction();
+      if (ownsInteraction) store.commitInteraction();
     } catch (e) {
-      store.cancelInteraction();
+      useDocumentStore.getState().cancelInteraction();
       setError(e instanceof Error ? e.message : String(e));
     }
   }
+
+  const editLifecycle = {
+    onEditStart: () => {
+      const store = useDocumentStore.getState();
+      if (!store.interaction) store.beginInteraction();
+    },
+    onEditEnd: () => useDocumentStore.getState().commitInteraction(),
+    onEditCancel: () => useDocumentStore.getState().cancelInteraction(),
+  };
 
   const styleVal = <K extends keyof Style>(key: K): Maybe<Style[K]> =>
     shared(nodes, (n) => n.style[key]);
@@ -160,6 +170,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
       setError(null);
       updateProps(rootId!, primary.id, { [key]: value });
     } catch (e) {
+      useDocumentStore.getState().cancelInteraction();
       setError(e instanceof Error ? e.message : String(e));
     }
   };
@@ -215,16 +226,19 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         onName={(name) => setDesignAll({ name })}
         onLock={(locked) => setDesignAll({ locked })}
         onHide={(hidden) => setDesignAll({ hidden })}
+        {...editLifecycle}
       />
 
-      <ActionRow
-        canUngroup={!multi && isContainer(primary)}
-        canGroup={multi}
-        onDuplicate={() => runAction(() => duplicateNodes(root.id, nodes.map((n) => n.id)))}
-        onGroup={() => runAction(() => groupNodes(root.id, nodes.map((n) => n.id)))}
-        onUngroup={() => runAction(() => ungroupNode(root.id, primary.id))}
-        onDelete={() => runAction(() => deleteNodes(root.id, nodes.map((n) => n.id)))}
-      />
+      {nodes.some((node) => node.id !== root.id) && (
+        <ActionRow
+          canUngroup={!multi && primary.id !== root.id && isContainer(primary)}
+          canGroup={shareParent(root, nodes.map((node) => node.id))}
+          onDuplicate={() => runAction(() => duplicateNodes(root.id, nodes.map((n) => n.id)))}
+          onGroup={() => runAction(() => groupNodes(root.id, nodes.map((n) => n.id)))}
+          onUngroup={() => runAction(() => ungroupNode(root.id, primary.id))}
+          onDelete={() => runAction(() => deleteNodes(root.id, nodes.map((n) => n.id)))}
+        />
+      )}
 
       <Section title="Layout">
         <Field label="Position">
@@ -240,6 +254,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         <FieldGrid>
           <Field label="Width">
             <NumberField
+              {...editLifecycle}
               label="W"
               value={isMixed(width) ? undefined : numeric(width)}
               mixed={isMixed(width)}
@@ -250,6 +265,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </Field>
           <Field label="Height">
             <NumberField
+              {...editLifecycle}
               label="H"
               value={isMixed(height) ? undefined : numeric(height)}
               mixed={isMixed(height)}
@@ -262,15 +278,15 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         {position === "absolute" && (
           <FieldGrid>
             <Field label="Left">
-              <NumberField label="L" {...num("left")} onChange={(v) => setStyle("left", v)} />
+              <NumberField {...editLifecycle} label="L" {...num("left")} onChange={(v) => setStyle("left", v)} />
             </Field>
             <Field label="Top">
-              <NumberField label="T" {...num("top")} onChange={(v) => setStyle("top", v)} />
+              <NumberField {...editLifecycle} label="T" {...num("top")} onChange={(v) => setStyle("top", v)} />
             </Field>
           </FieldGrid>
         )}
         <Field label="Padding">
-          <NumberField label="P" {...num("padding")} min={0} onChange={(v) => setStyle("padding", v)} />
+          <NumberField {...editLifecycle} label="P" {...num("padding")} min={0} onChange={(v) => setStyle("padding", v)} />
         </Field>
       </Section>
 
@@ -296,7 +312,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </Field>
           <FieldGrid>
             <Field label="Gap">
-              <NumberField label="G" {...num("gap")} min={0} onChange={(v) => setStyle("gap", v)} />
+              <NumberField {...editLifecycle} label="G" {...num("gap")} min={0} onChange={(v) => setStyle("gap", v)} />
             </Field>
             <Field label="Wrap">
               <SegmentedControl
@@ -316,15 +332,15 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         <Section title="Typography">
           {!multi && primary.type === "Text" && (
             <Field label="Content" stacked>
-              <TextField value={primary.props.text} onChange={(v) => setPrimaryProp("text", v)} placeholder="Text…" />
+              <TextField {...editLifecycle} value={primary.props.text} onChange={(v) => setPrimaryProp("text", v)} placeholder="Text…" />
             </Field>
           )}
           <FieldGrid>
             <Field label="Size">
-              <NumberField label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
+              <NumberField {...editLifecycle} label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
             </Field>
             <Field label="Line height">
-              <NumberField label="LH" {...num("lineHeight")} min={0} onChange={(v) => setStyle("lineHeight", v)} />
+              <NumberField {...editLifecycle} label="LH" {...num("lineHeight")} min={0} onChange={(v) => setStyle("lineHeight", v)} />
             </Field>
           </FieldGrid>
           <Field label="Weight">
@@ -346,28 +362,28 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
             />
           </Field>
           <Field label="Color">
-            <ColorField value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
+            <ColorField {...editLifecycle} value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
           </Field>
         </Section>
       )}
 
       <Section title="Appearance">
         <Field label="Fill">
-          <ColorField value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
+          <ColorField {...editLifecycle} value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
         </Field>
         <Field label="Opacity">
-          <NumberField label="○" {...num("opacity")} min={0} max={1} step={0.05} onChange={(v) => setStyle("opacity", v)} />
+          <NumberField {...editLifecycle} label="○" {...num("opacity")} min={0} max={1} step={0.05} onChange={(v) => setStyle("opacity", v)} />
         </Field>
         <FieldGrid>
           <Field label="Border width">
-            <NumberField label="W" {...num("borderWidth")} min={0} onChange={(v) => setStyle("borderWidth", v)} />
+            <NumberField {...editLifecycle} label="W" {...num("borderWidth")} min={0} onChange={(v) => setStyle("borderWidth", v)} />
           </Field>
           <Field label="Radius">
-            <NumberField label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
+            <NumberField {...editLifecycle} label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
           </Field>
         </FieldGrid>
         <Field label="Border color">
-          <ColorField value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
+          <ColorField {...editLifecycle} value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
         </Field>
       </Section>
 
@@ -439,11 +455,17 @@ function SelectionHeader({
   onName,
   onLock,
   onHide,
+  onEditStart,
+  onEditEnd,
+  onEditCancel,
 }: {
   nodes: Node[];
   onName: (name: string) => void;
   onLock: (locked: boolean) => void;
   onHide: (hidden: boolean) => void;
+  onEditStart: () => void;
+  onEditEnd: () => void;
+  onEditCancel: () => void;
 }) {
   const multi = nodes.length > 1;
   const primary = nodes[0];
@@ -464,7 +486,15 @@ function SelectionHeader({
           <input
             value={primary.design?.name ?? ""}
             placeholder={primary.type}
-            onChange={(e) => onName(e.target.value)}
+            onFocus={onEditStart}
+            onBlur={onEditEnd}
+            onChange={(e) => {
+              onEditStart();
+              onName(e.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") onEditCancel();
+            }}
             className="h-7 min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-sm text-sm font-medium text-ink transition-colors hover:border-line focus-visible:border-accent-line focus-visible:bg-chrome-2 focus-visible:outline-none"
           />
         )}
@@ -475,7 +505,7 @@ function SelectionHeader({
           {anyHidden ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
         </IconToggle>
       </div>
-      <div className="eyebrow pl-[2px]">
+      <div className="eyebrow pl-2xs">
         {multi ? `${nodes.length} layers` : `${primary.type} · ${primary.id.slice(0, 8)}`}
       </div>
     </div>

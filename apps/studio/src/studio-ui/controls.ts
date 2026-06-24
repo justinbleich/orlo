@@ -8,3 +8,9 @@ export const controlClass = [
   "focus-visible:outline-none focus-visible:border-accent-line focus-visible:bg-raised",
   "disabled:cursor-not-allowed disabled:text-ink-faint disabled:hover:bg-chrome-2",
 ].join(" ");
+
+export interface EditLifecycle {
+  onEditStart?: () => void;
+  onEditEnd?: () => void;
+  onEditCancel?: () => void;
+}

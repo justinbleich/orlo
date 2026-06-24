@@ -41,7 +41,7 @@ export function Field({
       htmlFor={htmlFor}
       className={cn(
         "flex min-w-0 text-xs text-ink-dim",
-        stacked ? "flex-col gap-xs" : "flex-col gap-[3px]",
+        stacked ? "flex-col gap-xs" : "flex-col gap-control",
       )}
     >
       <span className="truncate">{label}</span>

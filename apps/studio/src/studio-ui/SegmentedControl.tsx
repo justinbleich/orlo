@@ -34,7 +34,7 @@ export function SegmentedControl<T extends string>({
       }}
       disabled={disabled}
       className={cn(
-        "flex h-7 items-center gap-[2px] rounded-sm border border-line bg-chrome-2 p-[2px]",
+        "flex h-7 items-center gap-2xs rounded-sm border border-line bg-chrome-2 p-2xs",
         disabled && "opacity-50",
       )}
     >
@@ -47,10 +47,10 @@ export function SegmentedControl<T extends string>({
             title={option.title}
             aria-label={option.title}
             className={cn(
-              "flex h-full flex-1 items-center justify-center rounded-[4px] text-xs",
+              "flex h-full flex-1 items-center justify-center rounded-xs text-xs",
               "transition-colors focus-visible:outline-none",
               active
-                ? "bg-raised text-ink shadow-[0_1px_2px_rgba(0,0,0,0.25)]"
+                ? "bg-raised text-ink shadow-control"
                 : "text-ink-dim hover:text-ink",
             )}
           >

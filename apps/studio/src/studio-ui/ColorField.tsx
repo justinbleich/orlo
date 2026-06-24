@@ -1,4 +1,5 @@
 import { cn } from "./cn";
+import type { EditLifecycle } from "./controls";
 
 /**
  * A color control: a swatch that opens the native picker plus the hex value.
@@ -9,23 +10,32 @@ export function ColorField({
   value,
   onChange,
   disabled,
+  onEditStart,
+  onEditEnd,
+  onEditCancel,
 }: {
   value: string | undefined;
   onChange: (value: string) => void;
   disabled?: boolean;
-}) {
+} & EditLifecycle) {
   const hex = value ?? "";
   return (
     <div
       className={cn(
-        "flex h-7 items-center rounded-sm border border-line bg-chrome-2 pl-[5px] pr-sm",
+        "flex h-7 items-center rounded-sm border border-line bg-chrome-2 pl-control-y pr-sm",
         "transition-colors focus-within:border-accent-line focus-within:bg-raised hover:bg-raised",
         disabled && "opacity-50",
       )}
+      onFocusCapture={onEditStart}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as globalThis.Node | null)) {
+          onEditEnd?.();
+        }
+      }}
     >
-      <span className="relative inline-flex size-[18px] shrink-0 overflow-hidden rounded-[4px] ring-1 ring-inset ring-line">
+      <span className="relative inline-flex size-swatch shrink-0 overflow-hidden rounded-xs ring-1 ring-inset ring-line">
         {/* checkerboard backing shows through when no/transparent color */}
-        <span className="absolute inset-0 bg-[conic-gradient(#888_0_25%,transparent_0_50%,#888_0_75%,transparent_0)] bg-[length:8px_8px] opacity-40" />
+        <span className="color-checker absolute inset-0 opacity-40" />
         <span
           className="absolute inset-0"
           style={{ background: value ?? "transparent" }}
@@ -34,7 +44,10 @@ export function ColorField({
           type="color"
           value={value ?? "#000000"}
           disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            onEditStart?.();
+            onChange(e.target.value);
+          }}
           aria-label="Pick color"
           className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
         />
@@ -44,7 +57,13 @@ export function ColorField({
         value={hex}
         placeholder="—"
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onEditStart?.();
+          onChange(e.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onEditCancel?.();
+        }}
         spellCheck={false}
         className={cn(
           "ml-sm h-full w-full min-w-0 bg-transparent text-sm uppercase tabular-nums text-ink",

@@ -10,6 +10,7 @@ import {
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
+import { normalizeNodeSelection } from "./selection";
 
 /** Run a batch of store mutations as one undo entry, rolling back on failure. */
 function asInteraction<T>(fn: () => T): T {
@@ -42,7 +43,9 @@ function cloneSubtree(node: Node): Node {
 export function duplicateNodes(rootId: NodeId, ids: NodeId[]): NodeId[] {
   return asInteraction(() => {
     const created: NodeId[] = [];
-    for (const id of ids) {
+    const initialRoot = useDocumentStore.getState().roots[rootId];
+    if (!initialRoot) return created;
+    for (const id of normalizeNodeSelection(initialRoot, ids, { excludeRoot: true })) {
       if (id === rootId) continue;
       const root = useDocumentStore.getState().roots[rootId];
       const node = root && findNode(root, id);
@@ -62,7 +65,8 @@ export function duplicateNodes(rootId: NodeId, ids: NodeId[]): NodeId[] {
 export function groupNodes(rootId: NodeId, ids: NodeId[]): NodeId | null {
   const root = useDocumentStore.getState().roots[rootId];
   if (!root) return null;
-  const nodes = ids
+  const normalized = normalizeNodeSelection(root, ids, { excludeRoot: true });
+  const nodes = normalized
     .map((id) => findNode(root, id))
     .filter((n): n is Node => !!n && n.id !== rootId);
   if (nodes.length < 1) return null;
@@ -108,7 +112,9 @@ export function ungroupNode(rootId: NodeId, id: NodeId): NodeId[] {
 export function deleteNodes(rootId: NodeId, ids: NodeId[]): void {
   asInteraction(() => {
     let nextSelection: NodeId[] = [];
-    for (const id of ids) {
+    const initialRoot = useDocumentStore.getState().roots[rootId];
+    if (!initialRoot) return;
+    for (const id of normalizeNodeSelection(initialRoot, ids, { excludeRoot: true })) {
       if (id === rootId) continue;
       const root = useDocumentStore.getState().roots[rootId];
       if (!root || !findNode(root, id)) continue;

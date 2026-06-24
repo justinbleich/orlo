@@ -138,7 +138,7 @@ export function ToolRail({
     { icon: Image, label: "Image", onClick: () => arm("Image"), active: armedTool === "Image", disabled: !canAddPrimitive },
   ];
   return (
-    <nav className="flex w-[var(--w-rail)] shrink-0 flex-col items-center gap-xs border-r border-line bg-chrome py-sm">
+    <nav className="studio-chrome flex w-[var(--w-rail)] shrink-0 flex-col items-center gap-xs border-r border-line bg-chrome py-sm">
       {tools.map((t) => {
         const Icon = t.icon;
         return (
@@ -189,7 +189,7 @@ function InsertMenu({
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner side="right" align="start" sideOffset={8} className="z-50">
-          <Menu.Popup className="min-w-44 rounded-md border border-line bg-chrome p-[3px] shadow-[0_8px_24px_rgba(0,0,0,0.4)] outline-none">
+          <Menu.Popup className="studio-popup min-w-44 rounded-md border border-line bg-chrome p-control shadow-popover outline-none">
             <div className="eyebrow px-sm py-xs">Insert</div>
             {INSERT_ITEMS.map((item) => {
               const Icon = item.icon;
@@ -198,7 +198,7 @@ function InsertMenu({
                   key={item.type}
                   onClick={() => onArm(item.type)}
                   className={cn(
-                    "flex cursor-default items-center gap-sm rounded-sm px-sm py-[6px] text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
+                    "flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
                     item.type === armedTool ? "text-accent" : "text-ink-dim",
                   )}
                 >
@@ -288,6 +288,7 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
 
   return (
     <aside
+      className="studio-chrome"
       style={{
         flex: `0 0 ${layout.leftPanel}px`,
         width: layout.leftPanel,
@@ -351,7 +352,7 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                 <DocumentTree
                   node={focusedRoot}
                   rootId={focusedRoot.id}
-                  selectedId={selectedId}
+                  selectedIds={selection}
                 />
               </div>
               <div style={{ display: "flex", gap: space.xs }}>

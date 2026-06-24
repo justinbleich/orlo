@@ -22,7 +22,7 @@ import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
 import { Inspector } from "./Inspector";
 import { color, layout, radius, space, text } from "./studio-theme";
 import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
-import { deleteNodes, duplicateNodes, insertPrimitive } from "./document-actions";
+import { deleteNodes, duplicateNodes } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
 
@@ -432,19 +432,6 @@ export default function App() {
     store.setSelection([root.id]);
   }, []);
 
-  const addPrimitive = useCallback(
-    (type: RNPrimitive) => {
-      if (!focusedRoot) return;
-      try {
-        insertPrimitive(focusedRoot, selection[0] ?? null, type);
-        setStatus(`Added ${type}`);
-      } catch (error) {
-        setStatus(error instanceof Error ? error.message : `Could not add ${type}`);
-      }
-    },
-    [focusedRoot, selection],
-  );
-
   const selectTool = useCallback(() => {
     editorRef.current?.setCurrentTool("select");
     setStatus("Select tool active");
@@ -638,7 +625,6 @@ export default function App() {
         <ToolRail
           onSelect={selectTool}
           onAddFrame={addFrame}
-          onAddPrimitive={addPrimitive}
           canAddPrimitive={!!focusedRoot}
         />
         <LeftPanel onAddFrame={addFrame} />

@@ -31,6 +31,7 @@ import {
 } from "@rn-canvas/document";
 import { Menu } from "@base-ui/react/menu";
 import { color, layout, radius, space, text } from "./studio-theme";
+import { useStudioStore } from "./studio-store";
 import { cn } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
 
@@ -100,29 +101,41 @@ const railButton =
   "flex size-9 items-center justify-center rounded-sm border border-line bg-chrome-2 text-ink " +
   "transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line " +
   "disabled:cursor-not-allowed disabled:bg-chrome-2 disabled:text-ink-faint disabled:hover:bg-chrome-2";
+const railButtonActive = "border-accent-line bg-accent-soft text-accent hover:bg-accent-soft";
 
 /**
- * tldraw owns frame placement; every other tool inserts a document node. The rail
- * carries the core tools (Select, Frame, View, Text, Image); the remaining
- * semantic primitives sit in the Insert menu so the rail stays uncluttered.
+ * tldraw owns frame placement; every creation tool *arms* a primitive, which the
+ * next canvas drag draws as a node. The rail carries the core tools (Select,
+ * Frame, View, Text, Image); the remaining semantic primitives sit in the Insert
+ * menu so the rail stays uncluttered.
  */
 export function ToolRail({
   onSelect,
   onAddFrame,
-  onAddPrimitive,
   canAddPrimitive,
 }: {
   onSelect: () => void;
   onAddFrame: () => void;
-  onAddPrimitive: (type: RNPrimitive) => void;
   canAddPrimitive: boolean;
 }) {
-  const tools: RailTool[] = [
-    { icon: MousePointer2, label: "Select", onClick: onSelect },
-    { icon: Frame, label: "Frame", onClick: onAddFrame },
-    { icon: Square, label: "View", onClick: () => onAddPrimitive("View"), disabled: !canAddPrimitive },
-    { icon: Type, label: "Text", onClick: () => onAddPrimitive("Text"), disabled: !canAddPrimitive },
-    { icon: Image, label: "Image", onClick: () => onAddPrimitive("Image"), disabled: !canAddPrimitive },
+  const armedTool = useStudioStore((s) => s.armedTool);
+  const setArmedTool = useStudioStore((s) => s.setArmedTool);
+  const arm = (type: RNPrimitive) => setArmedTool(armedTool === type ? null : type);
+
+  const tools: (RailTool & { active?: boolean })[] = [
+    {
+      icon: MousePointer2,
+      label: "Select",
+      onClick: () => {
+        setArmedTool(null);
+        onSelect();
+      },
+      active: armedTool === null,
+    },
+    { icon: Frame, label: "Frame", onClick: () => { setArmedTool(null); onAddFrame(); } },
+    { icon: Square, label: "View", onClick: () => arm("View"), active: armedTool === "View", disabled: !canAddPrimitive },
+    { icon: Type, label: "Text", onClick: () => arm("Text"), active: armedTool === "Text", disabled: !canAddPrimitive },
+    { icon: Image, label: "Image", onClick: () => arm("Image"), active: armedTool === "Image", disabled: !canAddPrimitive },
   ];
   return (
     <nav className="flex w-[var(--w-rail)] shrink-0 flex-col items-center gap-xs border-r border-line bg-chrome py-sm">
@@ -134,35 +147,43 @@ export function ToolRail({
             type="button"
             title={t.label}
             aria-label={t.label}
+            aria-pressed={t.active}
             onClick={t.onClick}
             disabled={t.disabled}
-            className={railButton}
+            className={cn(railButton, t.active && railButtonActive)}
           >
             <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
           </button>
         );
       })}
       <div className="my-xs h-px w-5 bg-line" aria-hidden="true" />
-      <InsertMenu onAdd={onAddPrimitive} disabled={!canAddPrimitive} />
+      <InsertMenu armedTool={armedTool} onArm={arm} disabled={!canAddPrimitive} />
     </nav>
   );
 }
 
 /** Insert menu for the semantic primitives. Disabled until a frame is focused. */
 function InsertMenu({
-  onAdd,
+  armedTool,
+  onArm,
   disabled,
 }: {
-  onAdd: (type: RNPrimitive) => void;
+  armedTool: RNPrimitive | null;
+  onArm: (type: RNPrimitive) => void;
   disabled: boolean;
 }) {
+  const armedInMenu = INSERT_ITEMS.some((i) => i.type === armedTool);
   return (
     <Menu.Root>
       <Menu.Trigger
         title="Insert…"
         aria-label="Insert element"
         disabled={disabled}
-        className={cn(railButton, "data-[popup-open]:bg-raised data-[popup-open]:ring-2 data-[popup-open]:ring-accent-line")}
+        className={cn(
+          railButton,
+          armedInMenu && railButtonActive,
+          "data-[popup-open]:bg-raised data-[popup-open]:ring-2 data-[popup-open]:ring-accent-line",
+        )}
       >
         <Plus size={18} strokeWidth={1.75} aria-hidden="true" />
       </Menu.Trigger>
@@ -175,8 +196,11 @@ function InsertMenu({
               return (
                 <Menu.Item
                   key={item.type}
-                  onClick={() => onAdd(item.type)}
-                  className="flex cursor-default items-center gap-sm rounded-sm px-sm py-[6px] text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink"
+                  onClick={() => onArm(item.type)}
+                  className={cn(
+                    "flex cursor-default items-center gap-sm rounded-sm px-sm py-[6px] text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
+                    item.type === armedTool ? "text-accent" : "text-ink-dim",
+                  )}
                 >
                   <Icon size={15} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />
                   {item.label}

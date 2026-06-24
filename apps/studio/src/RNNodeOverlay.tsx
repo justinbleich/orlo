@@ -1,21 +1,25 @@
 import { useMemo, useRef, useState } from "react";
 import {
   childrenOf,
+  createNode,
   findNode,
   getParent,
+  isContainer,
   useDocumentStore,
   type Node,
   type NodeId,
+  type RNPrimitive,
 } from "@rn-canvas/document";
 import type { LayoutBox, LayoutReadyResult } from "@rn-canvas/render-web";
 import { color, radius } from "./studio-theme";
+import { useStudioStore } from "./studio-store";
 
 type Point = { x: number; y: number };
 type Rect = { x0: number; y0: number; x1: number; y1: number };
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 type GroupMember = { nodeId: NodeId; left: number; top: number };
 type Gesture = {
-  kind: "move" | "resize" | "marquee";
+  kind: "move" | "resize" | "marquee" | "create";
   pointerId: number;
   nodeId: NodeId;
   instanceKey: string;
@@ -27,6 +31,8 @@ type Gesture = {
   group: GroupMember[];
   additive: boolean;
   moved: boolean;
+  /** For a create gesture: the armed primitive being drawn. */
+  createType?: RNPrimitive;
 };
 
 function contains(box: LayoutBox, point: Point): boolean {
@@ -101,6 +107,7 @@ export function RNNodeOverlay({
   active: boolean;
 }) {
   const selection = useDocumentStore((state) => state.selection);
+  const armedTool = useStudioStore((state) => state.armedTool);
   const [instanceKey, setInstanceKey] = useState<string | null>(null);
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [editing, setEditing] = useState<{ id: NodeId; value: string } | null>(null);
@@ -147,7 +154,7 @@ export function RNNodeOverlay({
     event.preventDefault();
     event.stopPropagation();
     const overlay = overlayRef.current ?? event.currentTarget;
-    overlay.setPointerCapture(event.pointerId);
+    try { overlay.setPointerCapture(event.pointerId); } catch { /* non-fatal */ }
     overlay.focus();
     const parent = getParent(root, box.node.id);
     // Capture original positions of every absolute selected node so a group drag
@@ -178,7 +185,7 @@ export function RNNodeOverlay({
 
   function beginMarquee(event: React.PointerEvent<HTMLDivElement>, additive: boolean) {
     const overlay = overlayRef.current ?? event.currentTarget;
-    overlay.setPointerCapture(event.pointerId);
+    try { overlay.setPointerCapture(event.pointerId); } catch { /* non-fatal */ }
     overlay.focus();
     const start = eventPoint(event);
     gesture.current = {
@@ -227,8 +234,35 @@ export function RNNodeOverlay({
     setEditing(null);
   }
 
+  function beginCreate(event: React.PointerEvent<HTMLDivElement>, tool: RNPrimitive) {
+    event.preventDefault();
+    event.stopPropagation();
+    const overlay = overlayRef.current ?? event.currentTarget;
+    try { overlay.setPointerCapture(event.pointerId); } catch { /* non-fatal */ }
+    overlay.focus();
+    const start = eventPoint(event);
+    gesture.current = {
+      kind: "create",
+      pointerId: event.pointerId,
+      nodeId: root.id,
+      instanceKey: "",
+      start,
+      box: result.layout,
+      group: [],
+      additive: false,
+      moved: false,
+      createType: tool,
+    };
+    setMarquee(rectOf(start, start));
+  }
+
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (!active || gesture.current || editing) return;
+    // An armed creation tool turns the next drag into a draw-to-create gesture.
+    if (armedTool) {
+      beginCreate(event, armedTool);
+      return;
+    }
     const additive = event.shiftKey || event.metaKey || event.ctrlKey;
     const hit = hitTestLayout(result.layout, eventPoint(event));
 
@@ -275,7 +309,7 @@ export function RNNodeOverlay({
     if (!current || current.pointerId !== event.pointerId) return;
     const point = eventPoint(event);
 
-    if (current.kind === "marquee") {
+    if (current.kind === "marquee" || current.kind === "create") {
       setMarquee(rectOf(current.start, point));
       return;
     }
@@ -325,6 +359,19 @@ export function RNNodeOverlay({
     if (!current || current.pointerId !== event.pointerId) return;
     event.preventDefault();
     event.stopPropagation();
+
+    if (current.kind === "create") {
+      const created = !cancel && current.createType
+        ? createDrawnNode(current.createType, current.start, rectOf(current.start, eventPoint(event)))
+        : null;
+      setMarquee(null);
+      gesture.current = null;
+      useStudioStore.getState().setArmedTool(null);
+      if (created && current.createType === "Text") {
+        setEditing({ id: created, value: "Text" });
+      }
+      return;
+    }
 
     if (current.kind === "marquee") {
       if (!cancel) {
@@ -389,6 +436,44 @@ export function RNNodeOverlay({
     setInstanceKey(null);
   }
 
+  /** Nearest container (and its box) at a frame-local point, falling back to root. */
+  function containerAt(point: Point): { node: Node; box: LayoutBox } {
+    const hit = hitTestLayout(result.layout, point);
+    if (!hit) return { node: root, box: result.layout };
+    if (isContainer(hit.node)) return { node: hit.node, box: hit };
+    const parent = getParent(root, hit.node.id);
+    if (parent) {
+      const box = firstBox(result, parent.id);
+      if (box) return { node: parent, box };
+    }
+    return { node: root, box: result.layout };
+  }
+
+  /**
+   * Create the armed primitive as a fixed-size flex child of the container under
+   * the drag start. Force-flex: we set width/height only — absolute positioning
+   * is opt-in via the inspector, never implied by drawing. Text is content-sized
+   * (no width/height) and goes straight into inline editing.
+   */
+  function createDrawnNode(type: RNPrimitive, start: Point, rect: Rect): NodeId | null {
+    const dragged = rect.x1 - rect.x0 >= 6 && rect.y1 - rect.y0 >= 6;
+    const width = dragged ? Math.round(rect.x1 - rect.x0) : 100;
+    const height = dragged ? Math.round(rect.y1 - rect.y0) : 40;
+    const target = containerAt(start);
+    try {
+      const node =
+        type === "Text"
+          ? createNode("Text", { props: { text: "Text" } })
+          : createNode(type, { style: { width, height } });
+      const store = useDocumentStore.getState();
+      store.insertChild(root.id, target.node.id, node, childrenOf(target.node).length);
+      store.setSelection([node.id]);
+      return node.id;
+    } catch {
+      return null;
+    }
+  }
+
   const handles: ResizeHandle[] = ["nw", "ne", "se", "sw"];
   const handlePosition: Record<ResizeHandle, React.CSSProperties> = {
     nw: { left: -4, top: -4, cursor: "nwse-resize" },
@@ -416,6 +501,7 @@ export function RNNodeOverlay({
         inset: 0,
         pointerEvents: active ? "auto" : "none",
         outline: "none",
+        cursor: armedTool ? "crosshair" : undefined,
       }}
     >
       {/* Selection outlines for every selected node in this frame. */}

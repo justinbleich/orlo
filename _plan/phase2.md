@@ -111,8 +111,8 @@ the canvas within the known fidelity gap.
 - [x] Per-child sizing: hug / fill / fixed.
 - [ ] Absolute mode + constraints for non-auto-layout containers.
 - [x] **Mode-aware drag** (invariant 3): reflow inside flex, move when absolute.
-- [ ] Align & distribute actions; snapping, smart guides, spacing hints.
-- [ ] Codegen emits correct flex `StyleSheet` for all of the above.
+- [x] Align & distribute actions; snapping, smart guides, spacing hints.
+- [x] Codegen emits correct flex `StyleSheet` for all of the above.
 
 **Done when:** toggling a container to auto-layout reflows children live (via Yoga), resizing
 the frame behaves like the device, and the exported flex styles match.

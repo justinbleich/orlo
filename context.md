@@ -490,3 +490,15 @@ retarget to `@rn-canvas/document`.
   each side of an axis (only siblings sharing the cross-axis band count) within the snap threshold,
   rendering transient amber measurement rules with px badges. Pure logic lives in `canvas-spacing.ts`
   (`equalSpacingSnap`); it runs per axis after edge/center snap and only on axes that snap left free.
+
+## Phase 2B codegen verification checkpoint
+
+- The emitter (`packages/codegen/emit.ts`) is a pass-through: it serializes each node's `RNStyle`
+  verbatim into `StyleSheet.create`, so "correct flex output" reduces to (a) the styles package
+  producing valid RN keys and (b) the document merge path (`mergeDefined`) stripping cleared keys.
+- A codegen test now builds a representative 2B layout through the real authority — `sizingPatch` for
+  hug/fill/fixed and `absoluteConstraintPatch` for edge pins, applied via `updateStyle` — then asserts
+  the emitted StyleSheet carries the full flex/absolute surface and parses, with no `undefined`/`null`
+  leaks. This guards against an emitter ever serializing a cleared dimension as `null`.
+- Phase 2B is functionally closed (auto-layout, sizing, mode-aware drag, align/distribute, snapping +
+  spacing hints, codegen). Center/scale absolute-constraint approximations stay deferred.

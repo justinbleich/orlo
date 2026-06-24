@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parse } from "@babel/parser";
-import { createNode } from "@rn-canvas/document";
+import { childrenOf, createNode, updateStyle, type Node } from "@rn-canvas/document";
+import { absoluteConstraintPatch, sizingPatch } from "@rn-canvas/styles";
 import { emitScreen, generateScreen, generateScreens, parseSidecar } from "./index";
 
 /** Assert emitted source parses as valid TS+JSX ("compiles" per BUILD Phase 3). */
@@ -194,6 +195,78 @@ test("multi-screen generation rejects duplicate route names", () => {
       ]),
     /Duplicate screen name/,
   );
+});
+
+test("emits Phase 2B flex + absolute styles through the real style authority", () => {
+  // A row auto-layout container, as the auto-layout panel writes it.
+  const rowParent = { flexDirection: "row" as const };
+  let root = createNode("View", {
+    style: {
+      flexDirection: "row",
+      gap: 12,
+      padding: 16,
+      alignItems: "center",
+      justifyContent: "space-between",
+      flexWrap: "wrap",
+    },
+    children: [
+      createNode("Text", { props: { text: "Fill" } }),
+      createNode("Text", { props: { text: "Fixed" } }),
+      createNode("View", { style: { position: "absolute" } }),
+    ],
+  });
+  const [fillId, fixedId, absId] = childrenOf(root).map((c) => c.id);
+
+  // Per-child sizing via the styles authority (not hand-written keys):
+  // main-axis Fill → flex:1; main-axis Fixed → width; cross-axis Fill → stretch.
+  const styleOf = (tree: Node, id: string) => childrenOf(tree).find((c) => c.id === id)!.style;
+  root = updateStyle(root, fillId, sizingPatch(styleOf(root, fillId), "horizontal", "fill", rowParent));
+  root = updateStyle(root, fixedId, sizingPatch(styleOf(root, fixedId), "horizontal", "fixed", rowParent, 80));
+  root = updateStyle(root, fixedId, sizingPatch(styleOf(root, fixedId), "vertical", "fill", rowParent));
+
+  // Absolute edge pins: a left pin horizontally (start), a bottom pin vertically
+  // (end). Each single-edge pin keeps its explicit size (only a two-pin stretch
+  // drops it), so this child carries width + left and height + bottom.
+  const geometry = (start: number, size: number) => ({
+    parentStart: 0,
+    parentSize: 320,
+    start,
+    size,
+  });
+  root = updateStyle(root, absId, absoluteConstraintPatch("horizontal", "start", geometry(24, 100)));
+  root = updateStyle(root, absId, absoluteConstraintPatch("vertical", "end", geometry(40, 60)));
+
+  const code = emitScreen(root, { screenName: "Layout" });
+  assertParses(code);
+
+  // Flex container surface lands verbatim in the StyleSheet.
+  assert.match(code, /flexDirection: "row"/);
+  assert.match(code, /gap: 12/);
+  assert.match(code, /justifyContent: "space-between"/);
+  assert.match(code, /flexWrap: "wrap"/);
+  // Sizing modes: fill is flex:1, cross-fill is alignSelf stretch, fixed keeps width.
+  assert.match(code, /flex: 1/);
+  assert.match(code, /alignSelf: "stretch"/);
+  assert.match(code, /width: 80/);
+  // Absolute single-edge pins: left+width horizontally, bottom+height vertically.
+  assert.match(code, /position: "absolute"/);
+  assert.match(code, /left: 24/);
+  assert.match(code, /width: 100/);
+  assert.match(code, /bottom: 220/);
+  assert.match(code, /height: 60/);
+
+  // The merge path strips cleared keys, so no `undefined`/`null` leaks into output.
+  assert.ok(!/:\s*undefined/.test(code), "no undefined values in emitted styles");
+  assert.ok(!/:\s*null/.test(code), "no null values in emitted styles");
+  // Main-axis Fill clears the explicit width; cross-axis Fill clears the height.
+  const fillNode = childrenOf(root).find((c) => c.id === fillId)!;
+  const fixedNode = childrenOf(root).find((c) => c.id === fixedId)!;
+  const absNode = childrenOf(root).find((c) => c.id === absId)!;
+  assert.equal(fillNode.style.width, undefined);
+  assert.equal(fixedNode.style.height, undefined);
+  // End pin keeps its size and clears the opposite (top) edge.
+  assert.equal(absNode.style.height, 60);
+  assert.equal(absNode.style.top, undefined);
 });
 
 test("multi-screen generation rejects names that cannot be stable identifiers", () => {

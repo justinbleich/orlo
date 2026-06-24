@@ -120,6 +120,12 @@ Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and
   (within threshold) so the gaps match and renders transient amber measurement rules with px badges.
   Logic is `equalSpacingSnap` in `canvas-spacing.ts`, applied per axis after edge/center snap and only
   on axes edge-snap left free. Center/scale constraint approximations remain open.
+- Codegen flex/absolute output is verified end-to-end: a fixture built through the real style
+  authority (`sizingPatch`, `absoluteConstraintPatch`) and the document merge path emits the full 2B
+  surface (flexDirection/gap/padding/align/justify/wrap, fill→`flex:1`, cross-fill→`alignSelf:stretch`,
+  fixed width, absolute single-edge pins keeping size) with no `undefined`/`null` leaks. emit stays a
+  pass-through; the merge path strips cleared keys so output never carries stale dimensions. This closes
+  the Phase 2B codegen and smart-guide boxes; only center/scale absolute approximations remain open.
 
 ## V1 release checkpoint
 

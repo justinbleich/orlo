@@ -1,6 +1,7 @@
 import {
   canHaveChildren,
   childrenOf,
+  createInstance,
   createNode,
   findNode,
   getParent,
@@ -28,6 +29,19 @@ function asInteraction<T>(fn: () => T): T {
 /** Deep-clone a subtree with fresh ids throughout (createNode mints new ids and
  *  re-validates, so a clone is always a valid, independent node). */
 function cloneSubtree(node: Node): Node {
+  if (node.type === "ComponentInstance") {
+    // Fresh instance id; copy overrides and re-id any slot subtrees.
+    const slots = node.slots
+      ? Object.fromEntries(
+          Object.entries(node.slots).map(([name, kids]) => [name, kids.map(cloneSubtree)]),
+        )
+      : undefined;
+    return {
+      ...createInstance(node.componentId, { style: node.style }),
+      overrides: { ...node.overrides },
+      ...(slots ? { slots } : {}),
+    };
+  }
   return createNode(node.type, {
     props: node.props as never,
     style: node.style,

@@ -110,6 +110,24 @@ export interface TextInputNode extends NodeBase {
   props: TextInputProps;
 }
 
+// --- Components & instances (Phase 2C) ---
+
+/** A scalar value an instance overrides a defined prop with. Slot (`node`) props
+ *  carry their value in `slots`, keyed by prop name, rather than here. */
+export type OverrideValue = string | number | boolean;
+
+/**
+ * A placed usage of a `ComponentDefinition`. Its body comes from the definition's
+ * template; per-instance values live in `overrides` (scalars) and `slots` (children
+ * for `node`-typed props). Not an RN primitive — it expands to one at render/codegen.
+ */
+export interface ComponentInstanceNode extends NodeBase {
+  type: "ComponentInstance";
+  componentId: string;
+  overrides: Record<string, OverrideValue>;
+  slots?: Record<string, Node[]>;
+}
+
 export type Node =
   | ViewNode
   | PressableNode
@@ -117,7 +135,42 @@ export type Node =
   | FlatListNode
   | TextNode
   | ImageNode
-  | TextInputNode;
+  | TextInputNode
+  | ComponentInstanceNode;
+
+/** The kind of value a component prop carries (drives editors + codegen prop types). */
+export type PropValueType = "string" | "number" | "boolean" | "color" | "enum" | "node";
+
+/**
+ * A single inner site a prop drives. `path`/`styleKey` are top-level keys in v1
+ * (no deep paths). One prop may list several targets (multi-bind).
+ */
+export type PropTarget =
+  | { kind: "prop"; nodeId: NodeId; path: string }
+  | { kind: "style"; nodeId: NodeId; styleKey: string }
+  | { kind: "visibility"; nodeId: NodeId }
+  | { kind: "slot"; nodeId: NodeId };
+
+/** A named, typed prop exposed by a component, bound to one or more inner targets. */
+export interface ComponentProp {
+  name: string;
+  valueType: PropValueType;
+  targets: PropTarget[];
+  /** Required iff `valueType === "enum"`. */
+  enumValues?: string[];
+  /** Scalar value types only (never `node`). */
+  default?: OverrideValue;
+}
+
+/** A reusable component: a template subtree plus its exposed prop interface. */
+export interface ComponentDefinition {
+  id: string;
+  name: string;
+  template: Node;
+  props: ComponentProp[];
+}
+
+export type ComponentRegistry = Record<string, ComponentDefinition>;
 
 export type ContainerNode = ViewNode | PressableNode | ScrollViewNode | FlatListNode;
 
@@ -141,8 +194,8 @@ const CONTAINER_TYPES: ReadonlySet<RNPrimitive> = new Set<RNPrimitive>([
   "FlatList",
 ]);
 
-export function canHaveChildren(type: RNPrimitive): boolean {
-  return CONTAINER_TYPES.has(type);
+export function canHaveChildren(type: Node["type"]): boolean {
+  return CONTAINER_TYPES.has(type as RNPrimitive);
 }
 
 export function isContainer(node: Node): node is ContainerNode {

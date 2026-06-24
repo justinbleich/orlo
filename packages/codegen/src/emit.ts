@@ -181,6 +181,10 @@ export function emitScreen(root: Node, opts: EmitOptions = {}): string {
   }
 
   function buildJSX(node: Node): t.JSXElement {
+    if (node.type === "ComponentInstance") {
+      // Instances emit as JSX usages of their definition — wired in Phase 2C slice 4.
+      throw new Error("Component instance codegen is not implemented yet");
+    }
     used.add(node.type);
     const attrs: t.JSXAttribute[] = [];
     if (Object.keys(node.style).length > 0) {

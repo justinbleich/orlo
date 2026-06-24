@@ -189,6 +189,51 @@ export function validateDesign(design: unknown): PropError[] {
   return errors;
 }
 
+/**
+ * Structural validation for a ComponentInstance node (registry-free). Cross-registry
+ * checks — componentId exists, override/slot names + value types match the definition
+ * — live in `validateInstance` (components.ts), which the store calls on edits.
+ */
+function validateComponentInstance(
+  candidate: Record<string, unknown>,
+  nodeId: NodeId,
+  errors: NodeError[],
+): void {
+  if (typeof candidate.componentId !== "string" || candidate.componentId.length === 0) {
+    errors.push({ nodeId, key: "componentId", reason: "expected a non-empty string" });
+  }
+  if (!isPlainObject(candidate.overrides)) {
+    errors.push({ nodeId, key: "overrides", reason: "expected an overrides object" });
+  } else {
+    for (const [k, v] of Object.entries(candidate.overrides)) {
+      if (!(typeof v === "string" || typeof v === "number" || typeof v === "boolean")) {
+        errors.push({ nodeId, key: `overrides.${k}`, reason: "expected string | number | boolean" });
+      }
+    }
+  }
+  if (candidate.slots !== undefined) {
+    if (!isPlainObject(candidate.slots)) {
+      errors.push({ nodeId, key: "slots", reason: "expected a slots object" });
+    } else {
+      for (const [k, v] of Object.entries(candidate.slots)) {
+        if (!Array.isArray(v)) errors.push({ nodeId, key: `slots.${k}`, reason: "expected a node array" });
+      }
+    }
+  }
+  if (candidate.children !== undefined) {
+    errors.push({ nodeId, key: "children", reason: "instances use slots, not children" });
+  }
+  const styleResult = validateStyle(candidate.style);
+  if (!styleResult.ok) {
+    for (const e of styleResult.errors) {
+      errors.push({ nodeId, key: `style.${e.key}`, reason: e.reason });
+    }
+  }
+  for (const e of validateDesign(candidate.design as DesignMeta | undefined)) {
+    errors.push({ nodeId, key: e.key, reason: e.reason });
+  }
+}
+
 /** Validate a single node (props + style + structural rules). */
 export function validateNode(node: Node): NodeError[] {
   const errors: NodeError[] = [];
@@ -197,8 +242,12 @@ export function validateNode(node: Node): NodeError[] {
   if (typeof candidate.id !== "string" || candidate.id.length === 0) {
     errors.push({ nodeId, key: "id", reason: "expected a non-empty string" });
   }
+  if (candidate.type === "ComponentInstance") {
+    validateComponentInstance(candidate, nodeId, errors);
+    return errors;
+  }
   if (!isRNPrimitive(candidate.type)) {
-    errors.push({ nodeId, key: "type", reason: "expected a supported RN primitive" });
+    errors.push({ nodeId, key: "type", reason: "expected a supported RN primitive or component instance" });
     return errors;
   }
 
@@ -254,6 +303,17 @@ export function validateTree(root: Node): NodeError[] {
       for (const child of candidate.children) {
         if (isPlainObject(child)) visit(child as unknown as Node);
         else errors.push({ nodeId: String(candidate.id ?? "(unknown)"), key: "children", reason: "expected node objects" });
+      }
+    }
+    // Slot children are real screen nodes placed into an instance — validate them
+    // and fold them into the same id-uniqueness scope.
+    if (isPlainObject(candidate.slots)) {
+      for (const children of Object.values(candidate.slots)) {
+        if (!Array.isArray(children)) continue;
+        for (const child of children) {
+          if (isPlainObject(child)) visit(child as unknown as Node);
+          else errors.push({ nodeId: String(candidate.id ?? "(unknown)"), key: "slots", reason: "expected node objects" });
+        }
       }
     }
   };

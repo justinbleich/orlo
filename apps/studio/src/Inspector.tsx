@@ -765,7 +765,7 @@ function SelectionHeader({
 }) {
   const multi = nodes.length > 1;
   const primary = nodes[0];
-  const Icon = multi ? Boxes : TYPE_ICON[primary.type];
+  const Icon = multi ? Boxes : (TYPE_ICON[primary.type as keyof typeof TYPE_ICON] ?? Boxes);
   const anyLocked = nodes.some((n) => n.design?.locked);
   const anyHidden = nodes.some((n) => n.design?.hidden);
   return (

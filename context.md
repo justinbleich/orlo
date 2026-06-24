@@ -517,3 +517,23 @@ retarget to `@rn-canvas/document`.
   node can be drawn into an unselected screen directly; the hovered frame rings with an accent "drop
   here" affordance (`armed-drop-target` in `RNNodeOverlay`). On drop the node inserts into the
   cursor-resolved container and that screen takes focus. Device presets / safe-area chrome remain open.
+
+## Phase 2C — components & instances: Slice 1 (model contract)
+
+- Landed the locked data-model contract only — no renderer/inspector/codegen wiring yet (later slices).
+  New `ComponentInstanceNode` joins the `Node` union (not an RN primitive, so `createNode`/`PropsByType`
+  are unchanged); `ComponentDefinition` + `ComponentRegistry` live in the store as a sibling of `roots`.
+- Prop model is the general, RN-component-shaped one: a `ComponentProp` is a named `valueType`
+  (string/number/boolean/color/enum/node) bound to one or more `targets` (prop-path, style-key,
+  visibility, or slot). text/color/visibility/slot are presets; multi-target binding is supported.
+- Pure functions in `packages/document/src/components.ts`: `promoteToComponent`, `createInstance`,
+  `applyOverrides`, `expandComponents` (namespaces inner ids `instanceId::innerId` per placement),
+  `ownerInstanceId`, `validateComponentRegistry`, `validateInstance`. Instances are symbolic in the
+  document and expand to a primitive tree for render/canvas; codegen keeps them as JSX usages (slice 4).
+- Store gained the registry in state + `Snapshot` (undo/redo + interactions cover registry edits) plus
+  promote/add/update/remove-component, placeInstance, setInstanceOverride/Slot; `loadRoots` takes an
+  optional registry. A prop's `default` is the canonical unset value (what codegen emits), so it wins
+  over the template literal at expansion — editing a definition re-flows to every instance.
+- Consumers adapted for the widened union (narrowing guards only; no behavior change): `emit.buildJSX`
+  throws on instances (slice 4), `cloneSubtree` clones instances, Inspector icon + overlay text-edit
+  narrow. Verified: document 40 tests; tsc clean in document/codegen/render-web/studio.

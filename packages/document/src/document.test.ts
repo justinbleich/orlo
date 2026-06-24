@@ -153,8 +153,8 @@ test("reorderChild swaps order", () => {
 
 test("updateProps validates and is immutable", () => {
   const t = updateProps(sampleDocument, "sample-text", { text: "Updated" });
-  assert.equal((findNode(t, "sample-text")!.props as { text: string }).text, "Updated");
-  assert.equal((findNode(sampleDocument, "sample-text")!.props as { text: string }).text, "Hello RN Canvas");
+  assert.equal((findNode(t, "sample-text") as { props: { text: string } }).props.text, "Updated");
+  assert.equal((findNode(sampleDocument, "sample-text") as { props: { text: string } }).props.text, "Hello RN Canvas");
   assert.throws(() => updateProps(t, "sample-text", { text: 5 as never }), /Invalid props/);
 });
 
@@ -173,7 +173,7 @@ test("undefined updates remove optional fields for JSON-stable sidecars", () => 
   let next = updateProps(input, input.id, { numberOfLines: undefined });
   next = updateStyle(next, input.id, { fontSize: undefined });
   next = updateDesign(next, input.id, { name: undefined });
-  assert.equal("numberOfLines" in next.props, false);
+  assert.equal("numberOfLines" in (next as { props: object }).props, false);
   assert.equal("fontSize" in next.style, false);
   assert.equal("design" in next, false);
   assert.deepEqual(JSON.parse(JSON.stringify(next)), next);

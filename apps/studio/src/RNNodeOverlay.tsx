@@ -292,7 +292,7 @@ export function RNNodeOverlay({
   function commitEdit() {
     if (!editing) return;
     const node = findNode(root, editing.id);
-    if (node && (node.props as { text?: string }).text !== editing.value) {
+    if (node && (node as { props?: { text?: string } }).props?.text !== editing.value) {
       try {
         useDocumentStore.getState().updateProps(root.id, editing.id, { text: editing.value });
       } catch {

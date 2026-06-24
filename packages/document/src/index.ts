@@ -22,6 +22,13 @@ export type {
   FlatListProps,
   PropsByType,
   AnyProps,
+  OverrideValue,
+  ComponentInstanceNode,
+  PropValueType,
+  PropTarget,
+  ComponentProp,
+  ComponentDefinition,
+  ComponentRegistry,
 } from "./types";
 export { RN_PRIMITIVES, canHaveChildren, isContainer, childrenOf } from "./types";
 
@@ -34,11 +41,22 @@ export {
   removeNode,
   moveNode,
   reorderChild,
+  replaceNode,
   updateProps,
   updateStyle,
   updateDesign,
   type CreateNodeInit,
 } from "./tree";
+
+export {
+  promoteToComponent,
+  createInstance,
+  applyOverrides,
+  expandComponents,
+  ownerInstanceId,
+  validateComponentRegistry,
+  validateInstance,
+} from "./components";
 
 export {
   validateProps,

@@ -145,6 +145,17 @@ function updateNodeById(tree: Node, id: NodeId, updater: (n: Node) => Node): Nod
   return { ...tree, children: next } as Node;
 }
 
+/** Replace the node with `id` by `replacement`, cloning only the ancestor path. */
+export function replaceNode(tree: Node, id: NodeId, replacement: Node): Node {
+  let found = false;
+  const result = updateNodeById(tree, id, () => {
+    found = true;
+    return replacement;
+  });
+  if (!found) throw new Error(`Node not found: ${id}`);
+  return result;
+}
+
 function assertCanHold(parent: Node, addingCount: number): asserts parent is Node {
   if (!isContainer(parent)) {
     throw new Error(`${parent.type} cannot have children`);
@@ -239,6 +250,9 @@ export function updateProps(
 ): Node {
   let found = false;
   const result = updateNodeById(tree, id, (node) => {
+    if (node.type === "ComponentInstance") {
+      throw new Error("ComponentInstance has no props; use setInstanceOverride");
+    }
     let props = mergeDefined(node.props as AnyProps, partial);
     const errors = validateProps(node.type, props);
     if (errors.length > 0) {

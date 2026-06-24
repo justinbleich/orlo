@@ -6,29 +6,48 @@
  */
 import { create } from "zustand";
 import type { RNStyle } from "@rn-canvas/styles";
-import type { AnyProps, DesignMeta, Node, NodeId } from "./types";
+import type {
+  AnyProps,
+  ComponentDefinition,
+  ComponentRegistry,
+  DesignMeta,
+  Node,
+  NodeId,
+  OverrideValue,
+} from "./types";
 import {
+  findNode,
   insertChild as opInsertChild,
   moveNode as opMoveNode,
   removeNode as opRemoveNode,
   reorderChild as opReorderChild,
+  replaceNode,
   updateDesign as opUpdateDesign,
   updateProps as opUpdateProps,
   updateStyle as opUpdateStyle,
 } from "./tree";
 import { validateTree } from "./validate";
+import {
+  createInstance,
+  promoteToComponent as promoteOp,
+  validateComponentRegistry,
+  validateInstance,
+} from "./components";
 
 export type Roots = Record<NodeId, Node>;
 
-/** A history entry snapshots both the tree and the selection, so undo/redo
- *  restores a coherent selection (no dangling selected-node after an undo). */
+/** A history entry snapshots the trees, the component registry, and the selection,
+ *  so undo/redo restores a coherent document (no dangling selection or definition). */
 export interface Snapshot {
   roots: Roots;
+  components: ComponentRegistry;
   selection: NodeId[];
 }
 
 export interface DocumentState {
   roots: Roots;
+  /** Reusable component definitions, keyed by id (Phase 2C). Not per-frame. */
+  components: ComponentRegistry;
   selection: NodeId[];
   past: Snapshot[];
   future: Snapshot[];
@@ -41,10 +60,20 @@ export interface DocumentState {
 
   /** Replace the open document atomically. Used by sidecar loading; opening a
    *  document starts a fresh undo history rather than mixing document sessions. */
-  loadRoots(roots: Roots, selection?: NodeId[]): void;
+  loadRoots(roots: Roots, selection?: NodeId[], components?: ComponentRegistry): void;
 
   addRoot(root: Node): void;
   removeRoot(rootId: NodeId): void;
+
+  // --- Components & instances (Phase 2C) ---
+  /** Replace a node with an instance of a new component built from its subtree. */
+  promoteToComponent(rootId: NodeId, nodeId: NodeId, name: string): void;
+  addComponent(definition: ComponentDefinition): void;
+  updateComponent(componentId: NodeId, partial: Partial<ComponentDefinition>): void;
+  removeComponent(componentId: NodeId): void;
+  placeInstance(rootId: NodeId, parentId: NodeId, componentId: NodeId, index?: number): void;
+  setInstanceOverride(rootId: NodeId, instanceId: NodeId, name: string, value: OverrideValue): void;
+  setInstanceSlot(rootId: NodeId, instanceId: NodeId, name: string, children: Node[]): void;
 
   insertChild(rootId: NodeId, parentId: NodeId, child: Node, index?: number): void;
   removeNode(rootId: NodeId, id: NodeId): void;
@@ -63,16 +92,21 @@ export interface DocumentState {
 const HISTORY_LIMIT = 100;
 
 export const useDocumentStore = create<DocumentState>((set, get) => {
-  /** Commit a new roots map, snapshotting the previous tree + selection for undo. */
-  const commit = (next: Roots) => {
+  const snapshotOf = (state: DocumentState): Snapshot => ({
+    roots: state.roots,
+    components: state.components,
+    selection: state.selection,
+  });
+
+  /** Commit new roots and/or registry, snapshotting the prior document for undo. */
+  const commit = (next: { roots?: Roots; components?: ComponentRegistry }) => {
     set((state) => ({
       past: state.interaction
         ? state.past
-        : [...state.past, { roots: state.roots, selection: state.selection }].slice(
-            -HISTORY_LIMIT,
-          ),
+        : [...state.past, snapshotOf(state)].slice(-HISTORY_LIMIT),
       future: [],
-      roots: next,
+      roots: next.roots ?? state.roots,
+      components: next.components ?? state.components,
     }));
   };
 
@@ -83,11 +117,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     if (!tree) throw new Error(`Root not found: ${rootId}`);
     const next = fn(tree);
     if (next === tree) return;
-    commit({ ...roots, [rootId]: next });
+    commit({ roots: { ...roots, [rootId]: next } });
   };
 
   return {
     roots: {},
+    components: {},
     selection: [],
     past: [],
     future: [],
@@ -97,12 +132,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     beginInteraction: () => {
       const state = get();
       if (state.interaction) throw new Error("A document interaction is already active");
-      set({ interaction: { roots: state.roots, selection: state.selection } });
+      set({ interaction: snapshotOf(state) });
     },
     commitInteraction: () => {
       const state = get();
       if (!state.interaction) return;
-      const changed = state.roots !== state.interaction.roots;
+      const changed =
+        state.roots !== state.interaction.roots ||
+        state.components !== state.interaction.components;
       set({
         interaction: null,
         past: changed
@@ -116,12 +153,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       if (!state.interaction) return;
       set({
         roots: state.interaction.roots,
+        components: state.interaction.components,
         selection: state.interaction.selection,
         interaction: null,
       });
     },
 
-    loadRoots: (roots, selection) => {
+    loadRoots: (roots, selection, components) => {
       for (const [rootId, root] of Object.entries(roots)) {
         if (root.id !== rootId) {
           throw new Error(`Root key does not match node id: ${rootId}`);
@@ -134,8 +172,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
           );
         }
       }
+      const registry = components ?? {};
+      const regErrors = validateComponentRegistry(registry);
+      if (regErrors.length > 0) {
+        const first = regErrors[0];
+        throw new Error(`Invalid component registry: ${first.key} ${first.reason}`);
+      }
       const nextSelection = selection ?? Object.keys(roots).slice(0, 1);
-      set({ roots, selection: nextSelection, past: [], future: [], interaction: null });
+      set({
+        roots,
+        components: registry,
+        selection: nextSelection,
+        past: [],
+        future: [],
+        interaction: null,
+      });
     },
 
     addRoot: (root) => {
@@ -149,8 +200,95 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     removeRoot: (rootId) => {
       const next = { ...get().roots };
       delete next[rootId];
-      commit(next);
+      commit({ roots: next });
     },
+
+    promoteToComponent: (rootId, nodeId, name) => {
+      const { roots, components } = get();
+      const tree = roots[rootId];
+      if (!tree) throw new Error(`Root not found: ${rootId}`);
+      const node = findNode(tree, nodeId);
+      if (!node) throw new Error(`Node not found: ${nodeId}`);
+      const { definition, instance } = promoteOp(node, name);
+      // Reuse the node's id for the instance so selection/spatial references hold.
+      const placed = { ...instance, id: nodeId };
+      const nextComponents = { ...components, [definition.id]: definition };
+      const regErrors = validateComponentRegistry(nextComponents);
+      if (regErrors.length > 0) {
+        const first = regErrors[0];
+        throw new Error(`Invalid component: ${first.key} ${first.reason}`);
+      }
+      commit({
+        roots: { ...roots, [rootId]: replaceNode(tree, nodeId, placed) },
+        components: nextComponents,
+      });
+    },
+
+    addComponent: (definition) => {
+      const next = { ...get().components, [definition.id]: definition };
+      const errors = validateComponentRegistry(next);
+      if (errors.length > 0) {
+        const first = errors[0];
+        throw new Error(`Invalid component: ${first.key} ${first.reason}`);
+      }
+      commit({ components: next });
+    },
+
+    updateComponent: (componentId, partial) => {
+      const { components } = get();
+      const current = components[componentId];
+      if (!current) throw new Error(`Component not found: ${componentId}`);
+      const updated: ComponentDefinition = { ...current, ...partial, id: componentId };
+      const next = { ...components, [componentId]: updated };
+      const errors = validateComponentRegistry(next);
+      if (errors.length > 0) {
+        const first = errors[0];
+        throw new Error(`Invalid component: ${first.key} ${first.reason}`);
+      }
+      commit({ components: next });
+    },
+
+    removeComponent: (componentId) => {
+      const next = { ...get().components };
+      delete next[componentId];
+      commit({ components: next });
+    },
+
+    placeInstance: (rootId, parentId, componentId, index) => {
+      const { roots, components } = get();
+      if (!components[componentId]) throw new Error(`Unknown component: ${componentId}`);
+      const tree = roots[rootId];
+      if (!tree) throw new Error(`Root not found: ${rootId}`);
+      const instance = createInstance(componentId);
+      commit({ roots: { ...roots, [rootId]: opInsertChild(tree, parentId, instance, index) } });
+    },
+
+    setInstanceOverride: (rootId, instanceId, name, value) =>
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, instanceId);
+        if (!node || node.type !== "ComponentInstance") {
+          throw new Error(`Instance not found: ${instanceId}`);
+        }
+        const nextInstance = { ...node, overrides: { ...node.overrides, [name]: value } };
+        const errors = validateInstance(nextInstance, get().components);
+        if (errors.length > 0) throw new Error(`Invalid override: ${errors[0].reason}`);
+        return replaceNode(tree, instanceId, nextInstance);
+      }),
+
+    setInstanceSlot: (rootId, instanceId, name, children) =>
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, instanceId);
+        if (!node || node.type !== "ComponentInstance") {
+          throw new Error(`Instance not found: ${instanceId}`);
+        }
+        const nextInstance = {
+          ...node,
+          slots: { ...node.slots, [name]: children },
+        };
+        const errors = validateInstance(nextInstance, get().components);
+        if (errors.length > 0) throw new Error(`Invalid slot: ${errors[0].reason}`);
+        return replaceNode(tree, instanceId, nextInstance);
+      }),
 
     insertChild: (rootId, parentId, child, index) =>
       mutateRoot(rootId, (t) => opInsertChild(t, parentId, child, index)),
@@ -174,12 +312,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         const previous = state.past[state.past.length - 1];
         return {
           roots: previous.roots,
+          components: previous.components,
           selection: previous.selection,
           past: state.past.slice(0, -1),
-          future: [
-            { roots: state.roots, selection: state.selection },
-            ...state.future,
-          ].slice(0, HISTORY_LIMIT),
+          future: [snapshotOf(state), ...state.future].slice(0, HISTORY_LIMIT),
           interaction: null,
         };
       }),
@@ -189,10 +325,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         const next = state.future[0];
         return {
           roots: next.roots,
+          components: next.components,
           selection: next.selection,
-          past: [...state.past, { roots: state.roots, selection: state.selection }].slice(
-            -HISTORY_LIMIT,
-          ),
+          past: [...state.past, snapshotOf(state)].slice(-HISTORY_LIMIT),
           future: state.future.slice(1),
           interaction: null,
         };

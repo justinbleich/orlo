@@ -3,6 +3,7 @@ import {
   childrenOf,
   findNode,
   getParent,
+  ownerInstanceId,
   useDocumentStore,
   type Node,
   type NodeId,
@@ -84,10 +85,6 @@ function localPoint(element: HTMLDivElement, clientX: number, clientY: number): 
   };
 }
 
-function firstBox(result: LayoutReadyResult, nodeId: NodeId): LayoutBox | undefined {
-  return result.snapshot.get(nodeId)?.[0];
-}
-
 export function RNNodeOverlay({
   root,
   result,
@@ -123,18 +120,51 @@ export function RNNodeOverlay({
   const eventPoint = (event: React.PointerEvent<HTMLDivElement>) =>
     localPoint(overlayRef.current ?? event.currentTarget, event.clientX, event.clientY);
 
+  // A placed ComponentInstance expands to a primitive subtree whose ids are
+  // namespaced `${instanceId}::…`. Map each instance to its expanded root box so
+  // it selects, outlines, and drags as a single atomic unit.
+  const instanceBoxes = useMemo(() => {
+    const map = new Map<NodeId, LayoutBox>();
+    const walk = (box: LayoutBox) => {
+      const owner = ownerInstanceId(box.node.id);
+      if (owner && !map.has(owner)) map.set(owner, box); // DFS: ancestor (root) wins
+      for (const child of box.children) walk(child);
+    };
+    walk(result.layout);
+    return map;
+  }, [result]);
+
+  // Layout box for a document node id — resolves an instance to its expanded root
+  // box (the instance id is not itself a snapshot key after expansion).
+  function boxOf(nodeId: NodeId): LayoutBox | undefined {
+    return instanceBoxes.get(nodeId) ?? result.snapshot.get(nodeId)?.[0];
+  }
+
+  // Resolve a raw layout hit (possibly expanded instance content) to the document
+  // node it should act on — clicks inside an instance act on the instance itself,
+  // using the instance's outer geometry.
+  function resolveHit(hit: LayoutBox): LayoutBox {
+    const owner = ownerInstanceId(hit.node.id);
+    if (!owner) return hit;
+    const docNode = findNode(root, owner);
+    const instBox = instanceBoxes.get(owner);
+    return docNode && instBox ? { ...instBox, node: docNode } : hit;
+  }
+
   // Highlight box per selected node (instanceKey-matched for the single case so
   // handles track the hovered instance of a repeated node).
   const selectedBoxes = useMemo(() => {
     return selectedInRoot
       .map((id) => {
+        const instBox = instanceBoxes.get(id);
+        if (instBox) return instBox;
         const boxes = result.snapshot.get(id);
         if (!boxes) return undefined;
         if (isSingle) return boxes.find((b) => b.instanceKey === instanceKey) ?? boxes[0];
         return boxes[0];
       })
       .filter((b): b is LayoutBox => !!b);
-  }, [selectedInRoot, result, isSingle, instanceKey]);
+  }, [selectedInRoot, result, isSingle, instanceKey, instanceBoxes]);
 
   const singleBox = isSingle ? selectedBoxes[0] : undefined;
 
@@ -159,10 +189,10 @@ export function RNNodeOverlay({
     const group: GroupMember[] = [];
     for (const id of selectedInRoot) {
       const node = findNode(root, id);
-      const nodeBox = firstBox(result, id);
+      const nodeBox = boxOf(id);
       if (node?.style.position === "absolute" && nodeBox) {
         const memberParent = getParent(root, id);
-        const memberParentBox = memberParent ? firstBox(result, memberParent.id) : undefined;
+        const memberParentBox = memberParent ? boxOf(memberParent.id) : undefined;
         const borderLeft = memberParent?.style.borderLeftWidth ?? memberParent?.style.borderWidth ?? 0;
         const borderTop = memberParent?.style.borderTopWidth ?? memberParent?.style.borderWidth ?? 0;
         const style = { ...node.style };
@@ -192,13 +222,13 @@ export function RNNodeOverlay({
     }
     const groupParents = new Set(group.map((member) => getParent(root, member.nodeId)?.id));
     const snapParent = group.length > 0 && groupParents.size === 1 ? parent : undefined;
-    const snapParentBox = snapParent ? firstBox(result, snapParent.id) : undefined;
+    const snapParentBox = snapParent ? boxOf(snapParent.id) : undefined;
     const selectedSet = new Set(group.map((member) => member.nodeId));
     const siblingBoxes = snapParent && snapParentBox
       ? childrenOf(snapParent)
           .filter((child) => !selectedSet.has(child.id) && !child.design?.hidden)
           .flatMap((child) => {
-            const childBox = firstBox(result, child.id);
+            const childBox = boxOf(child.id);
             return childBox ? [childBox] : [];
           })
       : [];
@@ -229,7 +259,7 @@ export function RNNodeOverlay({
       instanceKey: box.instanceKey,
       start: eventPoint(event),
       box,
-      parentBox: parent ? firstBox(result, parent.id) : undefined,
+      parentBox: parent ? boxOf(parent.id) : undefined,
       handle,
       group,
       flexBlock,
@@ -238,7 +268,7 @@ export function RNNodeOverlay({
       layoutGuide:
         kind === "move" && box.node.style.position !== "absolute" && parent
           ? {
-              box: firstBox(result, parent.id) ?? result.layout,
+              box: boxOf(parent.id) ?? result.layout,
               horizontal: parent.style.flexDirection?.startsWith("row") ?? false,
             }
           : undefined,
@@ -277,12 +307,18 @@ export function RNNodeOverlay({
       event.clientX,
       event.clientY,
     );
-    const hit = hitTestLayout(result.layout, point);
-    if (!hit) return;
-    const node = hit.node;
+    const rawHit = hitTestLayout(result.layout, point);
+    if (!rawHit) return;
+    // Inside an instance, a double-click selects the instance rather than editing
+    // its internal (non-document) text — internals are edited via the definition.
+    if (ownerInstanceId(rawHit.node.id)) {
+      useDocumentStore.getState().setSelection([resolveHit(rawHit).node.id]);
+      return;
+    }
+    const node = rawHit.node;
     if (node.type === "Text" && !node.design?.locked) {
       useDocumentStore.getState().setSelection([node.id]);
-      setInstanceKey(hit.instanceKey);
+      setInstanceKey(rawHit.instanceKey);
       // type === "Text" guarantees TextProps at runtime; LayoutBox.node isn't
       // narrowed by the discriminant here, so read text through a narrow cast.
       setEditing({ id: node.id, value: (node.props as { text: string }).text });
@@ -349,7 +385,9 @@ export function RNNodeOverlay({
       return;
     }
     const additive = event.shiftKey || event.metaKey || event.ctrlKey;
-    const hit = hitTestLayout(result.layout, point);
+    const rawHit = hitTestLayout(result.layout, point);
+    // Resolve instance internals to the placed instance so it acts atomically.
+    const hit = rawHit ? resolveHit(rawHit) : undefined;
 
     // Empty space or the frame background → marquee (or clear when not additive).
     if (!hit || hit.node.id === root.id) {
@@ -513,7 +551,8 @@ export function RNNodeOverlay({
                 !box.node.design?.locked &&
                 boxIntersectsRect(box, rect),
             )
-            .map((box) => box.node.id);
+            // Expanded instance internals map to their placed instance.
+            .map((box) => ownerInstanceId(box.node.id) ?? box.node.id);
           const unique = [...new Set(hits)];
           // Union with the existing node selection (never the frame root).
           const base = useDocumentStore
@@ -544,7 +583,7 @@ export function RNNodeOverlay({
       const parent = getParent(root, current.flexBlock[0]);
       if (parent) {
         const siblings = childrenOf(parent).flatMap((sibling) => {
-          const box = firstBox(result, sibling.id);
+          const box = boxOf(sibling.id);
           return box ? [{ id: sibling.id, box }] : [];
         });
         const horizontal = flexFlowHorizontal(parent.style.flexDirection);
@@ -580,7 +619,7 @@ export function RNNodeOverlay({
     try {
       const node = buildDrawnNode(type, width, height);
       const siblings = childrenOf(target.node).flatMap((sibling) => {
-        const box = firstBox(result, sibling.id);
+        const box = boxOf(sibling.id);
         return box ? [{ id: sibling.id, box }] : [];
       });
       const horizontal = flexFlowHorizontal(target.node.style.flexDirection);
@@ -755,10 +794,12 @@ export function RNNodeOverlay({
               pointerEvents: "none",
             }}
           >
-            {/* Resize handles only in the single-selection case. */}
+            {/* Resize handles only in the single-selection case. An instance's
+                size comes from its definition, so it isn't directly resizable. */}
             {isSingle &&
               singleNode &&
               singleNode.id !== root.id &&
+              singleNode.type !== "ComponentInstance" &&
               !singleNode.design?.locked &&
               handles.map((handle) => (
                 <div

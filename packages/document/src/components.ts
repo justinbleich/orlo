@@ -166,8 +166,8 @@ export function expandComponents(node: Node, registry: ComponentRegistry): Node 
 }
 
 function expand(node: Node, registry: ComponentRegistry, prefix: string): Node {
-  const id = prefix + node.id;
   if (node.type === "ComponentInstance") {
+    const id = prefix + node.id;
     const definition = registry[node.componentId];
     if (!definition) {
       // Unresolved component → empty placeholder so layout never crashes.
@@ -176,13 +176,19 @@ function expand(node: Node, registry: ComponentRegistry, prefix: string): Node {
     return expand(applyOverrides(definition, node), registry, `${id}::`);
   }
   if (isContainer(node)) {
-    return {
-      ...node,
-      id,
-      children: node.children.map((child) => expand(child, registry, prefix)),
-    } as Node;
+    // Identity-preserving: only clone the ancestor path of an actual expansion, so
+    // an instance-free tree (the common case) returns the same node references and
+    // the renderer keeps its per-box memoization.
+    let changed = prefix !== "";
+    const children = node.children.map((child) => {
+      const expanded = expand(child, registry, prefix);
+      if (expanded !== child) changed = true;
+      return expanded;
+    });
+    if (!changed) return node;
+    return { ...node, id: prefix + node.id, children } as Node;
   }
-  return { ...node, id } as Node;
+  return prefix ? ({ ...node, id: prefix + node.id } as Node) : node;
 }
 
 /** The top-level placed instance that owns an expanded node id (or null). */

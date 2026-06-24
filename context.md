@@ -537,3 +537,22 @@ retarget to `@rn-canvas/document`.
 - Consumers adapted for the widened union (narrowing guards only; no behavior change): `emit.buildJSX`
   throws on instances (slice 4), `cloneSubtree` clones instances, Inspector icon + overlay text-edit
   narrow. Verified: document 40 tests; tsc clean in document/codegen/render-web/studio.
+
+### Slice 2 (renderer + atomic canvas selection)
+
+- `RNFrameRenderer` now expands instances before Yoga: `expandComponents(root, components)` runs in the
+  layout effect (deps `[root, components]`); a new optional `components` prop carries the registry, which
+  `RNFrameShape` reads from the store. `expandComponents` was made identity-preserving (clones only the
+  ancestor path of an actual expansion) so instance-free frames keep the renderer's per-box memoization.
+- The overlay (`RNNodeOverlay`) maps expanded ids (`instanceId::innerId`) back to the placed instance so
+  it acts as one atomic unit: `instanceBoxes` maps each instance → its expanded root box; `resolveHit`
+  resolves a click inside instance content to the instance + its outer geometry; `boxOf` (replacing the
+  old `firstBox`) resolves instance ids for selection outlines, drag, snapping, and flex-reorder sibling
+  lists; marquee maps hits via `ownerInstanceId`; double-click inside an instance selects it rather than
+  editing internal (non-document) text; resize handles are suppressed for instances (size comes from the
+  definition). Placement/resize of instances themselves is deferred (instance `style` is currently
+  ignored by expansion).
+- Verified: render-web gains an expansion→`computeLayout` test (two placements lay out side by side with
+  namespaced ids and per-instance text overrides); document 40 / render-web 3 / studio 25 pass; tsc clean;
+  the live no-instance app renders unchanged with no console errors. A full click-through of atomic
+  selection waits on slice 3's creation UI (no way to author an instance in-app yet).

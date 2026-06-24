@@ -8,7 +8,8 @@ import {
   View,
   type ImageSourcePropType,
 } from "react-native-web";
-import type { Node } from "@rn-canvas/document";
+import type { ComponentRegistry, Node } from "@rn-canvas/document";
+import { expandComponents } from "@rn-canvas/document";
 import { pickVisualStyle } from "@rn-canvas/styles";
 import {
   computeLayout,
@@ -31,6 +32,8 @@ export type LayoutReadyResult = {
 
 type RNFrameRendererProps = {
   root: Node;
+  /** Component definitions used to expand any ComponentInstance nodes (Phase 2C). */
+  components?: ComponentRegistry;
   onLayoutReady?: (result: LayoutReadyResult) => void;
   instrumentation?: RenderInstrumentation;
 };
@@ -154,6 +157,7 @@ const RenderedLayoutBox = memo(
 
 export function RNFrameRenderer({
   root,
+  components,
   onLayoutReady,
   instrumentation,
 }: RNFrameRendererProps) {
@@ -174,7 +178,10 @@ export function RNFrameRenderer({
     setError(null);
     const started = globalThis.performance?.now() ?? Date.now();
 
-    computeLayout(root)
+    // Resolve component instances into a primitive tree before Yoga sees it.
+    const expanded = components ? expandComponents(root, components) : root;
+
+    computeLayout(expanded)
       .then(({ layout, rootWidth, rootHeight }) => {
         if (cancelled) return;
         const snapshot = createLayoutSnapshot(layout);
@@ -194,7 +201,7 @@ export function RNFrameRenderer({
     return () => {
       cancelled = true;
     };
-  }, [root]);
+  }, [root, components]);
 
   if (error) {
     return (

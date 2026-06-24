@@ -154,6 +154,8 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
     }, [setStudioLayout, shape.props.rootId]);
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
+    // The component registry expands any instances in this frame to primitives.
+    const components = useDocumentStore((s) => s.components);
     // A frame is "live" (full render) when selected or large enough on screen;
     // otherwise it falls back to the proxy. Reactive to zoom + selection.
     const selected = useValue(
@@ -188,7 +190,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
           </div>
         ) : live ? (
           <div style={{ pointerEvents: "none" }}>
-            <RNFrameRenderer root={root} onLayoutReady={onLayoutReady} />
+            <RNFrameRenderer root={root} components={components} onLayoutReady={onLayoutReady} />
           </div>
         ) : (
           <LODProxy

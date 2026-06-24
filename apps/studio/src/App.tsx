@@ -672,7 +672,9 @@ export default function App() {
         <ToolRail
           onSelect={selectTool}
           onAddFrame={addFrame}
-          canAddPrimitive={!!focusedRoot}
+          // A primitive can be armed whenever there's any screen to draw into —
+          // the target frame is resolved from the cursor, not a prior selection.
+          canAddPrimitive={Object.keys(roots).length > 0}
         />
         <LeftPanel onAddFrame={addFrame} />
 

@@ -105,6 +105,9 @@ export function RNNodeOverlay({
   const [snapGuides, setSnapGuides] = useState<{ x?: number; y?: number }>({});
   const [spacingSegments, setSpacingSegments] = useState<SpacingSegment[]>([]);
   const [editing, setEditing] = useState<{ id: NodeId; value: string } | null>(null);
+  // True while an armed tool's cursor is over this frame — drives the "drop here"
+  // ring so users know which screen the next node lands in (no pre-selection).
+  const [armedHover, setArmedHover] = useState(false);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
 
@@ -609,6 +612,8 @@ export function RNNodeOverlay({
       onPointerMove={onPointerMove}
       onPointerUp={(event) => finishGesture(event)}
       onPointerCancel={(event) => finishGesture(event, true)}
+      onPointerEnter={() => { if (armedTool) setArmedHover(true); }}
+      onPointerLeave={() => setArmedHover(false)}
       onDoubleClick={onDoubleClick}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !editing) selectParent();
@@ -621,6 +626,22 @@ export function RNNodeOverlay({
         cursor: armedTool ? "crosshair" : undefined,
       }}
     >
+      {/* "Drop here" affordance: while a tool is armed and the cursor is over this
+          frame, ring the screen so the insertion target is unambiguous (Figma-like). */}
+      {active && armedTool && armedHover && (
+        <div
+          data-testid="armed-drop-target"
+          style={{
+            position: "absolute",
+            inset: 0,
+            border: `2px solid ${color.accent}`,
+            borderRadius: radius.sm,
+            background: color.accentSoft,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
       {/* Flex intent is normally invisible. Reveal the active parent and its
           child slots only while a relative child is being reordered. */}
       {active && layoutGuide && (

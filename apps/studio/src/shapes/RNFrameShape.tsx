@@ -145,6 +145,9 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
     const editor = useEditor();
     const [layoutResult, setLayoutResult] = useState<LayoutReadyResult | null>(null);
     const setStudioLayout = useStudioStore((state) => state.setLayout);
+    // While a creation tool is armed, every frame becomes a live drop target —
+    // the cursor (not a prior selection) picks which screen receives the node.
+    const armed = useStudioStore((state) => state.armedTool !== null);
     const onLayoutReady = useCallback((result: LayoutReadyResult) => {
       setLayoutResult(result);
       setStudioLayout(shape.props.rootId, result);
@@ -164,6 +167,9 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
       [editor, shape.id, shape.props.w],
     );
     const live = selected || largeEnough;
+    // The overlay owns pointer input when its frame is selected, or for any frame
+    // while a tool is armed (so you can draw into an unselected screen directly).
+    const interactive = selected || armed;
     return (
       <HTMLContainer
         data-rn-root-id={shape.props.rootId}
@@ -173,7 +179,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
           overflow: "hidden",
           backgroundColor: "#ffffff",
           // Let tldraw handle selection/drag; inner RN content is preview-only.
-          pointerEvents: selected ? "auto" : "none",
+          pointerEvents: interactive ? "auto" : "none",
         }}
       >
         {!root ? (
@@ -192,7 +198,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
           />
         )}
         {root && live && layoutResult && (
-          <RNNodeOverlay root={root} result={layoutResult} active={selected} />
+          <RNNodeOverlay root={root} result={layoutResult} active={interactive} />
         )}
       </HTMLContainer>
     );

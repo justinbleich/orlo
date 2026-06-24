@@ -511,3 +511,9 @@ retarget to `@rn-canvas/document`.
   `DEVICE_FRAME` so taller frames never overlap. The Phase-0 `sampleDocument` card is now test/harness
   only — the Studio no longer seeds from it. Nested layers already work end to end (tree reparent,
   draw-into-container via `containerAt`, group/ungroup); device presets / safe-area chrome remain open.
+- Creation tools are cursor-aware (Figma-like). Armed rail tools show an active state and can be armed
+  whenever any screen exists (`canAddPrimitive` keys off frame count, not selection). While a tool is
+  armed every frame's overlay becomes interactive (`active = selected || armed` in `RNFrameShape`), so a
+  node can be drawn into an unselected screen directly; the hovered frame rings with an accent "drop
+  here" affordance (`armed-drop-target` in `RNNodeOverlay`). On drop the node inserts into the
+  cursor-resolved container and that screen takes focus. Device presets / safe-area chrome remain open.

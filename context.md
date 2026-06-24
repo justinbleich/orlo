@@ -502,3 +502,12 @@ retarget to `@rn-canvas/document`.
   leaks. This guards against an emitter ever serializing a cleared dimension as `null`.
 - Phase 2B is functionally closed (auto-layout, sizing, mode-aware drag, align/distribute, snapping +
   spacing hints, codegen). Center/scale absolute-constraint approximations stay deferred.
+
+## Studio canvas defaults
+
+- New frames and the first-run seed are now device-sized mobile screens: iPhone 14/13 logical size
+  (390×844), full-bleed (white, column, top-aligned, no card border/radius). `createScreenFrame` in
+  `apps/studio/src/App.tsx` is the single factory for both; the canvas grid spacing derives from
+  `DEVICE_FRAME` so taller frames never overlap. The Phase-0 `sampleDocument` card is now test/harness
+  only — the Studio no longer seeds from it. Nested layers already work end to end (tree reparent,
+  draw-into-container via `containerAt`, group/ungroup); device presets / safe-area chrome remain open.

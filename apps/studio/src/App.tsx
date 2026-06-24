@@ -13,7 +13,6 @@ import {
   findNode,
   findRootContaining,
   getParent,
-  sampleDocument,
   useDocumentStore,
   type Node,
   type NodeId,
@@ -100,6 +99,27 @@ function rootSize(root: Node): { w: number; h: number } {
   return { w, h };
 }
 
+/** Logical size of the default device canvas (iPhone 14/13, points). */
+const DEVICE_FRAME = { width: 390, height: 844 } as const;
+
+/**
+ * A blank full-bleed mobile screen: device-sized, top-aligned column, white,
+ * no card border/radius. The starting point for authoring a real screen.
+ */
+function createScreenFrame(children: Node[] = []): Node {
+  return createNode("View", {
+    style: {
+      width: DEVICE_FRAME.width,
+      height: DEVICE_FRAME.height,
+      backgroundColor: "#ffffff",
+      flexDirection: "column",
+      padding: 16,
+      gap: 12,
+    },
+    children,
+  });
+}
+
 /** Create a tldraw shape for any document root that doesn't have one yet. */
 function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   const existing = new Set(
@@ -115,8 +135,8 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
     editor.createShape({
       id: createShapeId(),
       type: RNFRAME,
-      x: 80 + (i % 3) * 380,
-      y: 80 + Math.floor(i / 3) * 320,
+      x: 80 + (i % 3) * (DEVICE_FRAME.width + 50),
+      y: 80 + Math.floor(i / 3) * (DEVICE_FRAME.height + 56),
       props: { rootId: root.id, w, h },
       isLocked: !!root.design?.locked,
     } as unknown as CreatePartial);
@@ -197,7 +217,10 @@ export default function App() {
 
     const store = useDocumentStore.getState();
     if (Object.keys(store.roots).length === 0) {
-      store.loadRoots({ [sampleDocument.id]: sampleDocument }, [sampleDocument.id]);
+      const seed = createScreenFrame([
+        createNode("Text", { props: { text: "Hello RN Canvas" } }),
+      ]);
+      store.loadRoots({ [seed.id]: seed }, [seed.id]);
     }
     syncShapes(editor);
     if (store.selection.length === 0) store.setSelection(Object.keys(store.roots).slice(0, 1));
@@ -448,20 +471,7 @@ export default function App() {
   }, [roots]);
 
   const addFrame = useCallback(() => {
-    const root = createNode("View", {
-      style: {
-        width: 220,
-        height: 160,
-        padding: 16,
-        backgroundColor: "#ffffff",
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: "#dddddd",
-        justifyContent: "center",
-        alignItems: "center",
-      },
-      children: [createNode("Text", { props: { text: "New frame" } })],
-    });
+    const root = createScreenFrame();
     const store = useDocumentStore.getState();
     store.addRoot(root);
     store.setSelection([root.id]);

@@ -85,6 +85,9 @@ Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and
   chrome values are tokenized. Six Studio tests cover selection and subtree action regressions.
 - The freeform-versus-Yoga-flow creation model remains deliberately unresolved pending product
   discussion; no document or codegen semantics changed in this pass.
+- The interaction-parity follow-up exposes all frame resize edges, makes arrow-key and panel
+  reordering follow the selected child's visual flex axis, combines Screens and Layers into one
+  collapsible navigator, and reveals the active Yoga flow while a relative child is dragged.
 
 ## V1 release checkpoint
 

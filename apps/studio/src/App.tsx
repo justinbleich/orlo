@@ -12,6 +12,7 @@ import {
   createNode,
   findNode,
   findRootContaining,
+  getParent,
   sampleDocument,
   useDocumentStore,
   type Node,
@@ -22,7 +23,7 @@ import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
 import { Inspector } from "./Inspector";
 import { color, layout, radius, space, text } from "./studio-theme";
 import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
-import { deleteNodes, duplicateNodes } from "./document-actions";
+import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
 import { normalizeNodeSelection } from "./selection";
@@ -305,6 +306,36 @@ export default function App() {
           event.stopImmediatePropagation();
           duplicateNodes(focused!.id, nodeIds);
           setStatus(`Duplicated ${nodeIds.length} layer${nodeIds.length > 1 ? "s" : ""}`);
+        }
+        return;
+      }
+
+      // In Yoga flow, arrow keys reorder along the parent's visual flex axis.
+      // Absolute children keep the normal positional model and are not reordered.
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+        const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
+        const nodeIds = focused
+          ? normalizeNodeSelection(focused, store.selection, { excludeRoot: true })
+          : [];
+        const node = focused && nodeIds.length === 1 ? findNode(focused, nodeIds[0]) : undefined;
+        const parent = focused && node ? getParent(focused, node.id) : undefined;
+        if (focused && node && parent && node.style.position !== "absolute") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const direction = parent.style.flexDirection ?? "column";
+          const horizontal = direction.startsWith("row");
+          const reverse = direction.endsWith("reverse");
+          const matchesAxis = horizontal
+            ? event.key === "ArrowLeft" || event.key === "ArrowRight"
+            : event.key === "ArrowUp" || event.key === "ArrowDown";
+          if (matchesAxis) {
+            const towardEnd = horizontal ? event.key === "ArrowRight" : event.key === "ArrowDown";
+            const offset = (towardEnd !== reverse ? 1 : -1) as -1 | 1;
+            if (reorderNode(focused.id, node.id, offset)) {
+              const directionLabel = event.key.replace("Arrow", "").toLowerCase();
+              setStatus(`Moved ${node.design?.name ?? node.type} ${directionLabel}`);
+            }
+          }
         }
         return;
       }

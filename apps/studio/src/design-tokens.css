@@ -105,6 +105,8 @@
   --size-swatch: 18px;
   --checker-color: #888888;
   --checker-size: 8px;
+  --canvas-grid-line: 1px;
+  --canvas-grid-step: 8px;
   --shadow-control: 0 1px 2px rgba(0,0,0,.25);
   --shadow-popover: 0 8px 24px rgba(0,0,0,.40);
 }

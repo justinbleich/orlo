@@ -6,7 +6,11 @@
 import { useState } from "react";
 import {
   ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ArrowUp,
+  ChevronDown,
+  ChevronRight,
   Frame,
   Image,
   List,
@@ -34,6 +38,7 @@ import { color, layout, radius, space, text } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
 import { cn } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
+import { reorderNode } from "./document-actions";
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
@@ -234,15 +239,58 @@ const panelIconButton: React.CSSProperties = {
   flex: "0 0 auto",
 };
 
-/** Document navigation. Screens are roots; Layers is the focused root's tree. */
+function NavigatorSection({
+  label,
+  open,
+  onToggle,
+  action,
+  children,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+      <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          style={{
+            border: 0,
+            padding: 0,
+            background: "transparent",
+            color: color.inkFaint,
+            display: "flex",
+            alignItems: "center",
+            gap: space.xs,
+            flex: 1,
+            textAlign: "left",
+          }}
+        >
+          <Chevron size={13} aria-hidden="true" />
+          <Eyebrow>{label}</Eyebrow>
+        </button>
+        {action}
+      </div>
+      {open && children}
+    </section>
+  );
+}
+
+/** Document navigation. Screens and the focused root's Layers stay visible together. */
 export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
-  const [tab, setTab] = useState("Screens");
+  const [screensOpen, setScreensOpen] = useState(true);
+  const [layersOpen, setLayersOpen] = useState(true);
   const roots = useDocumentStore((state) => state.roots);
   const selection = useDocumentStore((state) => state.selection);
   const setSelection = useDocumentStore((state) => state.setSelection);
   const removeRoot = useDocumentStore((state) => state.removeRoot);
   const removeNode = useDocumentStore((state) => state.removeNode);
-  const reorderChild = useDocumentStore((state) => state.reorderChild);
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -252,11 +300,16 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
     focusedRoot && selectedId ? getParent(focusedRoot, selectedId) : undefined;
   const selectedSiblings = selectedParent ? childrenOf(selectedParent) : [];
   const selectedIndex = selectedSiblings.findIndex((node) => node.id === selectedId);
-  const canMoveUp = selectedIndex > 0 && !selectedNode?.design?.locked;
-  const canMoveDown =
+  const parentDirection = selectedParent?.style.flexDirection ?? "column";
+  const horizontal = parentDirection.startsWith("row");
+  const reverse = parentDirection.endsWith("reverse");
+  const isFlowChild = selectedNode?.style.position !== "absolute";
+  const canMoveBefore = selectedIndex > 0 && !selectedNode?.design?.locked && isFlowChild;
+  const canMoveAfter =
     selectedIndex >= 0 &&
     selectedIndex < selectedSiblings.length - 1 &&
-    !selectedNode?.design?.locked;
+    !selectedNode?.design?.locked &&
+    isFlowChild;
   const canDeleteLayer =
     !!selectedId &&
     selectedId !== focusedRoot?.id &&
@@ -268,15 +321,9 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
     setSelection(remaining[0] ? [remaining[0].id] : []);
   }
 
-  function moveSelected(direction: -1 | 1) {
+  function moveSelected(offset: -1 | 1) {
     if (!focusedRoot || !selectedId) return;
-    const parent = getParent(focusedRoot, selectedId);
-    if (!parent) return;
-    const siblings = childrenOf(parent);
-    const from = siblings.findIndex((node) => node.id === selectedId);
-    const to = from + direction;
-    if (to < 0 || to >= siblings.length) return;
-    reorderChild(focusedRoot.id, parent.id, from, to);
+    reorderNode(focusedRoot.id, selectedId, offset);
   }
 
   function deleteSelected() {
@@ -301,15 +348,17 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
         overflowY: "auto",
       }}
     >
-      <Tabs tabs={["Screens", "Layers"]} active={tab} onSelect={setTab} />
-      {tab === "Screens" && (
-        <section style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <Eyebrow>Screens</Eyebrow>
-            <button type="button" style={panelIconButton} onClick={onAddFrame} title="Add screen">
-              <Plus size={16} aria-hidden="true" />
-            </button>
-          </div>
+      <NavigatorSection
+        label="Screens"
+        open={screensOpen}
+        onToggle={() => setScreensOpen((open) => !open)}
+        action={
+          <button type="button" style={panelIconButton} onClick={onAddFrame} title="Add screen">
+            <Plus size={16} aria-hidden="true" />
+          </button>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
           {rootList.map((root, index) => {
             const active = root.id === focusedRoot?.id;
             const locked = !!root.design?.locked;
@@ -341,11 +390,15 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
               </div>
             );
           })}
-        </section>
-      )}
-      {tab === "Layers" && (
-        <section style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
-          <Eyebrow>Layers</Eyebrow>
+        </div>
+      </NavigatorSection>
+      <hr className="m-0 border-0 border-t border-line-soft" aria-hidden="true" />
+      <NavigatorSection
+        label="Layers"
+        open={layersOpen}
+        onToggle={() => setLayersOpen((open) => !open)}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
           {focusedRoot ? (
             <>
               <div style={{ background: color.chrome2, borderRadius: radius.base, padding: space.xs }}>
@@ -359,20 +412,28 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                 <button
                   type="button"
                   style={panelIconButton}
-                  onClick={() => moveSelected(-1)}
-                  disabled={!canMoveUp}
-                  title="Move up"
+                  onClick={() => moveSelected(reverse ? 1 : -1)}
+                  disabled={reverse ? !canMoveAfter : !canMoveBefore}
+                  title={horizontal ? "Move left" : "Move up"}
                 >
-                  <ArrowUp size={16} aria-hidden="true" />
+                  {horizontal ? (
+                    <ArrowLeft size={16} aria-hidden="true" />
+                  ) : (
+                    <ArrowUp size={16} aria-hidden="true" />
+                  )}
                 </button>
                 <button
                   type="button"
                   style={panelIconButton}
-                  onClick={() => moveSelected(1)}
-                  disabled={!canMoveDown}
-                  title="Move down"
+                  onClick={() => moveSelected(reverse ? -1 : 1)}
+                  disabled={reverse ? !canMoveBefore : !canMoveAfter}
+                  title={horizontal ? "Move right" : "Move down"}
                 >
-                  <ArrowDown size={16} aria-hidden="true" />
+                  {horizontal ? (
+                    <ArrowRight size={16} aria-hidden="true" />
+                  ) : (
+                    <ArrowDown size={16} aria-hidden="true" />
+                  )}
                 </button>
                 <button
                   type="button"
@@ -390,8 +451,8 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
               Select a screen to inspect its layers.
             </p>
           )}
-        </section>
-      )}
+        </div>
+      </NavigatorSection>
     </aside>
   );
 }

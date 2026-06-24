@@ -76,7 +76,12 @@ export const layout = {
   workspaceMin: 960,
 } as const;
 
-export const theme = { color, font, text, space, radius, layout } as const;
+export const canvasGuide = {
+  line: 'var(--canvas-grid-line)',
+  step: 'var(--canvas-grid-step)',
+} as const;
+
+export const theme = { color, font, text, space, radius, layout, canvasGuide } as const;
 
 export type Theme = typeof theme;
 

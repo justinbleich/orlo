@@ -432,3 +432,13 @@ retarget to `@rn-canvas/document`.
 - Full workspace tests/build and live root-inspector, nested marquee/group, Layers multi-select,
   narrow-width, CSS-isolation, and field-undo regressions pass. Freeform versus Yoga-flow creation is
   the next design decision and was not changed.
+
+## Phase 2A interaction parity checkpoint
+
+- Figma/Paper parity is scoped to selection, hierarchy, direct manipulation, and keyboard fluency;
+  the product remains RN-first and does not adopt a vector-editor shape vocabulary.
+- RNFrame edge gestures pass through to tldraw geometry, while RN-node interaction remains owned by
+  the document overlay. Relative children reorder along their parent's visual flex axis with arrow
+  keys or axis-aware sidebar controls; absolute children remain positional.
+- Screens and Layers share one collapsible navigator, nested layer branches collapse independently,
+  and an active relative-child drag temporarily reveals the owning Yoga flow and child slots.

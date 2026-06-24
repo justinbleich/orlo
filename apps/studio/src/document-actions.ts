@@ -128,6 +128,23 @@ export function deleteNodes(rootId: NodeId, ids: NodeId[]): void {
   });
 }
 
+/** Move one relative child by one place in its parent's canonical child order. */
+export function reorderNode(rootId: NodeId, id: NodeId, offset: -1 | 1): boolean {
+  const store = useDocumentStore.getState();
+  const root = store.roots[rootId];
+  const node = root && findNode(root, id);
+  if (!root || !node || id === rootId || node.design?.locked) return false;
+  if (node.style.position === "absolute") return false;
+  const parent = getParent(root, id);
+  if (!parent) return false;
+  const siblings = childrenOf(parent);
+  const from = siblings.findIndex((sibling) => sibling.id === id);
+  const to = from + offset;
+  if (from < 0 || to < 0 || to >= siblings.length) return false;
+  store.reorderChild(rootId, parent.id, from, to);
+  return true;
+}
+
 /** Insert a primitive relative to the current document selection. Containers
  * receive it as a child; leaves receive it as their next sibling. */
 export function insertPrimitive(

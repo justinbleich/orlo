@@ -6,7 +6,7 @@ import {
   findNode,
   useDocumentStore,
 } from "@rn-canvas/document";
-import { deleteNodes, duplicateNodes } from "./document-actions";
+import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 
 function fixture() {
   return createNode("View", {
@@ -46,4 +46,31 @@ test("deleting an ancestor and descendant removes one subtree in one undo entry"
   assert.equal(state.past.length, 1);
   state.undo();
   assert.ok(findNode(useDocumentStore.getState().roots[root.id], "nested"));
+});
+
+test("reordering a flow child moves it once and records one undo entry", () => {
+  const root = fixture();
+  useDocumentStore.getState().loadRoots({ [root.id]: root }, ["sibling"]);
+
+  assert.equal(reorderNode(root.id, "sibling", -1), true);
+  const state = useDocumentStore.getState();
+
+  assert.deepEqual(childrenOf(state.roots[root.id]).map((node) => node.id), ["sibling", "group"]);
+  assert.equal(state.past.length, 1);
+});
+
+test("reordering ignores absolute and locked children", () => {
+  const root = createNode("View", {
+    id: "root",
+    children: [
+      createNode("View", { id: "absolute", style: { position: "absolute" } }),
+      createNode("View", { id: "locked", design: { locked: true } }),
+      createNode("View", { id: "free" }),
+    ],
+  });
+  useDocumentStore.getState().loadRoots({ [root.id]: root }, ["absolute"]);
+
+  assert.equal(reorderNode(root.id, "absolute", 1), false);
+  assert.equal(reorderNode(root.id, "locked", 1), false);
+  assert.equal(useDocumentStore.getState().past.length, 0);
 });

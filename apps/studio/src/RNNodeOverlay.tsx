@@ -11,7 +11,7 @@ import {
   type RNPrimitive,
 } from "@rn-canvas/document";
 import type { LayoutBox, LayoutReadyResult } from "@rn-canvas/render-web";
-import { color, radius } from "./studio-theme";
+import { canvasGuide, color, radius } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
 import { normalizeNodeSelection } from "./selection";
 
@@ -34,6 +34,8 @@ type Gesture = {
   moved: boolean;
   /** For a create gesture: the armed primitive being drawn. */
   createType?: RNPrimitive;
+  /** Parent flow shown while this child is being reordered. */
+  layoutGuide?: { box: LayoutBox; horizontal: boolean };
 };
 
 function contains(box: LayoutBox, point: Point): boolean {
@@ -111,6 +113,7 @@ export function RNNodeOverlay({
   const armedTool = useStudioStore((state) => state.armedTool);
   const [instanceKey, setInstanceKey] = useState<string | null>(null);
   const [marquee, setMarquee] = useState<Rect | null>(null);
+  const [layoutGuide, setLayoutGuide] = useState<Gesture["layoutGuide"]>(undefined);
   const [editing, setEditing] = useState<{ id: NodeId; value: string } | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -181,6 +184,13 @@ export function RNNodeOverlay({
       group,
       additive: false,
       moved: false,
+      layoutGuide:
+        kind === "move" && box.node.style.position !== "absolute" && parent
+          ? {
+              box: firstBox(result, parent.id) ?? result.layout,
+              horizontal: parent.style.flexDirection?.startsWith("row") ?? false,
+            }
+          : undefined,
     };
   }
 
@@ -259,6 +269,16 @@ export function RNNodeOverlay({
 
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (!active || gesture.current || editing) return;
+    const point = eventPoint(event);
+    const rootOnly = selection.length === 1 && selection[0] === root.id;
+    const frameEdge =
+      point.x <= 8 ||
+      point.y <= 8 ||
+      point.x >= result.width - 8 ||
+      point.y >= result.height - 8;
+    // tldraw owns frame geometry. Let its edge resize targets receive the event;
+    // the document overlay continues to own all inner-node interactions.
+    if (rootOnly && frameEdge) return;
     // The overlay owns every pointer interaction inside an active frame; stop
     // the event here so it never reaches tldraw underneath, which would
     // otherwise translate the (selected) frame while you drag a node.
@@ -269,7 +289,7 @@ export function RNNodeOverlay({
       return;
     }
     const additive = event.shiftKey || event.metaKey || event.ctrlKey;
-    const hit = hitTestLayout(result.layout, eventPoint(event));
+    const hit = hitTestLayout(result.layout, point);
 
     // Empty space or the frame background → marquee (or clear when not additive).
     if (!hit || hit.node.id === root.id) {
@@ -328,7 +348,10 @@ export function RNNodeOverlay({
     const dx = point.x - current.start.x;
     const dy = point.y - current.start.y;
     if (!current.moved && Math.hypot(dx, dy) < 3) return;
-    current.moved = true;
+    if (!current.moved) {
+      current.moved = true;
+      if (current.layoutGuide) setLayoutGuide(current.layoutGuide);
+    }
     const node = findNode(root, current.nodeId);
     if (!node) return;
     const store = useDocumentStore.getState();
@@ -376,6 +399,7 @@ export function RNNodeOverlay({
         ? createDrawnNode(current.createType, current.start, rectOf(current.start, eventPoint(event)))
         : null;
       setMarquee(null);
+      setLayoutGuide(undefined);
       gesture.current = null;
       useStudioStore.getState().setArmedTool(null);
       if (created && current.createType === "Text") {
@@ -411,6 +435,7 @@ export function RNNodeOverlay({
         }
       }
       setMarquee(null);
+      setLayoutGuide(undefined);
       gesture.current = null;
       return;
     }
@@ -443,6 +468,7 @@ export function RNNodeOverlay({
 
     if (cancel) useDocumentStore.getState().cancelInteraction();
     else useDocumentStore.getState().commitInteraction();
+    setLayoutGuide(undefined);
     gesture.current = null;
   }
 
@@ -521,6 +547,41 @@ export function RNNodeOverlay({
         cursor: armedTool ? "crosshair" : undefined,
       }}
     >
+      {/* Flex intent is normally invisible. Reveal the active parent and its
+          child slots only while a relative child is being reordered. */}
+      {active && layoutGuide && (
+        <div
+          data-testid="layout-reflow-guide"
+          style={{
+            position: "absolute",
+            left: layoutGuide.box.left,
+            top: layoutGuide.box.top,
+            width: layoutGuide.box.width,
+            height: layoutGuide.box.height,
+            border: `${canvasGuide.line} dashed ${color.accentLine}`,
+            backgroundImage: layoutGuide.horizontal
+              ? `repeating-linear-gradient(90deg, ${color.accentSoft} 0, ${color.accentSoft} ${canvasGuide.line}, transparent ${canvasGuide.line}, transparent ${canvasGuide.step})`
+              : `repeating-linear-gradient(0deg, ${color.accentSoft} 0, ${color.accentSoft} ${canvasGuide.line}, transparent ${canvasGuide.line}, transparent ${canvasGuide.step})`,
+            pointerEvents: "none",
+          }}
+        >
+          {layoutGuide.box.children.map((child) => (
+            <div
+              key={`${child.node.id}-${child.instanceKey}`}
+              style={{
+                position: "absolute",
+                left: child.left - layoutGuide.box.left,
+                top: child.top - layoutGuide.box.top,
+                width: child.width,
+                height: child.height,
+                outline: `${canvasGuide.line} solid ${color.accentLine}`,
+                background: color.accentSoft,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Selection outlines for every selected node in this frame. */}
       {active &&
         selectedBoxes.map((box, index) => (

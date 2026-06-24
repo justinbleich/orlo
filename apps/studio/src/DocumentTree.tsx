@@ -8,7 +8,7 @@ import {
   type Node,
   type NodeId,
 } from "@rn-canvas/document";
-import { EyeOff, LockOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, EyeOff, LockOpen } from "lucide-react";
 import { color, radius, space, text } from "./studio-theme";
 import { normalizeNodeSelection, selectionRange } from "./selection";
 
@@ -67,13 +67,17 @@ export function DocumentTree({
   const setSelection = useDocumentStore((state) => state.setSelection);
   const updateDesign = useDocumentStore((state) => state.updateDesign);
   const [over, setOver] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const selected = selectedIds.includes(node.id);
   const locked = !!node.design?.locked;
   const label = node.design?.name ?? node.type;
+  const children = childrenOf(node);
 
   return (
     <>
       <div
+        data-layer-id={node.id}
+        data-layer-type={node.type}
         draggable={!locked && depth > 0}
         onDragStart={(event) => {
           draggedNodeId = node.id;
@@ -125,6 +129,36 @@ export function DocumentTree({
           gap: space.xs,
         }}
       >
+        {children.length > 0 ? (
+          <button
+            type="button"
+            title={expanded ? "Collapse layer" : "Expand layer"}
+            aria-expanded={expanded}
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded((open) => !open);
+            }}
+            style={{
+              border: 0,
+              padding: 0,
+              width: 16,
+              height: 16,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "transparent",
+              color: "inherit",
+            }}
+          >
+            {expanded ? (
+              <ChevronDown size={13} aria-hidden="true" />
+            ) : (
+              <ChevronRight size={13} aria-hidden="true" />
+            )}
+          </button>
+        ) : (
+          <span style={{ width: 16, height: 16 }} aria-hidden="true" />
+        )}
         {locked && (
           <button
             type="button"
@@ -153,7 +187,7 @@ export function DocumentTree({
           {label} <span style={{ color: color.inkFaint }}>· {node.type}</span>
         </span>
       </div>
-      {childrenOf(node).map((child) => (
+      {expanded && children.map((child) => (
         <DocumentTree
           key={child.id}
           node={child}

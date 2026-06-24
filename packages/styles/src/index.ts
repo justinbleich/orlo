@@ -25,6 +25,13 @@ export {
 export { ALL_STYLE_KEYS } from "./keys";
 
 export {
+  sizingMode,
+  sizingPatch,
+  type PhysicalAxis,
+  type SizingMode,
+} from "./sizing";
+
+export {
   createCanvasTextMeasurer,
   DEFAULT_FONT_FAMILY,
   DEFAULT_FONT_METRICS,

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { validateStyle, assertStyle } from "./validate";
 import { pickVisualStyle } from "./yoga-map";
+import { sizingMode, sizingPatch } from "./sizing";
 import {
   createCanvasTextMeasurer,
   DEFAULT_FONT_FAMILY,
@@ -35,6 +36,29 @@ test("accepts auto only for Yoga-supported dimensions", () => {
   assert.equal(validateStyle({ padding: "auto" }).ok, false);
   assert.equal(validateStyle({ top: "auto" }).ok, false);
   assert.equal(validateStyle({ minWidth: "auto" }).ok, false);
+});
+
+test("main-axis sizing maps hug, fill, and fixed to Yoga flex styles", () => {
+  const parent = { flexDirection: "row" as const, alignItems: "center" as const };
+  assert.deepEqual(sizingPatch({ width: 80 }, "horizontal", "fill", parent), {
+    width: undefined,
+    flex: 1,
+    flexGrow: undefined,
+    flexBasis: undefined,
+  });
+  assert.equal(sizingMode({ flex: 1 }, "horizontal", parent), "fill");
+  assert.equal(sizingMode({}, "horizontal", parent), "hug");
+  assert.equal(sizingMode({ width: 80 }, "horizontal", parent), "fixed");
+});
+
+test("cross-axis hug overrides an implicitly stretching parent", () => {
+  const parent = { flexDirection: "column" as const };
+  assert.equal(sizingMode({}, "horizontal", parent), "fill");
+  assert.deepEqual(sizingPatch({}, "horizontal", "hug", parent), {
+    width: undefined,
+    alignSelf: "flex-start",
+  });
+  assert.equal(sizingMode({ alignSelf: "flex-start" }, "horizontal", parent), "hug");
 });
 
 test("rejects CSS shorthand", () => {

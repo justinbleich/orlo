@@ -29,12 +29,19 @@ import {
 import {
   canHaveChildren,
   findNode,
+  getParent,
   isContainer,
   useDocumentStore,
   type Node,
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
+import {
+  sizingMode,
+  sizingPatch,
+  type PhysicalAxis,
+  type SizingMode,
+} from "@rn-canvas/styles";
 import {
   deleteNodes,
   duplicateNodes,
@@ -218,6 +225,32 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   const position = enumVal<"relative" | "absolute">("position", "relative");
   const width = styleVal("width");
   const height = styleVal("height");
+  const sizingParent = primary.id === root.id ? undefined : getParent(root, primary.id);
+  const hasSharedFlowParent =
+    !!sizingParent &&
+    nodes.every(
+      (node) =>
+        node.style.position !== "absolute" &&
+        getParent(root, node.id)?.id === sizingParent.id,
+    );
+  const widthSizing = hasSharedFlowParent
+    ? shared(nodes, (node) => sizingMode(node.style, "horizontal", sizingParent.style))
+    : undefined;
+  const heightSizing = hasSharedFlowParent
+    ? shared(nodes, (node) => sizingMode(node.style, "vertical", sizingParent.style))
+    : undefined;
+
+  const setSizing = (axis: PhysicalAxis, mode: SizingMode, fixedValue?: number) =>
+    batch((id) => {
+      const node = findNode(root, id);
+      if (!node || !sizingParent) return;
+      updateStyle(root.id, id, sizingPatch(node.style, axis, mode, sizingParent.style, fixedValue));
+    });
+
+  const setDimension = (axis: PhysicalAxis, value: number | undefined) => {
+    if (hasSharedFlowParent) setSizing(axis, value === undefined ? "hug" : "fixed", value);
+    else setStyle(axis === "horizontal" ? "width" : "height", value);
+  };
 
   return (
     <Shell>
@@ -251,6 +284,32 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
             ]}
           />
         </Field>
+        {hasSharedFlowParent && (
+          <FieldGrid>
+            <Field label="Width sizing">
+              <SegmentedControl
+                value={isMixed(widthSizing) ? undefined : widthSizing}
+                onChange={(value) => setSizing("horizontal", value)}
+                options={[
+                  { value: "hug", content: "Hug", title: "Width: Hug" },
+                  { value: "fill", content: "Fill", title: "Width: Fill" },
+                  { value: "fixed", content: "Fixed", title: "Width: Fixed" },
+                ]}
+              />
+            </Field>
+            <Field label="Height sizing">
+              <SegmentedControl
+                value={isMixed(heightSizing) ? undefined : heightSizing}
+                onChange={(value) => setSizing("vertical", value)}
+                options={[
+                  { value: "hug", content: "Hug", title: "Height: Hug" },
+                  { value: "fill", content: "Fill", title: "Height: Fill" },
+                  { value: "fixed", content: "Fixed", title: "Height: Fixed" },
+                ]}
+              />
+            </Field>
+          </FieldGrid>
+        )}
         <FieldGrid>
           <Field label="Width">
             <NumberField
@@ -260,7 +319,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
               mixed={isMixed(width)}
               placeholder={isMixed(width) ? undefined : dimHint(width) ?? "auto"}
               min={0}
-              onChange={(v) => setStyle("width", v)}
+              onChange={(v) => setDimension("horizontal", v)}
             />
           </Field>
           <Field label="Height">
@@ -271,7 +330,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
               mixed={isMixed(height)}
               placeholder={isMixed(height) ? undefined : dimHint(height) ?? "auto"}
               min={0}
-              onChange={(v) => setStyle("height", v)}
+              onChange={(v) => setDimension("vertical", v)}
             />
           </Field>
         </FieldGrid>

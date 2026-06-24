@@ -66,6 +66,9 @@ importers:
       '@rn-canvas/render-web':
         specifier: workspace:*
         version: link:../../packages/render-web
+      '@rn-canvas/styles':
+        specifier: workspace:*
+        version: link:../../packages/styles
       html-to-image:
         specifier: 1.11.13
         version: 1.11.13

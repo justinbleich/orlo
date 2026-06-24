@@ -92,6 +92,17 @@ Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and
 - Eighteen Studio interaction tests and the full monorepo build pass at the 2A checkpoint. Phase 2B
   begins with authoritative auto-layout and per-child sizing semantics before snapping affordances.
 
+## Post-v1 Phase 2B status — active
+
+- The existing Auto Layout Inspector controls already write direction, gap, padding, alignment,
+  distribution, and wrap directly to validated RNStyle and Yoga.
+- `packages/styles` now owns axis-aware hug/fill/fixed semantics. Main-axis fill maps to flex growth;
+  cross-axis fill maps to stretch; cross-axis hug explicitly escapes an implicitly stretching parent.
+- The Inspector applies those shared semantics to relative siblings with one validated undo entry.
+  Absolute nodes remain outside the sizing-mode UI and retain explicit dimensions/coordinates.
+- Styles and Studio tests, explicit Studio typecheck, the full build, and live Fill → Undo → Hug
+  verification pass. Constraints and snapping/smart guides remain the next 2B slices.
+
 ## V1 release checkpoint
 
 - The live Studio built and organized two RNFrame documents, inserted and reordered an RN Text

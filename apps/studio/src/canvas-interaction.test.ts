@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createNode } from "@rn-canvas/document";
+import { childrenOf, createNode, type Node } from "@rn-canvas/document";
 import type { LayoutHitBox } from "./canvas-interaction";
 import {
   CREATION_MODEL,
@@ -15,14 +15,15 @@ import {
 
 function layoutTree(
   root: Node,
-  boxes: Record<string, Omit<LayoutHitBox, "node" | "children">>,
+  boxes: Record<string, Omit<LayoutHitBox, "node" | "children" | "instanceKey">>,
 ): LayoutHitBox {
   function walk(node: Node): LayoutHitBox {
     const geometry = boxes[node.id] ?? { left: 0, top: 0, width: 0, height: 0 };
     return {
       node,
+      instanceKey: node.id,
       ...geometry,
-      children: (node.children ?? []).map(walk),
+      children: childrenOf(node).map(walk),
     };
   }
   return walk(root);

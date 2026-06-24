@@ -107,10 +107,10 @@ the canvas within the known fidelity gap.
 
 ### Phase 2B — Auto-layout, alignment & smart canvas
 **Goal:** real responsive layout, not just fixed coordinates.
-- [ ] Auto-layout panel: direction, gap, padding, alignment, distribution, wrap.
-- [ ] Per-child sizing: hug / fill / fixed.
+- [x] Auto-layout panel: direction, gap, padding, alignment, distribution, wrap.
+- [x] Per-child sizing: hug / fill / fixed.
 - [ ] Absolute mode + constraints for non-auto-layout containers.
-- [ ] **Mode-aware drag** (invariant 3): reflow inside flex, move when absolute.
+- [x] **Mode-aware drag** (invariant 3): reflow inside flex, move when absolute.
 - [ ] Align & distribute actions; snapping, smart guides, spacing hints.
 - [ ] Codegen emits correct flex `StyleSheet` for all of the above.
 

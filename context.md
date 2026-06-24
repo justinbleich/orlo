@@ -451,3 +451,16 @@ retarget to `@rn-canvas/document`.
   Multi-node flow reordering and creation are one document undo transaction.
 - Phase 2A passes with eighteen Studio interaction tests and the full monorepo build. Phase 2B starts
   from sizing/layout semantics, then adds snapping and smart-canvas affordances.
+
+## Phase 2B sizing checkpoint
+
+- Container auto-layout controls were already document-direct and complete for direction, gap,
+  padding, alignment, distribution, and wrap.
+- `packages/styles` is the authority for physical-axis hug/fill/fixed translation. Main-axis Fill
+  uses flex growth; cross-axis Fill uses stretch; Hug removes stale dimensions/flex properties and
+  overrides an implicitly stretching cross axis when required.
+- The Inspector exposes Width and Height sizing only for relative siblings under one shared parent.
+  Every change routes through validated document actions and one undo entry; codegen serializes the
+  resulting RNStyle without a second semantic mapping.
+- The explicit Studio TypeScript gate also fixed latent type errors in the extracted Phase 2A
+  interaction tests. Constraints, alignment actions, snapping, and spacing hints remain open.

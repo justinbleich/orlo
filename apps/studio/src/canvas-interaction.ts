@@ -24,6 +24,7 @@ export type Rect = { x0: number; y0: number; x1: number; y1: number };
 
 export type LayoutHitBox = {
   node: Node;
+  instanceKey: string;
   left: number;
   top: number;
   width: number;

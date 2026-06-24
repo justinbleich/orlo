@@ -258,6 +258,10 @@ export function RNNodeOverlay({
 
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (!active || gesture.current || editing) return;
+    // The overlay owns every pointer interaction inside an active frame; stop
+    // the event here so it never reaches tldraw underneath, which would
+    // otherwise translate the (selected) frame while you drag a node.
+    event.stopPropagation();
     // An armed creation tool turns the next drag into a draw-to-create gesture.
     if (armedTool) {
       beginCreate(event, armedTool);
@@ -310,6 +314,8 @@ export function RNNodeOverlay({
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const current = gesture.current;
     if (!current || current.pointerId !== event.pointerId) return;
+    // Keep drag moves off tldraw so it can't translate the frame underneath.
+    event.stopPropagation();
     const point = eventPoint(event);
 
     if (current.kind === "marquee" || current.kind === "create") {

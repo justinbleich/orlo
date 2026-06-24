@@ -8,7 +8,7 @@ import {
   type Node,
   type NodeId,
 } from "@rn-canvas/document";
-import { ChevronDown, ChevronRight, EyeOff, LockOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, Component, EyeOff, LockOpen } from "lucide-react";
 import { color, radius, space, text } from "./studio-theme";
 import { normalizeNodeSelection, selectionRange } from "./selection";
 
@@ -66,11 +66,16 @@ export function DocumentTree({
 }) {
   const setSelection = useDocumentStore((state) => state.setSelection);
   const updateDesign = useDocumentStore((state) => state.updateDesign);
+  const components = useDocumentStore((state) => state.components);
   const [over, setOver] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const selected = selectedIds.includes(node.id);
   const locked = !!node.design?.locked;
-  const label = node.design?.name ?? node.type;
+  const isInstance = node.type === "ComponentInstance";
+  const componentName =
+    node.type === "ComponentInstance" ? components[node.componentId]?.name : undefined;
+  const label = node.design?.name ?? componentName ?? node.type;
+  const typeHint = isInstance ? "instance" : node.type;
   const children = childrenOf(node);
 
   return (
@@ -183,8 +188,11 @@ export function DocumentTree({
           </button>
         )}
         {node.design?.hidden && <EyeOff size={13} aria-label="Hidden" />}
+        {isInstance && (
+          <Component size={13} aria-hidden="true" style={{ color: color.accent, flexShrink: 0 }} />
+        )}
         <span>
-          {label} <span style={{ color: color.inkFaint }}>· {node.type}</span>
+          {label} <span style={{ color: color.inkFaint }}>· {typeHint}</span>
         </span>
       </div>
       {expanded && children.map((child) => (

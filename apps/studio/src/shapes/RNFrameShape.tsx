@@ -145,9 +145,11 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
     const editor = useEditor();
     const [layoutResult, setLayoutResult] = useState<LayoutReadyResult | null>(null);
     const setStudioLayout = useStudioStore((state) => state.setLayout);
-    // While a creation tool is armed, every frame becomes a live drop target —
-    // the cursor (not a prior selection) picks which screen receives the node.
-    const armed = useStudioStore((state) => state.armedTool !== null);
+    // While a creation tool or component is armed, every frame becomes a live drop
+    // target — the cursor (not a prior selection) picks which screen receives it.
+    const armed = useStudioStore(
+      (state) => state.armedTool !== null || state.armedComponentId !== null,
+    );
     const onLayoutReady = useCallback((result: LayoutReadyResult) => {
       setLayoutResult(result);
       setStudioLayout(shape.props.rootId, result);

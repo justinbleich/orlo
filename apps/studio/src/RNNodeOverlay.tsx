@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import {
   childrenOf,
+  createInstance,
   findNode,
   getParent,
   ownerInstanceId,
@@ -49,6 +50,8 @@ type Gesture = {
   moved: boolean;
   /** For a create gesture: the armed primitive being drawn. */
   createType?: RNPrimitive;
+  /** For a create gesture: the armed component being placed as an instance. */
+  createComponentId?: string;
   /** Parent flow shown while this child is being reordered. */
   layoutGuide?: { box: LayoutBox; horizontal: boolean };
   snapBounds?: SnapRect;
@@ -96,6 +99,8 @@ export function RNNodeOverlay({
 }) {
   const selection = useDocumentStore((state) => state.selection);
   const armedTool = useStudioStore((state) => state.armedTool);
+  const armedComponentId = useStudioStore((state) => state.armedComponentId);
+  const armed = armedTool !== null || armedComponentId !== null;
   const [instanceKey, setInstanceKey] = useState<string | null>(null);
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [layoutGuide, setLayoutGuide] = useState<Gesture["layoutGuide"]>(undefined);
@@ -338,13 +343,14 @@ export function RNNodeOverlay({
     setEditing(null);
   }
 
-  function beginCreate(event: React.PointerEvent<HTMLDivElement>, tool: RNPrimitive) {
+  function beginCreate(event: React.PointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
     const overlay = overlayRef.current ?? event.currentTarget;
     try { overlay.setPointerCapture(event.pointerId); } catch { /* non-fatal */ }
     overlay.focus();
     const start = eventPoint(event);
+    const studio = useStudioStore.getState();
     gesture.current = {
       kind: "create",
       pointerId: event.pointerId,
@@ -356,7 +362,8 @@ export function RNNodeOverlay({
       flexBlock: [],
       additive: false,
       moved: false,
-      createType: tool,
+      createType: studio.armedTool ?? undefined,
+      createComponentId: studio.armedComponentId ?? undefined,
       snapTargets: [],
       spacingTargets: [],
     };
@@ -379,9 +386,9 @@ export function RNNodeOverlay({
     // the event here so it never reaches tldraw underneath, which would
     // otherwise translate the (selected) frame while you drag a node.
     event.stopPropagation();
-    // An armed creation tool turns the next drag into a draw-to-create gesture.
-    if (armedTool) {
-      beginCreate(event, armedTool);
+    // An armed primitive or component turns the next drag into a create gesture.
+    if (armed) {
+      beginCreate(event);
       return;
     }
     const additive = event.shiftKey || event.metaKey || event.ctrlKey;
@@ -518,20 +525,24 @@ export function RNNodeOverlay({
       setMarquee(null);
       setLayoutGuide(undefined);
       gesture.current = null;
-      useStudioStore.getState().setArmedTool(null);
-      if (!cancel && current.createType) {
+      useStudioStore.getState().setArmedTool(null); // also clears any armed component
+      if (!cancel && (current.createType || current.createComponentId)) {
         const store = useDocumentStore.getState();
         store.beginInteraction();
         try {
-          const created = createDrawnNode(
-            current.createType,
-            current.start,
-            rectOf(current.start, eventPoint(event)),
-          );
-          store.commitInteraction();
-          if (created && current.createType === "Text") {
-            setEditing({ id: created, value: "Text" });
+          if (current.createComponentId) {
+            createDrawnComponent(current.createComponentId, current.start);
+          } else if (current.createType) {
+            const created = createDrawnNode(
+              current.createType,
+              current.start,
+              rectOf(current.start, eventPoint(event)),
+            );
+            if (created && current.createType === "Text") {
+              setEditing({ id: created, value: "Text" });
+            }
           }
+          store.commitInteraction();
         } catch {
           store.cancelInteraction();
         }
@@ -633,6 +644,26 @@ export function RNNodeOverlay({
     }
   }
 
+  /** Place an instance of `componentId` at the drop index under the container at `start`. */
+  function createDrawnComponent(componentId: string, start: Point): NodeId | null {
+    const target = containerAt(root, result.layout, start);
+    try {
+      const node = createInstance(componentId);
+      const siblings = childrenOf(target.node).flatMap((sibling) => {
+        const box = boxOf(sibling.id);
+        return box ? [{ id: sibling.id, box }] : [];
+      });
+      const horizontal = flexFlowHorizontal(target.node.style.flexDirection);
+      const index = flexInsertIndex(siblings, start, horizontal);
+      const store = useDocumentStore.getState();
+      store.insertChild(root.id, target.node.id, node, index);
+      store.setSelection([node.id]);
+      return node.id;
+    } catch {
+      return null;
+    }
+  }
+
   const handles: ResizeHandle[] = ["nw", "ne", "se", "sw"];
   const handlePosition: Record<ResizeHandle, React.CSSProperties> = {
     nw: { left: -4, top: -4, cursor: "nwse-resize" },
@@ -651,7 +682,7 @@ export function RNNodeOverlay({
       onPointerMove={onPointerMove}
       onPointerUp={(event) => finishGesture(event)}
       onPointerCancel={(event) => finishGesture(event, true)}
-      onPointerEnter={() => { if (armedTool) setArmedHover(true); }}
+      onPointerEnter={() => { if (armed) setArmedHover(true); }}
       onPointerLeave={() => setArmedHover(false)}
       onDoubleClick={onDoubleClick}
       onKeyDown={(event) => {
@@ -662,12 +693,12 @@ export function RNNodeOverlay({
         inset: 0,
         pointerEvents: active ? "auto" : "none",
         outline: "none",
-        cursor: armedTool ? "crosshair" : undefined,
+        cursor: armed ? "crosshair" : undefined,
       }}
     >
-      {/* "Drop here" affordance: while a tool is armed and the cursor is over this
-          frame, ring the screen so the insertion target is unambiguous (Figma-like). */}
-      {active && armedTool && armedHover && (
+      {/* "Drop here" affordance: while a tool/component is armed and the cursor is
+          over this frame, ring the screen so the insertion target is unambiguous. */}
+      {active && armed && armedHover && (
         <div
           data-testid="armed-drop-target"
           style={{

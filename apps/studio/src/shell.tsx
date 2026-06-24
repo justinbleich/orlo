@@ -11,6 +11,7 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  Component,
   Frame,
   Image,
   List,
@@ -42,6 +43,19 @@ import { deleteNodes, reorderNode } from "./document-actions";
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
+}
+
+/** A PascalCase identifier for a component name (falls back to "Component"). */
+function pascalCase(input: string): string {
+  const pascal = input
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join("");
+  if (!pascal) return "Component";
+  return /^[A-Z]/.test(pascal) ? pascal : `C${pascal}`;
 }
 
 /** A quiet segmented tab bar used by the left panel and inspector. */
@@ -177,7 +191,12 @@ function InsertMenu({
   onArm: (type: RNPrimitive) => void;
   disabled: boolean;
 }) {
-  const armedInMenu = INSERT_ITEMS.some((i) => i.type === armedTool);
+  const components = useDocumentStore((s) => s.components);
+  const armedComponentId = useStudioStore((s) => s.armedComponentId);
+  const setArmedComponent = useStudioStore((s) => s.setArmedComponent);
+  const componentList = Object.values(components);
+  const armedInMenu =
+    INSERT_ITEMS.some((i) => i.type === armedTool) || armedComponentId !== null;
   return (
     <Menu.Root>
       <Menu.Trigger
@@ -212,6 +231,24 @@ function InsertMenu({
                 </Menu.Item>
               );
             })}
+            {componentList.length > 0 && (
+              <>
+                <div className="eyebrow px-sm py-xs">Components</div>
+                {componentList.map((comp) => (
+                  <Menu.Item
+                    key={comp.id}
+                    onClick={() => setArmedComponent(comp.id)}
+                    className={cn(
+                      "flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
+                      comp.id === armedComponentId ? "text-accent" : "text-ink-dim",
+                    )}
+                  >
+                    <Component size={15} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />
+                    {comp.name}
+                  </Menu.Item>
+                ))}
+              </>
+            )}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>
@@ -286,10 +323,16 @@ function NavigatorSection({
 export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
   const [screensOpen, setScreensOpen] = useState(true);
   const [layersOpen, setLayersOpen] = useState(true);
+  const [componentsOpen, setComponentsOpen] = useState(true);
   const roots = useDocumentStore((state) => state.roots);
   const selection = useDocumentStore((state) => state.selection);
   const setSelection = useDocumentStore((state) => state.setSelection);
   const removeRoot = useDocumentStore((state) => state.removeRoot);
+  const components = useDocumentStore((state) => state.components);
+  const promoteToComponent = useDocumentStore((state) => state.promoteToComponent);
+  const removeComponent = useDocumentStore((state) => state.removeComponent);
+  const armedComponentId = useStudioStore((state) => state.armedComponentId);
+  const setArmedComponent = useStudioStore((state) => state.setArmedComponent);
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -313,6 +356,21 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
     !!selectedId &&
     selectedId !== focusedRoot?.id &&
     !selectedNode?.design?.locked;
+  // A component can be made from exactly one non-root, non-instance, unlocked node.
+  const canMakeComponent =
+    selection.length === 1 &&
+    canDeleteLayer &&
+    selectedNode?.type !== "ComponentInstance";
+  const componentList = Object.values(components);
+
+  function createComponent() {
+    if (!focusedRoot || !selectedId || !selectedNode) return;
+    const base = pascalCase(selectedNode.design?.name ?? selectedNode.type);
+    const taken = new Set(componentList.map((comp) => comp.name));
+    let name = base;
+    for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
+    promoteToComponent(focusedRoot.id, selectedId, name);
+  }
 
   function deleteScreen(rootId: NodeId) {
     const remaining = rootList.filter((root) => root.id !== rootId);
@@ -435,6 +493,15 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                 <button
                   type="button"
                   style={panelIconButton}
+                  onClick={createComponent}
+                  disabled={!canMakeComponent}
+                  title="Create component"
+                >
+                  <Component size={15} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  style={panelIconButton}
                   onClick={deleteSelected}
                   disabled={!canDeleteLayer}
                   title="Delete layer"
@@ -449,6 +516,54 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
             </p>
           )}
         </div>
+      </NavigatorSection>
+      <hr className="m-0 border-0 border-t border-line-soft" aria-hidden="true" />
+      <NavigatorSection
+        label="Components"
+        open={componentsOpen}
+        onToggle={() => setComponentsOpen((open) => !open)}
+      >
+        {componentList.length === 0 ? (
+          <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
+            Select a layer and “Create component” to add one.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+            {componentList.map((comp) => {
+              const armed = armedComponentId === comp.id;
+              return (
+                <div key={comp.id} style={{ display: "flex", gap: space.xs }}>
+                  <button
+                    type="button"
+                    onClick={() => setArmedComponent(armed ? null : comp.id)}
+                    title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
+                    style={{
+                      ...panelButton,
+                      flex: 1,
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: space.xs,
+                      background: armed ? color.accent : color.chrome2,
+                      color: color.ink,
+                    }}
+                  >
+                    <Component size={14} aria-hidden="true" />
+                    {comp.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeComponent(comp.id)}
+                    style={panelIconButton}
+                    title="Delete component"
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </NavigatorSection>
     </aside>
   );

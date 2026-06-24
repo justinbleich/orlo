@@ -556,3 +556,22 @@ retarget to `@rn-canvas/document`.
   namespaced ids and per-instance text overrides); document 40 / render-web 3 / studio 25 pass; tsc clean;
   the live no-instance app renders unchanged with no console errors. A full click-through of atomic
   selection waits on slice 3's creation UI (no way to author an instance in-app yet).
+
+### Slice 3a (authoring UI: create, list, place)
+
+- Studio store gained `armedComponentId` + `setArmedComponent`, mutually exclusive with `armedTool`
+  (arming one disarms the other). The cursor-aware create path now handles either: `RNNodeOverlay`
+  reads `armed = armedTool || armedComponentId`, `beginCreate` records `createComponentId`, and the
+  create-gesture finish places an instance via `createDrawnComponent` (build `createInstance` →
+  `insertChild` at the cursor-resolved container/flex index → select). `RNFrameShape.armed` includes
+  components so every frame is a live drop target.
+- Left panel: a **Components** `NavigatorSection` lists the registry (arm-to-place toggle + delete),
+  and a **Create component** action in the layer-actions row promotes a single non-root/non-instance
+  selection (auto PascalCase name, de-duplicated). Defined components also appear in the rail's Insert
+  ("+") menu, armable cursor-first. The Library (search/browse) stays Phase 2D.
+- `DocumentTree` shows instances with a `Component` badge and the definition's name (`Name · instance`).
+- Verified live end-to-end: promote a Text → it becomes an instance + lists under Components; arm it →
+  draw a second instance into the frame; both render (expanded from the template); clicking instance
+  content on canvas selects the instance atomically (Inspector reads `COMPONENTINSTANCE`). No console
+  errors; studio 25 tests pass; tsc clean. Per-instance override editors + expose-prop UI are slice 3b
+  (the Inspector currently shows the generic node panel for an instance).

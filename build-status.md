@@ -102,6 +102,13 @@ Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and
   Absolute nodes remain outside the sizing-mode UI and retain explicit dimensions/coordinates.
 - Styles and Studio tests, explicit Studio typecheck, the full build, and live Fill → Undo → Hug
   verification pass. Constraints and snapping/smart guides remain the next 2B slices.
+- Absolute children now expose RN-native left/right and top/bottom pinning. Switching among start,
+  end, and stretch preserves the current Yoga box (including parent border insets); manual edge
+  edits canonically add/remove the corresponding explicit width or height.
+- The latest per-frame Yoga snapshot is available only as derived Studio UI state so constraint
+  conversions can preserve geometry. It is never document state, undo state, or sidecar metadata.
+- Center/scale approximations remain deliberately open; snapping, align/distribute, and spacing
+  hints are still the next 2B canvas slice.
 
 ## V1 release checkpoint
 

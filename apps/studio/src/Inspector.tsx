@@ -37,8 +37,12 @@ import {
   type RNPrimitive,
 } from "@rn-canvas/document";
 import {
+  absoluteConstraintMode,
+  absoluteConstraintPatch,
+  absoluteEdgePatch,
   sizingMode,
   sizingPatch,
+  type AbsoluteConstraintMode,
   type PhysicalAxis,
   type SizingMode,
 } from "@rn-canvas/styles";
@@ -61,6 +65,7 @@ import {
   TextField,
 } from "./studio-ui";
 import { normalizeNodeSelection, shareParent } from "./selection";
+import { useStudioStore } from "./studio-store";
 
 const TYPE_ICON: Record<RNPrimitive, LucideIcon> = {
   View: Square,
@@ -127,6 +132,9 @@ function dimHint(value: unknown): string | undefined {
 
 export function Inspector({ rootId }: { rootId: NodeId | null }) {
   const root = useDocumentStore((s) => (rootId ? s.roots[rootId] : undefined));
+  const layoutResult = useStudioStore((state) =>
+    rootId ? state.layouts[rootId] : undefined,
+  );
   const selection = useDocumentStore((s) => s.selection);
   const updateProps = useDocumentStore((s) => s.updateProps);
   const updateStyle = useDocumentStore((s) => s.updateStyle);
@@ -251,6 +259,53 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
     if (hasSharedFlowParent) setSizing(axis, value === undefined ? "hug" : "fixed", value);
     else setStyle(axis === "horizontal" ? "width" : "height", value);
   };
+  const nodeLayout = layoutResult?.snapshot.get(primary.id)?.[0];
+  const parentLayout = sizingParent
+    ? layoutResult?.snapshot.get(sizingParent.id)?.[0]
+    : undefined;
+  const canConstrain =
+    !multi && position === "absolute" && !!sizingParent && !!nodeLayout && !!parentLayout;
+  const setConstraint = (axis: PhysicalAxis, mode: AbsoluteConstraintMode) => {
+    if (!canConstrain || !nodeLayout || !parentLayout) return;
+    const horizontal = axis === "horizontal";
+    updateStyle(
+      root.id,
+      primary.id,
+      absoluteConstraintPatch(axis, mode, {
+        parentStart: horizontal ? parentLayout.left : parentLayout.top,
+        parentSize: horizontal ? parentLayout.width : parentLayout.height,
+        parentStartInset: horizontal
+          ? sizingParent.style.borderLeftWidth ?? sizingParent.style.borderWidth
+          : sizingParent.style.borderTopWidth ?? sizingParent.style.borderWidth,
+        parentEndInset: horizontal
+          ? sizingParent.style.borderRightWidth ?? sizingParent.style.borderWidth
+          : sizingParent.style.borderBottomWidth ?? sizingParent.style.borderWidth,
+        start: horizontal ? nodeLayout.left : nodeLayout.top,
+        size: horizontal ? nodeLayout.width : nodeLayout.height,
+      }),
+    );
+  };
+  const setAbsoluteEdge = (
+    axis: PhysicalAxis,
+    edge: "start" | "end",
+    value: number | undefined,
+  ) =>
+    batch((id) => {
+      const node = findNode(root, id);
+      if (!node) return;
+      const box = layoutResult?.snapshot.get(id)?.[0];
+      updateStyle(
+        root.id,
+        id,
+        absoluteEdgePatch(
+          node.style,
+          axis,
+          edge,
+          value,
+          box ? (axis === "horizontal" ? box.width : box.height) : undefined,
+        ),
+      );
+    });
 
   return (
     <Shell>
@@ -335,14 +390,50 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </Field>
         </FieldGrid>
         {position === "absolute" && (
-          <FieldGrid>
-            <Field label="Left">
-              <NumberField {...editLifecycle} label="L" {...num("left")} onChange={(v) => setStyle("left", v)} />
-            </Field>
-            <Field label="Top">
-              <NumberField {...editLifecycle} label="T" {...num("top")} onChange={(v) => setStyle("top", v)} />
-            </Field>
-          </FieldGrid>
+          <>
+            {canConstrain && (
+              <>
+                <Field label="Horizontal constraint">
+                  <SegmentedControl
+                    value={absoluteConstraintMode(primary.style, "horizontal")}
+                    onChange={(value) => setConstraint("horizontal", value)}
+                    options={[
+                      { value: "start", content: "Left", title: "Pin left" },
+                      { value: "end", content: "Right", title: "Pin right" },
+                      { value: "stretch", content: "Stretch", title: "Pin left and right" },
+                    ]}
+                  />
+                </Field>
+                <Field label="Vertical constraint">
+                  <SegmentedControl
+                    value={absoluteConstraintMode(primary.style, "vertical")}
+                    onChange={(value) => setConstraint("vertical", value)}
+                    options={[
+                      { value: "start", content: "Top", title: "Pin top" },
+                      { value: "end", content: "Bottom", title: "Pin bottom" },
+                      { value: "stretch", content: "Stretch", title: "Pin top and bottom" },
+                    ]}
+                  />
+                </Field>
+              </>
+            )}
+            <FieldGrid>
+              <Field label="Left">
+                <NumberField {...editLifecycle} label="L" {...num("left")} onChange={(v) => setAbsoluteEdge("horizontal", "start", v)} />
+              </Field>
+              <Field label="Right">
+                <NumberField {...editLifecycle} label="R" {...num("right")} onChange={(v) => setAbsoluteEdge("horizontal", "end", v)} />
+              </Field>
+            </FieldGrid>
+            <FieldGrid>
+              <Field label="Top">
+                <NumberField {...editLifecycle} label="T" {...num("top")} onChange={(v) => setAbsoluteEdge("vertical", "start", v)} />
+              </Field>
+              <Field label="Bottom">
+                <NumberField {...editLifecycle} label="B" {...num("bottom")} onChange={(v) => setAbsoluteEdge("vertical", "end", v)} />
+              </Field>
+            </FieldGrid>
+          </>
         )}
         <Field label="Padding">
           <NumberField {...editLifecycle} label="P" {...num("padding")} min={0} onChange={(v) => setStyle("padding", v)} />

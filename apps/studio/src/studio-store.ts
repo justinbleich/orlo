@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { RNPrimitive } from "@rn-canvas/document";
+import type { NodeId, RNPrimitive } from "@rn-canvas/document";
+import type { LayoutReadyResult } from "@rn-canvas/render-web";
 
 /**
  * Studio UI state that isn't part of the document — kept separate from the
@@ -11,9 +12,15 @@ interface StudioState {
   /** A creation tool armed from the rail; the next canvas drag draws this node. */
   armedTool: RNPrimitive | null;
   setArmedTool(tool: RNPrimitive | null): void;
+  /** Latest Yoga result per live frame; derived UI data, never serialized. */
+  layouts: Record<NodeId, LayoutReadyResult>;
+  setLayout(rootId: NodeId, result: LayoutReadyResult): void;
 }
 
 export const useStudioStore = create<StudioState>((set) => ({
   armedTool: null,
   setArmedTool: (armedTool) => set({ armedTool }),
+  layouts: {},
+  setLayout: (rootId, result) =>
+    set((state) => ({ layouts: { ...state.layouts, [rootId]: result } })),
 }));

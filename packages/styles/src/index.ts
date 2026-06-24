@@ -32,6 +32,15 @@ export {
 } from "./sizing";
 
 export {
+  absoluteConstraintMode,
+  absoluteConstraintPatch,
+  absoluteEdgePatch,
+  type AbsoluteConstraintMode,
+  type AbsoluteEdge,
+  type AxisGeometry,
+} from "./constraints";
+
+export {
   createCanvasTextMeasurer,
   DEFAULT_FONT_FAMILY,
   DEFAULT_FONT_METRICS,

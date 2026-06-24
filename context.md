@@ -464,3 +464,14 @@ retarget to `@rn-canvas/document`.
   resulting RNStyle without a second semantic mapping.
 - The explicit Studio TypeScript gate also fixed latent type errors in the extracted Phase 2A
   interaction tests. Constraints, alignment actions, snapping, and spacing hints remain open.
+
+## Phase 2B edge-constraints checkpoint
+
+- Absolute constraints are RN edge combinations, not separate metadata: left/top, right/bottom, or
+  opposing edges with the explicit axis size removed for stretch.
+- Constraint-mode conversion consumes the latest derived Yoga geometry and parent border insets so
+  changing pins preserves the visible child rectangle. The layout snapshot lives only in the Studio
+  UI store and never enters the canonical document or serialization.
+- Manual edge edits share the same canonical rules: adding the opposite pin removes width/height;
+  removing one pin restores the current fixed size. Center/scale approximations remain deferred
+  until their hit-testing and RN-runtime behavior can be represented without drift.

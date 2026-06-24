@@ -16,6 +16,7 @@ import {
   type LayoutReadyResult,
 } from "@rn-canvas/render-web";
 import { RNNodeOverlay } from "../RNNodeOverlay";
+import { useStudioStore } from "../studio-store";
 
 // Below this on-screen width the rnw detail isn't legible, so we render a cheap
 // proxy instead of running Yoga + react-native-web. (PRD §7.2 LOD / §8: keep only a
@@ -125,9 +126,11 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
   override component(shape: RNFrameShape) {
     const editor = useEditor();
     const [layoutResult, setLayoutResult] = useState<LayoutReadyResult | null>(null);
+    const setStudioLayout = useStudioStore((state) => state.setLayout);
     const onLayoutReady = useCallback((result: LayoutReadyResult) => {
       setLayoutResult(result);
-    }, []);
+      setStudioLayout(shape.props.rootId, result);
+    }, [setStudioLayout, shape.props.rootId]);
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
     // A frame is "live" (full render) when selected or large enough on screen;

@@ -4,6 +4,11 @@ import { validateStyle, assertStyle } from "./validate";
 import { pickVisualStyle } from "./yoga-map";
 import { sizingMode, sizingPatch } from "./sizing";
 import {
+  absoluteConstraintMode,
+  absoluteConstraintPatch,
+  absoluteEdgePatch,
+} from "./constraints";
+import {
   createCanvasTextMeasurer,
   DEFAULT_FONT_FAMILY,
   DEFAULT_FONT_METRICS,
@@ -59,6 +64,42 @@ test("cross-axis hug overrides an implicitly stretching parent", () => {
     alignSelf: "flex-start",
   });
   assert.equal(sizingMode({ alignSelf: "flex-start" }, "horizontal", parent), "hug");
+});
+
+test("absolute edge constraints preserve the current geometry", () => {
+  const geometry = { parentStart: 20, parentSize: 300, start: 70, size: 80 };
+  assert.deepEqual(absoluteConstraintPatch("horizontal", "start", geometry), {
+    left: 50,
+    right: undefined,
+    width: 80,
+  });
+  assert.deepEqual(absoluteConstraintPatch("horizontal", "end", geometry), {
+    left: undefined,
+    right: 170,
+    width: 80,
+  });
+  assert.deepEqual(absoluteConstraintPatch("horizontal", "stretch", geometry), {
+    left: 50,
+    right: 170,
+    width: undefined,
+  });
+});
+
+test("absolute constraint mode reads canonical RN edge combinations", () => {
+  assert.equal(absoluteConstraintMode({ left: 12, width: 80 }, "horizontal"), "start");
+  assert.equal(absoluteConstraintMode({ right: 12, width: 80 }, "horizontal"), "end");
+  assert.equal(absoluteConstraintMode({ left: 12, right: 12 }, "horizontal"), "stretch");
+});
+
+test("manual absolute edge edits enter and leave stretch canonically", () => {
+  assert.deepEqual(absoluteEdgePatch({ left: 10, width: 80 }, "horizontal", "end", 20), {
+    right: 20,
+    width: undefined,
+  });
+  assert.deepEqual(
+    absoluteEdgePatch({ left: 10, right: 20 }, "horizontal", "end", undefined, 270),
+    { right: undefined, width: 270 },
+  );
 });
 
 test("rejects CSS shorthand", () => {

@@ -25,9 +25,11 @@ import { reorderFlexBlock } from "./document-actions";
 import { canvasGuide, color, radius } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
 import { normalizeNodeSelection } from "./selection";
+import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
+import { smartSnap, type SnapRect } from "./canvas-snap";
 
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
-type GroupMember = { nodeId: NodeId; left: number; top: number };
+type GroupMember = { nodeId: NodeId; left: number; top: number; width: number; height: number; style: Node["style"] };
 type Gesture = {
   kind: "move" | "resize" | "marquee" | "create";
   pointerId: number;
@@ -47,6 +49,8 @@ type Gesture = {
   createType?: RNPrimitive;
   /** Parent flow shown while this child is being reordered. */
   layoutGuide?: { box: LayoutBox; horizontal: boolean };
+  snapBounds?: SnapRect;
+  snapTargets: SnapRect[];
 };
 
 /** Every descendant box (excludes the root box itself). */
@@ -95,6 +99,7 @@ export function RNNodeOverlay({
   const [instanceKey, setInstanceKey] = useState<string | null>(null);
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [layoutGuide, setLayoutGuide] = useState<Gesture["layoutGuide"]>(undefined);
+  const [snapGuides, setSnapGuides] = useState<{ x?: number; y?: number }>({});
   const [editing, setEditing] = useState<{ id: NodeId; value: string } | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -149,9 +154,62 @@ export function RNNodeOverlay({
       const node = findNode(root, id);
       const nodeBox = firstBox(result, id);
       if (node?.style.position === "absolute" && nodeBox) {
-        group.push({ nodeId: id, left: nodeBox.left, top: nodeBox.top });
+        const memberParent = getParent(root, id);
+        const memberParentBox = memberParent ? firstBox(result, memberParent.id) : undefined;
+        const borderLeft = memberParent?.style.borderLeftWidth ?? memberParent?.style.borderWidth ?? 0;
+        const borderTop = memberParent?.style.borderTopWidth ?? memberParent?.style.borderWidth ?? 0;
+        const style = { ...node.style };
+        if (
+          absoluteConstraintMode(style, "horizontal") === "start" &&
+          style.left === undefined &&
+          memberParentBox
+        ) {
+          style.left = nodeBox.left - memberParentBox.left - borderLeft;
+        }
+        if (
+          absoluteConstraintMode(style, "vertical") === "start" &&
+          style.top === undefined &&
+          memberParentBox
+        ) {
+          style.top = nodeBox.top - memberParentBox.top - borderTop;
+        }
+        group.push({
+          nodeId: id,
+          left: nodeBox.left,
+          top: nodeBox.top,
+          width: nodeBox.width,
+          height: nodeBox.height,
+          style,
+        });
       }
     }
+    const groupParents = new Set(group.map((member) => getParent(root, member.nodeId)?.id));
+    const snapParent = group.length > 0 && groupParents.size === 1 ? parent : undefined;
+    const snapParentBox = snapParent ? firstBox(result, snapParent.id) : undefined;
+    const selectedSet = new Set(group.map((member) => member.nodeId));
+    const snapTargets = snapParent && snapParentBox
+      ? [
+          snapParentBox,
+          ...childrenOf(snapParent)
+            .filter((child) => !selectedSet.has(child.id) && !child.design?.hidden)
+            .flatMap((child) => {
+              const childBox = firstBox(result, child.id);
+              return childBox ? [childBox] : [];
+            }),
+        ]
+      : [];
+    const snapBounds = group.length
+      ? {
+          left: Math.min(...group.map((member) => member.left)),
+          top: Math.min(...group.map((member) => member.top)),
+          width:
+            Math.max(...group.map((member) => member.left + member.width)) -
+            Math.min(...group.map((member) => member.left)),
+          height:
+            Math.max(...group.map((member) => member.top + member.height)) -
+            Math.min(...group.map((member) => member.top)),
+        }
+      : undefined;
     const flexBlock =
       kind === "move" && parent && box.node.style.position !== "absolute"
         ? flexBlockInParent(root, parent.id, selectedInRoot)
@@ -177,6 +235,8 @@ export function RNNodeOverlay({
               horizontal: parent.style.flexDirection?.startsWith("row") ?? false,
             }
           : undefined,
+      snapBounds,
+      snapTargets,
     };
   }
 
@@ -196,6 +256,7 @@ export function RNNodeOverlay({
       flexBlock: [],
       additive,
       moved: false,
+      snapTargets: [],
     };
     setMarquee(rectOf(start, start));
   }
@@ -251,6 +312,7 @@ export function RNNodeOverlay({
       additive: false,
       moved: false,
       createType: tool,
+      snapTargets: [],
     };
     setMarquee(rectOf(start, start));
   }
@@ -362,15 +424,14 @@ export function RNNodeOverlay({
 
     // Move. Group-drag every absolute member from its captured origin.
     if (current.group.length > 0) {
+      const snapped = current.snapBounds
+        ? smartSnap(current.snapBounds, dx, dy, current.snapTargets)
+        : { dx, dy };
+      setSnapGuides({ x: snapped.guideX, y: snapped.guideY });
       for (const member of current.group) {
-        const memberNode = findNode(root, member.nodeId);
-        const parent = memberNode ? getParent(root, member.nodeId) : undefined;
-        const parentBox = parent ? firstBox(result, parent.id) : undefined;
-        const parentLeft = parentBox?.left ?? 0;
-        const parentTop = parentBox?.top ?? 0;
         store.updateStyle(root.id, member.nodeId, {
-          left: member.left - parentLeft + dx,
-          top: member.top - parentTop + dy,
+          ...absoluteMovePatch(member.style, "horizontal", snapped.dx),
+          ...absoluteMovePatch(member.style, "vertical", snapped.dy),
         });
       }
     }
@@ -467,6 +528,7 @@ export function RNNodeOverlay({
     if (cancel) useDocumentStore.getState().cancelInteraction();
     else useDocumentStore.getState().commitInteraction();
     setLayoutGuide(undefined);
+    setSnapGuides({});
     gesture.current = null;
   }
 
@@ -561,6 +623,13 @@ export function RNNodeOverlay({
             />
           ))}
         </div>
+      )}
+
+      {active && snapGuides.x !== undefined && (
+        <div style={{ position: "absolute", left: snapGuides.x, top: 0, width: canvasGuide.line, height: result.height, background: color.accentLine, pointerEvents: "none" }} />
+      )}
+      {active && snapGuides.y !== undefined && (
+        <div style={{ position: "absolute", left: 0, top: snapGuides.y, width: result.width, height: canvasGuide.line, background: color.accentLine, pointerEvents: "none" }} />
       )}
 
       {/* Selection outlines for every selected node in this frame. */}

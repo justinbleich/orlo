@@ -475,3 +475,15 @@ retarget to `@rn-canvas/document`.
 - Manual edge edits share the same canonical rules: adding the opposite pin removes width/height;
   removing one pin restores the current fixed size. Center/scale approximations remain deferred
   until their hit-testing and RN-runtime behavior can be represented without drift.
+
+## Phase 2B arrange + snapping checkpoint
+
+- Absolute align/distribute actions consume Yoga boxes and write edge-preserving RN offsets in one
+  document interaction. Flex actions are enabled only when the entire relative sibling flow is
+  selected, preventing unselected siblings from moving as collateral.
+- Absolute dragging snaps the moving selection's edges and centers to the parent and visible
+  siblings. Guide lines are transient Studio chrome; snap results are ordinary RN edge values.
+- Relative → Absolute now captures explicit left/top/width/height from Yoga before interaction.
+  The tldraw RNFrame shape also rejects host translation whenever selection is inside its document,
+  making frame geometry and node geometry unambiguous gesture owners.
+- Equal-spacing distance hints remain the outstanding smart-guide affordance.

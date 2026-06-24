@@ -35,6 +35,7 @@ export {
   absoluteConstraintMode,
   absoluteConstraintPatch,
   absoluteEdgePatch,
+  absoluteMovePatch,
   type AbsoluteConstraintMode,
   type AbsoluteEdge,
   type AxisGeometry,

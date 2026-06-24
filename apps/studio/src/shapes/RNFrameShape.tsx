@@ -10,7 +10,7 @@ import {
   type TLBaseShape,
 } from "tldraw";
 import { useCallback, useState } from "react";
-import { useDocumentStore } from "@rn-canvas/document";
+import { findNode, useDocumentStore } from "@rn-canvas/document";
 import {
   RNFrameRenderer,
   type LayoutReadyResult,
@@ -73,6 +73,24 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
 
   override canResize() {
     return true;
+  }
+
+  // Inner RN-node gestures belong to the document overlay. Even if tldraw's
+  // capture listener also observes the pointer, never translate the host frame
+  // while its document selection is inside the root.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override onTranslate(initial: RNFrameShape, current: RNFrameShape): any {
+    const store = useDocumentStore.getState();
+    const root = store.roots[current.props.rootId];
+    const hasInnerSelection =
+      !!root && store.selection.some((id) => id !== root.id && !!findNode(root, id));
+    if (!hasInnerSelection) return undefined;
+    return {
+      id: current.id,
+      type: current.type,
+      x: initial.x,
+      y: initial.y,
+    };
   }
 
   // Resizing the frame is resizing the *screen*: the new box size is written to

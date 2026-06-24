@@ -109,6 +109,14 @@ Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and
   conversions can preserve geometry. It is never document state, undo state, or sidecar metadata.
 - Center/scale approximations remain deliberately open; snapping, align/distribute, and spacing
   hints are still the next 2B canvas slice.
+- Multi-selection Arrange controls now align absolute siblings from Yoga geometry and distribute
+  three or more while preserving the outer items. When every relative sibling is selected, the
+  same controls update only the shared flex parent through alignItems/justifyContent.
+- Absolute node drags snap edges and centers to their parent and visible siblings within a bounded
+  threshold and render transient canvas guides. Pin modes survive movement, newly absolute nodes
+  receive an explicit geometry-preserving baseline, and the RNFrame host refuses translation while
+  an inner document node is selected.
+- Spacing-distance hints and center/scale constraint approximations remain open.
 
 ## V1 release checkpoint
 

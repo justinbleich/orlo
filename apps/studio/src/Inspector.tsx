@@ -1,9 +1,17 @@
 import { useState } from "react";
 import {
   AlignCenter,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalSpaceBetween,
   AlignJustify,
   AlignLeft,
   AlignRight,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalSpaceBetween,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -28,6 +36,7 @@ import {
 } from "lucide-react";
 import {
   canHaveChildren,
+  childrenOf,
   findNode,
   getParent,
   isContainer,
@@ -40,6 +49,7 @@ import {
   absoluteConstraintMode,
   absoluteConstraintPatch,
   absoluteEdgePatch,
+  absoluteMovePatch,
   sizingMode,
   sizingPatch,
   type AbsoluteConstraintMode,
@@ -66,6 +76,11 @@ import {
 } from "./studio-ui";
 import { normalizeNodeSelection, shareParent } from "./selection";
 import { useStudioStore } from "./studio-store";
+import {
+  alignmentDeltas,
+  distributionDeltas,
+  type ArrangeAlignment,
+} from "./canvas-arrange";
 
 const TYPE_ICON: Record<RNPrimitive, LucideIcon> = {
   View: Square,
@@ -259,6 +274,39 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
     if (hasSharedFlowParent) setSizing(axis, value === undefined ? "hug" : "fixed", value);
     else setStyle(axis === "horizontal" ? "width" : "height", value);
   };
+  const setPositionMode = (next: "relative" | "absolute") =>
+    batch((id) => {
+      const node = findNode(root, id);
+      const parent = node ? getParent(root, id) : undefined;
+      const box = layoutResult?.snapshot.get(id)?.[0];
+      const parentBox = parent ? layoutResult?.snapshot.get(parent.id)?.[0] : undefined;
+      if (!node) return;
+      if (next === "relative") {
+        updateStyle(root.id, id, {
+          position: undefined,
+          left: undefined,
+          right: undefined,
+          top: undefined,
+          bottom: undefined,
+        });
+        return;
+      }
+      const borderLeft = parent?.style.borderLeftWidth ?? parent?.style.borderWidth ?? 0;
+      const borderTop = parent?.style.borderTopWidth ?? parent?.style.borderWidth ?? 0;
+      updateStyle(root.id, id, {
+        position: "absolute",
+        left: box && parentBox ? box.left - parentBox.left - borderLeft : node.style.left ?? 0,
+        top: box && parentBox ? box.top - parentBox.top - borderTop : node.style.top ?? 0,
+        right: undefined,
+        bottom: undefined,
+        width: box?.width ?? node.style.width,
+        height: box?.height ?? node.style.height,
+        flex: undefined,
+        flexGrow: undefined,
+        flexBasis: undefined,
+        alignSelf: undefined,
+      });
+    });
   const nodeLayout = layoutResult?.snapshot.get(primary.id)?.[0];
   const parentLayout = sizingParent
     ? layoutResult?.snapshot.get(sizingParent.id)?.[0]
@@ -306,6 +354,72 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         ),
       );
     });
+  const arrangeParent = primary.id === root.id ? undefined : getParent(root, primary.id);
+  const sharedArrangeParent =
+    arrangeParent && nodes.every((node) => getParent(root, node.id)?.id === arrangeParent.id)
+      ? arrangeParent
+      : undefined;
+  const arrangeBoxes = nodes.flatMap((node) => {
+    const box = layoutResult?.snapshot.get(node.id)?.[0];
+    return box
+      ? [{ id: node.id, left: box.left, top: box.top, width: box.width, height: box.height }]
+      : [];
+  });
+  const canArrangeAbsolute =
+    nodes.length >= 2 &&
+    !!sharedArrangeParent &&
+    arrangeBoxes.length === nodes.length &&
+    nodes.every((node) => node.style.position === "absolute");
+  const flowSiblings = sharedArrangeParent
+    ? childrenOf(sharedArrangeParent).filter((node) => node.style.position !== "absolute")
+    : [];
+  const canArrangeFlex =
+    nodes.length >= 2 &&
+    !!sharedArrangeParent &&
+    nodes.every((node) => node.style.position !== "absolute") &&
+    flowSiblings.length === nodes.length &&
+    flowSiblings.every((node) => nodes.some((selected) => selected.id === node.id));
+  const parentMainAxis: PhysicalAxis = sharedArrangeParent?.style.flexDirection?.startsWith("row")
+    ? "horizontal"
+    : "vertical";
+
+  const arrange = (axis: PhysicalAxis, alignment: ArrangeAlignment) => {
+    if (canArrangeAbsolute) {
+      const deltas = alignmentDeltas(arrangeBoxes, axis, alignment);
+      batch((id) => {
+        const node = findNode(root, id);
+        if (node) updateStyle(root.id, id, absoluteMovePatch(node.style, axis, deltas.get(id) ?? 0));
+      });
+      return;
+    }
+    if (!canArrangeFlex || !sharedArrangeParent) return;
+    const reverse = sharedArrangeParent.style.flexDirection?.endsWith("reverse") ?? false;
+    const value =
+      alignment === "center"
+        ? "center"
+        : alignment === "start" !== reverse
+          ? "flex-start"
+          : "flex-end";
+    updateStyle(
+      root.id,
+      sharedArrangeParent.id,
+      axis === parentMainAxis ? { justifyContent: value } : { alignItems: value },
+    );
+  };
+
+  const distribute = (axis: PhysicalAxis) => {
+    if (canArrangeAbsolute) {
+      const deltas = distributionDeltas(arrangeBoxes, axis);
+      batch((id) => {
+        const node = findNode(root, id);
+        if (node) updateStyle(root.id, id, absoluteMovePatch(node.style, axis, deltas.get(id) ?? 0));
+      });
+      return;
+    }
+    if (canArrangeFlex && sharedArrangeParent && axis === parentMainAxis) {
+      updateStyle(root.id, sharedArrangeParent.id, { justifyContent: "space-between" });
+    }
+  };
 
   return (
     <Shell>
@@ -328,11 +442,43 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         />
       )}
 
+      {(canArrangeAbsolute || canArrangeFlex) && (
+        <Section title="Arrange">
+          <div className="flex items-center gap-xs">
+            <IconButton title="Align left" onClick={() => arrange("horizontal", "start")}>
+              <AlignStartVertical size={15} aria-hidden="true" />
+            </IconButton>
+            <IconButton title="Align horizontal centers" onClick={() => arrange("horizontal", "center")}>
+              <AlignCenterVertical size={15} aria-hidden="true" />
+            </IconButton>
+            <IconButton title="Align right" onClick={() => arrange("horizontal", "end")}>
+              <AlignEndVertical size={15} aria-hidden="true" />
+            </IconButton>
+            <IconButton title="Distribute horizontally" onClick={() => distribute("horizontal")} disabled={canArrangeAbsolute ? nodes.length < 3 : parentMainAxis !== "horizontal"}>
+              <AlignHorizontalSpaceBetween size={15} aria-hidden="true" />
+            </IconButton>
+            <div className="mx-2xs h-5 w-px bg-line" aria-hidden="true" />
+            <IconButton title="Align top" onClick={() => arrange("vertical", "start")}>
+              <AlignStartHorizontal size={15} aria-hidden="true" />
+            </IconButton>
+            <IconButton title="Align vertical centers" onClick={() => arrange("vertical", "center")}>
+              <AlignCenterHorizontal size={15} aria-hidden="true" />
+            </IconButton>
+            <IconButton title="Align bottom" onClick={() => arrange("vertical", "end")}>
+              <AlignEndHorizontal size={15} aria-hidden="true" />
+            </IconButton>
+            <IconButton title="Distribute vertically" onClick={() => distribute("vertical")} disabled={canArrangeAbsolute ? nodes.length < 3 : parentMainAxis !== "vertical"}>
+              <AlignVerticalSpaceBetween size={15} aria-hidden="true" />
+            </IconButton>
+          </div>
+        </Section>
+      )}
+
       <Section title="Layout">
         <Field label="Position">
           <SegmentedControl
             value={position}
-            onChange={(v) => setStyle("position", v === "relative" ? undefined : v)}
+            onChange={setPositionMode}
             options={[
               { value: "relative", content: "Relative", title: "Relative (flow)" },
               { value: "absolute", content: "Absolute", title: "Absolute (top/left)" },

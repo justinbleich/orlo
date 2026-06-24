@@ -74,3 +74,21 @@ export function absoluteEdgePatch(
   }
   return patch;
 }
+
+/** Translate an absolute child while preserving its current edge-pin mode. */
+export function absoluteMovePatch(
+  style: RNStyle,
+  axis: PhysicalAxis,
+  delta: number,
+): Partial<RNStyle> {
+  const key = keys(axis);
+  const mode = absoluteConstraintMode(style, axis);
+  if (mode === "end") return { [key.end]: (Number(style[key.end]) || 0) - delta };
+  if (mode === "stretch") {
+    return {
+      [key.start]: (Number(style[key.start]) || 0) + delta,
+      [key.end]: (Number(style[key.end]) || 0) - delta,
+    };
+  }
+  return { [key.start]: (Number(style[key.start]) || 0) + delta };
+}

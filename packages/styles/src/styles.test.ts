@@ -7,6 +7,7 @@ import {
   absoluteConstraintMode,
   absoluteConstraintPatch,
   absoluteEdgePatch,
+  absoluteMovePatch,
 } from "./constraints";
 import {
   createCanvasTextMeasurer,
@@ -100,6 +101,15 @@ test("manual absolute edge edits enter and leave stretch canonically", () => {
     absoluteEdgePatch({ left: 10, right: 20 }, "horizontal", "end", undefined, 270),
     { right: undefined, width: 270 },
   );
+});
+
+test("absolute movement preserves start, end, and stretch pin modes", () => {
+  assert.deepEqual(absoluteMovePatch({ left: 10 }, "horizontal", 5), { left: 15 });
+  assert.deepEqual(absoluteMovePatch({ right: 10 }, "horizontal", 5), { right: 5 });
+  assert.deepEqual(absoluteMovePatch({ left: 10, right: 20 }, "horizontal", 5), {
+    left: 15,
+    right: 15,
+  });
 });
 
 test("rejects CSS shorthand", () => {

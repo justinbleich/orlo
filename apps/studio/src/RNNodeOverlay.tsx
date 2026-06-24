@@ -275,14 +275,17 @@ export function RNNodeOverlay({
 
     const store = useDocumentStore.getState();
     // Read selection fresh from the store (not the render closure) so rapid,
-    // back-to-back modifier clicks compose instead of clobbering each other.
-    const current = store.selection;
+    // back-to-back modifier clicks compose. Exclude the frame root: a node
+    // selection and the frame itself are never co-selected, so building a
+    // multi-node selection drops the root the frame started out as.
+    const current = store.selection.filter((id) => id !== root.id);
     if (additive) {
-      // Toggle membership; don't start a drag.
+      // Toggle membership; don't start a drag. Falling back to the frame when
+      // the last node is removed keeps a frame focused for the overlay.
       const next = current.includes(hit.node.id)
         ? current.filter((id) => id !== hit.node.id)
         : [...current, hit.node.id];
-      store.setSelection(next);
+      store.setSelection(next.length ? next : [root.id]);
       setInstanceKey(hit.instanceKey);
       return;
     }
@@ -387,9 +390,11 @@ export function RNNodeOverlay({
             )
             .map((box) => box.node.id);
           const unique = [...new Set(hits)];
-          const next = current.additive
-            ? [...new Set([...useDocumentStore.getState().selection, ...unique])]
-            : unique;
+          // Union with the existing node selection (never the frame root).
+          const base = useDocumentStore
+            .getState()
+            .selection.filter((id) => id !== root.id);
+          const next = current.additive ? [...new Set([...base, ...unique])] : unique;
           setSelection(next);
         }
       }

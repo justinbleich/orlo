@@ -22,11 +22,12 @@ import {
   type Rect,
 } from "./canvas-interaction";
 import { reorderFlexBlock } from "./document-actions";
-import { canvasGuide, color, radius } from "./studio-theme";
+import { canvasGuide, color, font, radius, text } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
 import { normalizeNodeSelection } from "./selection";
 import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
 import { smartSnap, type SnapRect } from "./canvas-snap";
+import { equalSpacingSnap, type SpacingRect, type SpacingSegment } from "./canvas-spacing";
 
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 type GroupMember = { nodeId: NodeId; left: number; top: number; width: number; height: number; style: Node["style"] };
@@ -51,6 +52,8 @@ type Gesture = {
   layoutGuide?: { box: LayoutBox; horizontal: boolean };
   snapBounds?: SnapRect;
   snapTargets: SnapRect[];
+  /** Visible siblings used to equalize spacing while dragging (no parent). */
+  spacingTargets: SpacingRect[];
 };
 
 /** Every descendant box (excludes the root box itself). */
@@ -100,6 +103,7 @@ export function RNNodeOverlay({
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [layoutGuide, setLayoutGuide] = useState<Gesture["layoutGuide"]>(undefined);
   const [snapGuides, setSnapGuides] = useState<{ x?: number; y?: number }>({});
+  const [spacingSegments, setSpacingSegments] = useState<SpacingSegment[]>([]);
   const [editing, setEditing] = useState<{ id: NodeId; value: string } | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -187,17 +191,17 @@ export function RNNodeOverlay({
     const snapParent = group.length > 0 && groupParents.size === 1 ? parent : undefined;
     const snapParentBox = snapParent ? firstBox(result, snapParent.id) : undefined;
     const selectedSet = new Set(group.map((member) => member.nodeId));
-    const snapTargets = snapParent && snapParentBox
-      ? [
-          snapParentBox,
-          ...childrenOf(snapParent)
-            .filter((child) => !selectedSet.has(child.id) && !child.design?.hidden)
-            .flatMap((child) => {
-              const childBox = firstBox(result, child.id);
-              return childBox ? [childBox] : [];
-            }),
-        ]
+    const siblingBoxes = snapParent && snapParentBox
+      ? childrenOf(snapParent)
+          .filter((child) => !selectedSet.has(child.id) && !child.design?.hidden)
+          .flatMap((child) => {
+            const childBox = firstBox(result, child.id);
+            return childBox ? [childBox] : [];
+          })
       : [];
+    // Edges/centers snap to the parent and siblings; spacing equalizes against
+    // siblings only (the parent isn't a spacing neighbor).
+    const snapTargets = snapParentBox ? [snapParentBox, ...siblingBoxes] : [];
     const snapBounds = group.length
       ? {
           left: Math.min(...group.map((member) => member.left)),
@@ -237,6 +241,7 @@ export function RNNodeOverlay({
           : undefined,
       snapBounds,
       snapTargets,
+      spacingTargets: siblingBoxes,
     };
   }
 
@@ -257,6 +262,7 @@ export function RNNodeOverlay({
       additive,
       moved: false,
       snapTargets: [],
+      spacingTargets: [],
     };
     setMarquee(rectOf(start, start));
   }
@@ -313,6 +319,7 @@ export function RNNodeOverlay({
       moved: false,
       createType: tool,
       snapTargets: [],
+      spacingTargets: [],
     };
     setMarquee(rectOf(start, start));
   }
@@ -426,12 +433,35 @@ export function RNNodeOverlay({
     if (current.group.length > 0) {
       const snapped = current.snapBounds
         ? smartSnap(current.snapBounds, dx, dy, current.snapTargets)
-        : { dx, dy };
+        : { dx, dy, guideX: undefined, guideY: undefined };
+      let finalDx = snapped.dx;
+      let finalDy = snapped.dy;
+      const segments: SpacingSegment[] = [];
+      // Equalize spacing only on axes edge-snap left free, so an edge lock and a
+      // spacing nudge never fight over the same axis.
+      if (current.snapBounds && current.spacingTargets.length > 0) {
+        const here = {
+          left: current.snapBounds.left + finalDx,
+          top: current.snapBounds.top + finalDy,
+          width: current.snapBounds.width,
+          height: current.snapBounds.height,
+        };
+        const spacing = equalSpacingSnap(here, current.spacingTargets);
+        if (snapped.guideX === undefined && spacing.horizontal) {
+          finalDx += spacing.horizontal.adjustment;
+          segments.push(...spacing.horizontal.segments);
+        }
+        if (snapped.guideY === undefined && spacing.vertical) {
+          finalDy += spacing.vertical.adjustment;
+          segments.push(...spacing.vertical.segments);
+        }
+      }
       setSnapGuides({ x: snapped.guideX, y: snapped.guideY });
+      setSpacingSegments(segments);
       for (const member of current.group) {
         store.updateStyle(root.id, member.nodeId, {
-          ...absoluteMovePatch(member.style, "horizontal", snapped.dx),
-          ...absoluteMovePatch(member.style, "vertical", snapped.dy),
+          ...absoluteMovePatch(member.style, "horizontal", finalDx),
+          ...absoluteMovePatch(member.style, "vertical", finalDy),
         });
       }
     }
@@ -529,6 +559,7 @@ export function RNNodeOverlay({
     else useDocumentStore.getState().commitInteraction();
     setLayoutGuide(undefined);
     setSnapGuides({});
+    setSpacingSegments([]);
     gesture.current = null;
   }
 
@@ -631,6 +662,61 @@ export function RNNodeOverlay({
       {active && snapGuides.y !== undefined && (
         <div style={{ position: "absolute", left: 0, top: snapGuides.y, width: result.width, height: canvasGuide.line, background: color.accentLine, pointerEvents: "none" }} />
       )}
+
+      {/* Equal-spacing distance hints — a measured rule between matched gaps. */}
+      {active &&
+        spacingSegments.map((seg, index) => {
+          const horizontal = seg.y0 === seg.y1;
+          const left = Math.min(seg.x0, seg.x1);
+          const top = Math.min(seg.y0, seg.y1);
+          const length = horizontal ? Math.abs(seg.x1 - seg.x0) : Math.abs(seg.y1 - seg.y0);
+          return (
+            <div key={`spacing-${index}`} style={{ position: "absolute", left, top, pointerEvents: "none" }}>
+              {/* The rule itself. */}
+              <div
+                style={{
+                  position: "absolute",
+                  width: horizontal ? length : canvasGuide.line,
+                  height: horizontal ? canvasGuide.line : length,
+                  background: color.amber,
+                }}
+              />
+              {/* End ticks. */}
+              {[0, length].map((offset) => (
+                <div
+                  key={offset}
+                  style={{
+                    position: "absolute",
+                    left: horizontal ? offset : -3,
+                    top: horizontal ? -3 : offset,
+                    width: horizontal ? canvasGuide.line : 7,
+                    height: horizontal ? 7 : canvasGuide.line,
+                    background: color.amber,
+                  }}
+                />
+              ))}
+              {/* Distance badge centered on the rule. */}
+              <div
+                style={{
+                  position: "absolute",
+                  left: horizontal ? length / 2 : 6,
+                  top: horizontal ? 6 : length / 2,
+                  transform: "translate(-50%, -50%)",
+                  padding: "1px 4px",
+                  borderRadius: radius.sm,
+                  background: color.amber,
+                  color: color.chrome,
+                  fontFamily: font.mono,
+                  fontSize: text.micro,
+                  lineHeight: 1.2,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {Math.round(seg.distance)}
+              </div>
+            </div>
+          );
+        })}
 
       {/* Selection outlines for every selected node in this frame. */}
       {active &&

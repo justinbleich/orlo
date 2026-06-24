@@ -486,4 +486,7 @@ retarget to `@rn-canvas/document`.
 - Relative → Absolute now captures explicit left/top/width/height from Yoga before interaction.
   The tldraw RNFrame shape also rejects host translation whenever selection is inside its document,
   making frame geometry and node geometry unambiguous gesture owners.
-- Equal-spacing distance hints remain the outstanding smart-guide affordance.
+- Equal-spacing distance hints now equalize an absolute node's gaps to the nearest sibling on
+  each side of an axis (only siblings sharing the cross-axis band count) within the snap threshold,
+  rendering transient amber measurement rules with px badges. Pure logic lives in `canvas-spacing.ts`
+  (`equalSpacingSnap`); it runs per axis after edge/center snap and only on axes that snap left free.

@@ -116,7 +116,10 @@ Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and
   threshold and render transient canvas guides. Pin modes survive movement, newly absolute nodes
   receive an explicit geometry-preserving baseline, and the RNFrame host refuses translation while
   an inner document node is selected.
-- Spacing-distance hints and center/scale constraint approximations remain open.
+- Equal-spacing distance hints land: dragging an absolute node between two banded siblings nudges it
+  (within threshold) so the gaps match and renders transient amber measurement rules with px badges.
+  Logic is `equalSpacingSnap` in `canvas-spacing.ts`, applied per axis after edge/center snap and only
+  on axes edge-snap left free. Center/scale constraint approximations remain open.
 
 ## V1 release checkpoint
 

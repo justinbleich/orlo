@@ -69,9 +69,9 @@ Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and
 - Browser verification covered valid source import, workspace confinement, and exact frame geometry
   across move → undo → redo. Codegen tests and production package builds pass.
 
-## Post-v1 Phase 2A status
+## Post-v1 Phase 2A status — complete
 
-- Phase 2A direct-manipulation work is active: draw-to-create, inline Text editing, multi-select,
+- Phase 2A direct-manipulation work is complete: draw-to-create, inline Text editing, multi-select,
   grouping, layer drag/reparent, frame resize, and the rebuilt Inspector are present.
 - The first interaction audit restored root-frame inspection, normalized nested selections so
   actions never operate on an ancestor and descendant together, and added modifier/range selection
@@ -83,11 +83,14 @@ Phase 2C/2D component systems and the `phase3.md` interaction, device, data, and
   `max-width` constraint outside RNStyle/Yoga.
 - The shell has a tokenized 960px minimum workspace and scrolls at narrower host widths. New compact
   chrome values are tokenized. Six Studio tests cover selection and subtree action regressions.
-- The freeform-versus-Yoga-flow creation model remains deliberately unresolved pending product
-  discussion; no document or codegen semantics changed in this pass.
+- The creation model is resolved as flex-flow: drawing inserts a relative child at the
+  Yoga-derived sibling index. Absolute placement remains an explicit Inspector mode, never an
+  implicit result of drawing.
 - The interaction-parity follow-up exposes all frame resize edges, makes arrow-key and panel
   reordering follow the selected child's visual flex axis, combines Screens and Layers into one
   collapsible navigator, and reveals the active Yoga flow while a relative child is dragged.
+- Eighteen Studio interaction tests and the full monorepo build pass at the 2A checkpoint. Phase 2B
+  begins with authoritative auto-layout and per-child sizing semantics before snapping affordances.
 
 ## V1 release checkpoint
 

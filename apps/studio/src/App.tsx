@@ -51,7 +51,7 @@ const components: TLComponents = {
 
 // tldraw's shape vocabulary is RNFrame only. Keep navigation tools (select, hand,
 // zoom); remove every shape-creating/destructive tool so no tldraw-native shape can
-// be made. RN primitives are document nodes created via the inspector, never here.
+// be made. RN primitives are document nodes created via the tool rail (draw-to-create).
 const KEEP_TOOLS = new Set(["select", "hand", "zoom"]);
 const overrides: TLUiOverrides = {
   tools(_editor, tools) {

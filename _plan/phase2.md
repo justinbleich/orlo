@@ -95,12 +95,12 @@ zoom-to-selection, undo/redo (lean on tldraw).
 
 ### Phase 2A — Core creation & direct manipulation
 **Goal:** a designer can hand-draw a static interface and export it.
-- [ ] Toolbar with Select, Frame, Rectangle, Text, Image tools.
-- [ ] Click/drag to create sized nodes; inline text editing.
-- [ ] On-canvas move + resize handles; multi-select + marquee; group/ungroup; duplicate; lock/hide.
-- [ ] Layers/tree panel: hierarchy, rename, reorder, reparent via drag.
-- [ ] Inspector v1: fill, border, typography, size/dimensions.
-- [ ] All produced nodes export via `packages/codegen`.
+- [x] Toolbar with Select, Frame, Rectangle, Text, Image tools.
+- [x] Click/drag to create sized nodes; inline text editing.
+- [x] On-canvas move + resize handles; multi-select + marquee; group/ungroup; duplicate; lock/hide.
+- [x] Layers/tree panel: hierarchy, rename, reorder, reparent via drag.
+- [x] Inspector v1: fill, border, typography, size/dimensions.
+- [x] All produced nodes export via `packages/codegen`.
 
 **Done when:** a multi-node screen built entirely with tools exports to compiling RN that matches
 the canvas within the known fidelity gap.

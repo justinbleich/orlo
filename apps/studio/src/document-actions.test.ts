@@ -6,7 +6,7 @@ import {
   findNode,
   useDocumentStore,
 } from "@rn-canvas/document";
-import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
+import { deleteNodes, duplicateNodes, reorderFlexBlock, reorderNode } from "./document-actions";
 
 function fixture() {
   return createNode("View", {
@@ -73,4 +73,20 @@ test("reordering ignores absolute and locked children", () => {
   assert.equal(reorderNode(root.id, "absolute", 1), false);
   assert.equal(reorderNode(root.id, "locked", 1), false);
   assert.equal(useDocumentStore.getState().past.length, 0);
+});
+
+test("reorderFlexBlock moves a multi-node block in one undo entry", () => {
+  const root = createNode("View", {
+    id: "root",
+    children: [
+      createNode("View", { id: "a" }),
+      createNode("View", { id: "b" }),
+      createNode("View", { id: "c" }),
+    ],
+  });
+  useDocumentStore.getState().loadRoots({ [root.id]: root }, ["b"]);
+  reorderFlexBlock(root.id, "root", ["a", "b"], 2);
+  const next = useDocumentStore.getState().roots[root.id];
+  assert.deepEqual(childrenOf(next).map((node) => node.id), ["c", "a", "b"]);
+  assert.equal(useDocumentStore.getState().past.length, 1);
 });

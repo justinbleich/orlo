@@ -8,7 +8,6 @@ import {
   useDocumentStore,
   type Node,
   type NodeId,
-  type RNPrimitive,
 } from "@rn-canvas/document";
 import { normalizeNodeSelection } from "./selection";
 
@@ -145,25 +144,47 @@ export function reorderNode(rootId: NodeId, id: NodeId, offset: -1 | 1): boolean
   return true;
 }
 
-/** Insert a primitive relative to the current document selection. Containers
- * receive it as a child; leaves receive it as their next sibling. */
-export function insertPrimitive(
-  root: Node,
-  selectedId: NodeId | null,
-  type: RNPrimitive,
-): Node {
-  const child = createNode(type);
-  const anchor = (selectedId && findNode(root, selectedId)) || root;
+/** Reorder a contiguous flex block to `dropIndex` among remaining siblings. */
+export function reorderFlexBlock(
+  rootId: NodeId,
+  parentId: NodeId,
+  blockIds: NodeId[],
+  dropIndex: number,
+): void {
+  if (blockIds.length === 0) return;
+  const apply = () => {
+    const store = useDocumentStore.getState();
+    const root = store.roots[rootId];
+    const parent = root && findNode(root, parentId);
+    if (!root || !parent) return;
+
+    const siblings = childrenOf(parent);
+    const blockSet = new Set(blockIds);
+    const block = siblings.filter((sibling) => blockSet.has(sibling.id));
+    if (block.length !== blockIds.length) return;
+
+    const remaining = siblings.filter((sibling) => !blockSet.has(sibling.id));
+    const clamped = Math.max(0, Math.min(dropIndex, remaining.length));
+    const targetOrder = [
+      ...remaining.slice(0, clamped),
+      ...block,
+      ...remaining.slice(clamped),
+    ];
+
+    let current = siblings;
+    for (let index = 0; index < targetOrder.length; index += 1) {
+      const wantId = targetOrder[index].id;
+      const from = current.findIndex((sibling) => sibling.id === wantId);
+      if (from !== index) {
+        useDocumentStore.getState().reorderChild(rootId, parentId, from, index);
+        const freshRoot = useDocumentStore.getState().roots[rootId];
+        const nextParent = freshRoot && findNode(freshRoot, parentId);
+        current = nextParent ? childrenOf(nextParent) : current;
+      }
+    }
+  };
+
   const store = useDocumentStore.getState();
-
-  if (isContainer(anchor)) {
-    store.insertChild(root.id, anchor.id, child);
-  } else {
-    const parent = getParent(root, anchor.id) ?? root;
-    const index = childrenOf(parent).findIndex((node) => node.id === anchor.id);
-    store.insertChild(root.id, parent.id, child, index + 1);
-  }
-
-  store.setSelection([child.id]);
-  return child;
+  if (store.interaction) apply();
+  else asInteraction(apply);
 }

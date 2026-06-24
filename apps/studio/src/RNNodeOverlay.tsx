@@ -1,22 +1,31 @@
 import { useMemo, useRef, useState } from "react";
 import {
   childrenOf,
-  createNode,
   findNode,
   getParent,
-  isContainer,
   useDocumentStore,
   type Node,
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
 import type { LayoutBox, LayoutReadyResult } from "@rn-canvas/render-web";
+import {
+  buildDrawnNode,
+  containerAt,
+  drawSize,
+  flexBlockInParent,
+  flexFlowHorizontal,
+  flexInsertIndex,
+  hitTestLayout,
+  rectOf,
+  type Point,
+  type Rect,
+} from "./canvas-interaction";
+import { reorderFlexBlock } from "./document-actions";
 import { canvasGuide, color, radius } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
 import { normalizeNodeSelection } from "./selection";
 
-type Point = { x: number; y: number };
-type Rect = { x0: number; y0: number; x1: number; y1: number };
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 type GroupMember = { nodeId: NodeId; left: number; top: number };
 type Gesture = {
@@ -30,6 +39,8 @@ type Gesture = {
   handle?: ResizeHandle;
   /** Absolute-positioned selected nodes moved together during a group drag. */
   group: GroupMember[];
+  /** Flex siblings reordered together on drop (flex-flow creation model). */
+  flexBlock: NodeId[];
   additive: boolean;
   moved: boolean;
   /** For a create gesture: the armed primitive being drawn. */
@@ -38,27 +49,6 @@ type Gesture = {
   layoutGuide?: { box: LayoutBox; horizontal: boolean };
 };
 
-function contains(box: LayoutBox, point: Point): boolean {
-  return (
-    point.x >= box.left &&
-    point.x <= box.left + box.width &&
-    point.y >= box.top &&
-    point.y <= box.top + box.height
-  );
-}
-
-/** Deepest visible/unlocked document box at a frame-local point. */
-export function hitTestLayout(box: LayoutBox, point: Point): LayoutBox | undefined {
-  if (box.node.design?.hidden || box.node.design?.locked || !contains(box, point)) {
-    return undefined;
-  }
-  for (let index = box.children.length - 1; index >= 0; index -= 1) {
-    const hit = hitTestLayout(box.children[index], point);
-    if (hit) return hit;
-  }
-  return box;
-}
-
 /** Every descendant box (excludes the root box itself). */
 function descendantBoxes(box: LayoutBox, acc: LayoutBox[] = []): LayoutBox[] {
   for (const child of box.children) {
@@ -66,15 +56,6 @@ function descendantBoxes(box: LayoutBox, acc: LayoutBox[] = []): LayoutBox[] {
     descendantBoxes(child, acc);
   }
   return acc;
-}
-
-function rectOf(a: Point, b: Point): Rect {
-  return {
-    x0: Math.min(a.x, b.x),
-    y0: Math.min(a.y, b.y),
-    x1: Math.max(a.x, b.x),
-    y1: Math.max(a.y, b.y),
-  };
 }
 
 function boxIntersectsRect(box: LayoutBox, rect: Rect): boolean {
@@ -171,6 +152,10 @@ export function RNNodeOverlay({
         group.push({ nodeId: id, left: nodeBox.left, top: nodeBox.top });
       }
     }
+    const flexBlock =
+      kind === "move" && parent && box.node.style.position !== "absolute"
+        ? flexBlockInParent(root, parent.id, selectedInRoot)
+        : [];
     useDocumentStore.getState().beginInteraction();
     gesture.current = {
       kind,
@@ -182,6 +167,7 @@ export function RNNodeOverlay({
       parentBox: parent ? firstBox(result, parent.id) : undefined,
       handle,
       group,
+      flexBlock,
       additive: false,
       moved: false,
       layoutGuide:
@@ -207,6 +193,7 @@ export function RNNodeOverlay({
       start,
       box: result.layout,
       group: [],
+      flexBlock: [],
       additive,
       moved: false,
     };
@@ -260,6 +247,7 @@ export function RNNodeOverlay({
       start,
       box: result.layout,
       group: [],
+      flexBlock: [],
       additive: false,
       moved: false,
       createType: tool,
@@ -395,15 +383,26 @@ export function RNNodeOverlay({
     event.stopPropagation();
 
     if (current.kind === "create") {
-      const created = !cancel && current.createType
-        ? createDrawnNode(current.createType, current.start, rectOf(current.start, eventPoint(event)))
-        : null;
       setMarquee(null);
       setLayoutGuide(undefined);
       gesture.current = null;
       useStudioStore.getState().setArmedTool(null);
-      if (created && current.createType === "Text") {
-        setEditing({ id: created, value: "Text" });
+      if (!cancel && current.createType) {
+        const store = useDocumentStore.getState();
+        store.beginInteraction();
+        try {
+          const created = createDrawnNode(
+            current.createType,
+            current.start,
+            rectOf(current.start, eventPoint(event)),
+          );
+          store.commitInteraction();
+          if (created && current.createType === "Text") {
+            setEditing({ id: created, value: "Text" });
+          }
+        } catch {
+          store.cancelInteraction();
+        }
       }
       return;
     }
@@ -440,29 +439,28 @@ export function RNNodeOverlay({
       return;
     }
 
-    // Single flex node dropped → reorder among siblings by midpoint.
-    if (!cancel && current.kind === "move" && current.moved && current.group.length === 0) {
-      const node = findNode(root, current.nodeId);
-      const parent = node ? getParent(root, node.id) : undefined;
-      if (node && parent && node.style.position !== "absolute") {
-        const siblings = childrenOf(parent);
-        const from = siblings.findIndex((sibling) => sibling.id === node.id);
-        const horizontal = parent.style.flexDirection?.startsWith("row") ?? false;
-        const point = eventPoint(event);
-        const coordinate = horizontal ? point.x : point.y;
-        let to = siblings.length - 1;
-        for (let index = 0; index < siblings.length; index += 1) {
-          const box = firstBox(result, siblings[index].id);
-          if (!box) continue;
-          const midpoint = horizontal ? box.left + box.width / 2 : box.top + box.height / 2;
-          if (coordinate < midpoint) {
-            to = index;
-            break;
-          }
-        }
-        if (from >= 0 && to !== from) {
-          useDocumentStore.getState().reorderChild(root.id, parent.id, from, to);
-        }
+    // Flex siblings dropped → reorder block (or single node) by drop position.
+    if (
+      !cancel &&
+      current.kind === "move" &&
+      current.moved &&
+      current.group.length === 0 &&
+      current.flexBlock.length > 0
+    ) {
+      const parent = getParent(root, current.flexBlock[0]);
+      if (parent) {
+        const siblings = childrenOf(parent).flatMap((sibling) => {
+          const box = firstBox(result, sibling.id);
+          return box ? [{ id: sibling.id, box }] : [];
+        });
+        const horizontal = flexFlowHorizontal(parent.style.flexDirection);
+        const dropIndex = flexInsertIndex(
+          siblings,
+          eventPoint(event),
+          horizontal,
+          new Set(current.flexBlock),
+        );
+        reorderFlexBlock(root.id, parent.id, current.flexBlock, dropIndex);
       }
     }
 
@@ -479,37 +477,20 @@ export function RNNodeOverlay({
     setInstanceKey(null);
   }
 
-  /** Nearest container (and its box) at a frame-local point, falling back to root. */
-  function containerAt(point: Point): { node: Node; box: LayoutBox } {
-    const hit = hitTestLayout(result.layout, point);
-    if (!hit) return { node: root, box: result.layout };
-    if (isContainer(hit.node)) return { node: hit.node, box: hit };
-    const parent = getParent(root, hit.node.id);
-    if (parent) {
-      const box = firstBox(result, parent.id);
-      if (box) return { node: parent, box };
-    }
-    return { node: root, box: result.layout };
-  }
-
-  /**
-   * Create the armed primitive as a fixed-size flex child of the container under
-   * the drag start. Force-flex: we set width/height only — absolute positioning
-   * is opt-in via the inspector, never implied by drawing. Text is content-sized
-   * (no width/height) and goes straight into inline editing.
-   */
+  /** Insert a flex-flow child at the drop index under the container at `start`. */
   function createDrawnNode(type: RNPrimitive, start: Point, rect: Rect): NodeId | null {
-    const dragged = rect.x1 - rect.x0 >= 6 && rect.y1 - rect.y0 >= 6;
-    const width = dragged ? Math.round(rect.x1 - rect.x0) : 100;
-    const height = dragged ? Math.round(rect.y1 - rect.y0) : 40;
-    const target = containerAt(start);
+    const { width, height } = drawSize(rect);
+    const target = containerAt(root, result.layout, start);
     try {
-      const node =
-        type === "Text"
-          ? createNode("Text", { props: { text: "Text" } })
-          : createNode(type, { style: { width, height } });
+      const node = buildDrawnNode(type, width, height);
+      const siblings = childrenOf(target.node).flatMap((sibling) => {
+        const box = firstBox(result, sibling.id);
+        return box ? [{ id: sibling.id, box }] : [];
+      });
+      const horizontal = flexFlowHorizontal(target.node.style.flexDirection);
+      const index = flexInsertIndex(siblings, start, horizontal);
       const store = useDocumentStore.getState();
-      store.insertChild(root.id, target.node.id, node, childrenOf(target.node).length);
+      store.insertChild(root.id, target.node.id, node, index);
       store.setSelection([node.id]);
       return node.id;
     } catch {

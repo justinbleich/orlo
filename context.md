@@ -442,3 +442,12 @@ retarget to `@rn-canvas/document`.
   keys or axis-aware sidebar controls; absolute children remain positional.
 - Screens and Layers share one collapsible navigator, nested layer branches collapse independently,
   and an active relative-child drag temporarily reveals the owning Yoga flow and child slots.
+
+## Phase 2A completion checkpoint
+
+- The creation-model decision is closed as **flex-flow**. Draw-to-create inserts relative children
+  at a Yoga-derived sibling index; absolute placement is an explicit Inspector choice.
+- Canvas interaction geometry and insertion/reorder calculations live in testable pure helpers.
+  Multi-node flow reordering and creation are one document undo transaction.
+- Phase 2A passes with eighteen Studio interaction tests and the full monorepo build. Phase 2B starts
+  from sizing/layout semantics, then adds snapping and smart-canvas affordances.

@@ -38,7 +38,7 @@ import { color, layout, radius, space, text } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
 import { cn } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
-import { reorderNode } from "./document-actions";
+import { deleteNodes, reorderNode } from "./document-actions";
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
@@ -290,7 +290,6 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
   const selection = useDocumentStore((state) => state.selection);
   const setSelection = useDocumentStore((state) => state.setSelection);
   const removeRoot = useDocumentStore((state) => state.removeRoot);
-  const removeNode = useDocumentStore((state) => state.removeNode);
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -328,9 +327,7 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
 
   function deleteSelected() {
     if (!focusedRoot || !selectedId || selectedId === focusedRoot.id) return;
-    const parent = getParent(focusedRoot, selectedId);
-    removeNode(focusedRoot.id, selectedId);
-    setSelection(parent ? [parent.id] : [focusedRoot.id]);
+    deleteNodes(focusedRoot.id, [selectedId]);
   }
 
   return (

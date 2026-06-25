@@ -51,11 +51,16 @@ export {
 export {
   promoteToComponent,
   createInstance,
+  presetProp,
   applyOverrides,
   expandComponents,
   ownerInstanceId,
+  reconcileInstance,
+  reconcileOverrides,
+  pruneDefinitionProps,
   validateComponentRegistry,
   validateInstance,
+  type PresetKind,
 } from "./components";
 
 export {

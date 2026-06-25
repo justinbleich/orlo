@@ -75,6 +75,28 @@ export function promoteToComponent(
   return { definition, instance: createInstance(definition.id) };
 }
 
+/** The four authoring presets over the general prop model (Phase 2C). */
+export type PresetKind = "text" | "color" | "visibility" | "slot";
+
+/** Build a `ComponentProp` for a preset bound to one template node. */
+export function presetProp(
+  name: string,
+  kind: PresetKind,
+  nodeId: NodeId,
+  styleKey: "color" | "backgroundColor" = "color",
+): ComponentProp {
+  switch (kind) {
+    case "text":
+      return { name, valueType: "string", targets: [{ kind: "prop", nodeId, path: "text" }] };
+    case "color":
+      return { name, valueType: "color", targets: [{ kind: "style", nodeId, styleKey }] };
+    case "visibility":
+      return { name, valueType: "boolean", default: true, targets: [{ kind: "visibility", nodeId }] };
+    case "slot":
+      return { name, valueType: "node", targets: [{ kind: "slot", nodeId }] };
+  }
+}
+
 /** A fresh instance of a component, with no overrides. */
 export function createInstance(
   componentId: string,
@@ -195,6 +217,91 @@ function expand(node: Node, registry: ComponentRegistry, prefix: string): Node {
 export function ownerInstanceId(expandedId: NodeId): NodeId | null {
   const marker = expandedId.indexOf("::");
   return marker === -1 ? null : expandedId.slice(0, marker);
+}
+
+// --- Reconciliation (definition edits) --------------------------------------
+
+/** Drop prop targets whose node no longer exists in the template, and any prop
+ *  left with zero targets — keeps the definition consistent after a structural edit. */
+export function pruneDefinitionProps(definition: ComponentDefinition): ComponentDefinition {
+  const ids = collectIds(definition.template);
+  let changed = false;
+  const props = definition.props.flatMap((prop) => {
+    const targets = prop.targets.filter((target) => ids.has(target.nodeId));
+    if (targets.length === 0) {
+      changed = true;
+      return [];
+    }
+    if (targets.length !== prop.targets.length) {
+      changed = true;
+      return [{ ...prop, targets }];
+    }
+    return [prop];
+  });
+  return changed ? { ...definition, props } : definition;
+}
+
+
+/** Drop an instance's overrides/slots whose prop no longer exists on the definition. */
+export function reconcileInstance(
+  instance: ComponentInstanceNode,
+  definition: ComponentDefinition,
+): ComponentInstanceNode {
+  const names = new Set(definition.props.map((prop) => prop.name));
+  const overrideEntries = Object.entries(instance.overrides).filter(([name]) => names.has(name));
+  const slotEntries = instance.slots
+    ? Object.entries(instance.slots).filter(([name]) => names.has(name))
+    : [];
+  const overridesChanged = overrideEntries.length !== Object.keys(instance.overrides).length;
+  const slotsChanged = instance.slots
+    ? slotEntries.length !== Object.keys(instance.slots).length
+    : false;
+  if (!overridesChanged && !slotsChanged) return instance;
+  const next: ComponentInstanceNode = { ...instance, overrides: Object.fromEntries(overrideEntries) };
+  if (instance.slots) {
+    if (slotEntries.length > 0) next.slots = Object.fromEntries(slotEntries);
+    else delete next.slots;
+  }
+  return next;
+}
+
+/**
+ * Reconcile every instance in a tree against the current registry, dropping
+ * overrides/slots orphaned by a definition edit (e.g. a removed/renamed prop).
+ * Identity-preserving: unchanged subtrees keep their references.
+ */
+export function reconcileOverrides(node: Node, registry: ComponentRegistry): Node {
+  if (node.type === "ComponentInstance") {
+    const definition = registry[node.componentId];
+    let next = definition ? reconcileInstance(node, definition) : node;
+    if (next.slots) {
+      let slotsChanged = false;
+      const slots = Object.fromEntries(
+        Object.entries(next.slots).map(([name, kids]) => {
+          let childChanged = false;
+          const reconciled = kids.map((kid) => {
+            const r = reconcileOverrides(kid, registry);
+            if (r !== kid) childChanged = true;
+            return r;
+          });
+          if (childChanged) slotsChanged = true;
+          return [name, childChanged ? reconciled : kids];
+        }),
+      );
+      if (slotsChanged) next = { ...next, slots };
+    }
+    return next;
+  }
+  if (isContainer(node)) {
+    let changed = false;
+    const children = node.children.map((child) => {
+      const reconciled = reconcileOverrides(child, registry);
+      if (reconciled !== child) changed = true;
+      return reconciled;
+    });
+    return changed ? ({ ...node, children } as Node) : node;
+  }
+  return node;
 }
 
 // --- Validation --------------------------------------------------------------

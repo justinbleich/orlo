@@ -196,6 +196,11 @@ export default function App() {
   // canvas selection is kept in sync with it below — neither side owns its own copy.
   const roots = useDocumentStore((s) => s.roots);
   const selection = useDocumentStore((s) => s.selection);
+  const editingComponentId = useDocumentStore((s) => s.editingComponentId);
+  const componentRegistry = useDocumentStore((s) => s.components);
+  const editingComponentName = editingComponentId
+    ? componentRegistry[editingComponentId]?.name ?? "Component"
+    : null;
   const focusedRoot = useMemo(
     () => findRootContaining(Object.values(roots), selection[0] ?? ""),
     [roots, selection],
@@ -679,6 +684,55 @@ export default function App() {
         <LeftPanel onAddFrame={addFrame} />
 
         <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          {editingComponentName && (
+            <div
+              data-testid="component-edit-banner"
+              className="studio-chrome"
+              style={{
+                position: "absolute",
+                top: space.md,
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 10,
+                display: "flex",
+                alignItems: "center",
+                gap: space.md,
+                padding: `${space.xs} ${space.md}`,
+                borderRadius: radius.pill,
+                border: `1px solid ${color.accentLine}`,
+                background: color.raised,
+                color: color.ink,
+                fontSize: text.sm,
+                boxShadow: "var(--shadow-popover)",
+              }}
+            >
+              <span>
+                Editing <strong>{editingComponentName}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => useDocumentStore.getState().endComponentEdit(false)}
+                style={{ border: 0, background: "transparent", color: color.inkDim, fontSize: text.sm, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => useDocumentStore.getState().endComponentEdit(true)}
+                style={{
+                  border: `1px solid ${color.accent}`,
+                  background: color.accent,
+                  color: color.chrome,
+                  borderRadius: radius.sm,
+                  padding: `${space.xs} ${space.sm}`,
+                  fontSize: text.sm,
+                  cursor: "pointer",
+                }}
+              >
+                Done
+              </button>
+            </div>
+          )}
           <div
             data-testid="rn-canvas-surface"
             style={{ position: "relative", flex: 1, minHeight: 0 }}

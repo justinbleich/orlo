@@ -18,6 +18,7 @@ import {
   MousePointer2,
   MousePointerClick,
   MoveVertical,
+  Pencil,
   Plus,
   Square,
   TextCursorInput,
@@ -331,6 +332,8 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
   const components = useDocumentStore((state) => state.components);
   const promoteToComponent = useDocumentStore((state) => state.promoteToComponent);
   const removeComponent = useDocumentStore((state) => state.removeComponent);
+  const editingComponentId = useDocumentStore((state) => state.editingComponentId);
+  const beginComponentEdit = useDocumentStore((state) => state.beginComponentEdit);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
   const setArmedComponent = useStudioStore((state) => state.setArmedComponent);
   const selectedId = selection[0] ?? null;
@@ -414,7 +417,9 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-          {rootList.map((root, index) => {
+          {rootList
+            .filter((root) => root.id !== editingComponentId)
+            .map((root, index) => {
             const active = root.id === focusedRoot?.id;
             const locked = !!root.design?.locked;
             return (
@@ -550,6 +555,14 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                   >
                     <Component size={14} aria-hidden="true" />
                     {comp.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => beginComponentEdit(comp.id)}
+                    style={panelIconButton}
+                    title="Edit component"
+                  >
+                    <Pencil size={14} aria-hidden="true" />
                   </button>
                   <button
                     type="button"

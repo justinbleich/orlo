@@ -261,3 +261,101 @@ test("store: promote → place → override, with undo restoring the registry", 
 function childrenIds(node: Node): string[] {
   return "children" in node ? (node.children as Node[]).map((c) => c.id) : [];
 }
+
+import {
+  childrenOf,
+  presetProp,
+  pruneDefinitionProps,
+  reconcileInstance,
+  reconcileOverrides,
+} from "./index";
+
+test("presetProp maps each preset to the general binding model", () => {
+  assert.deepEqual(presetProp("title", "text", "t"), {
+    name: "title", valueType: "string", targets: [{ kind: "prop", nodeId: "t", path: "text" }],
+  });
+  assert.deepEqual(presetProp("tint", "color", "t", "backgroundColor"), {
+    name: "tint", valueType: "color", targets: [{ kind: "style", nodeId: "t", styleKey: "backgroundColor" }],
+  });
+  assert.equal(presetProp("show", "visibility", "t").valueType, "boolean");
+  assert.equal(presetProp("body", "slot", "t").valueType, "node");
+});
+
+test("reconcileInstance drops overrides/slots for props that no longer exist", () => {
+  const def = cardDef(); // exposes title, tint, showIcon, body
+  const inst = instance({ overrides: { title: "Hi", gone: "x" }, slots: { body: [], ghost: [] } });
+  const reconciled = reconcileInstance(inst, def);
+  assert.deepEqual(Object.keys(reconciled.overrides), ["title"]);
+  assert.deepEqual(Object.keys(reconciled.slots ?? {}), ["body"]);
+  // Unchanged instance keeps its reference.
+  assert.equal(reconcileInstance(instance({ overrides: { title: "Hi" } }), def).overrides.title, "Hi");
+});
+
+test("pruneDefinitionProps drops targets for missing nodes and empty props", () => {
+  const base = cardDef();
+  const withGhost: ComponentDefinition = {
+    ...base,
+    props: [
+      { name: "a", valueType: "string", targets: [{ kind: "prop", nodeId: "title", path: "text" }, { kind: "prop", nodeId: "ghost", path: "text" }] },
+      { name: "b", valueType: "string", targets: [{ kind: "prop", nodeId: "ghost", path: "text" }] },
+    ],
+  };
+  const pruned = pruneDefinitionProps(withGhost);
+  assert.equal(pruned.props.length, 1, "prop with only-missing targets removed");
+  assert.equal(pruned.props[0].name, "a");
+  assert.equal(pruned.props[0].targets.length, 1, "missing target dropped");
+});
+
+test("store: begin/end component edit hosts the template and writes it back", () => {
+  const screen = createNode("View", {
+    id: "frame",
+    children: [createNode("View", { id: "card", children: [createNode("Text", { id: "label", props: { text: "Hi" } })] })],
+  });
+  const store = useDocumentStore.getState();
+  store.loadRoots({ frame: screen }, ["card"]);
+  store.promoteToComponent("frame", "card", "Card");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+
+  store.beginComponentEdit(cid);
+  let s = useDocumentStore.getState();
+  assert.ok(s.roots[cid], "template hosted as a transient root");
+  assert.equal(s.editingComponentId, cid);
+  assert.deepEqual(s.selection, [cid]);
+
+  store.insertChild(cid, cid, createNode("Text", { id: "badge", props: { text: "New" } }));
+  store.endComponentEdit(true);
+  s = useDocumentStore.getState();
+  assert.equal(s.editingComponentId, null);
+  assert.equal(s.roots[cid], undefined, "transient root removed on exit");
+  assert.ok(findNode(s.components[cid].template, "badge"), "definition gained the node");
+
+  store.undo(); // undo end → back in edit mode
+  assert.equal(useDocumentStore.getState().editingComponentId, cid);
+});
+
+test("store: definition edits preserve overrides; removing a prop drops them", () => {
+  const screen = createNode("View", {
+    id: "frame",
+    children: [createNode("View", { id: "card", children: [createNode("Text", { id: "label", props: { text: "Hi" } })] })],
+  });
+  const store = useDocumentStore.getState();
+  store.loadRoots({ frame: screen }, ["card"]);
+  store.promoteToComponent("frame", "card", "Card");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+  store.updateComponent(cid, { props: [presetProp("title", "text", "label")] });
+  store.placeInstance("frame", "frame", cid);
+  const instId = childrenOf(useDocumentStore.getState().roots.frame).find((c) => c.id !== "card")!.id;
+  store.setInstanceOverride("frame", instId, "title", "Custom");
+
+  // Structural definition edit keeps the override.
+  store.beginComponentEdit(cid);
+  store.insertChild(cid, cid, createNode("Text", { id: "badge", props: { text: "x" } }));
+  store.endComponentEdit(true);
+  const overrideOf = (id: string) =>
+    (findNode(useDocumentStore.getState().roots.frame, id) as ComponentInstanceNode).overrides.title;
+  assert.equal(overrideOf(instId), "Custom");
+
+  // Removing the prop reconciles the override away.
+  store.updateComponent(cid, { props: [] });
+  assert.equal(overrideOf(instId), undefined);
+});

@@ -26,6 +26,7 @@ import {
   MousePointerClick,
   MoveVertical,
   List as ListIcon,
+  Pencil,
   Square,
   TextCursorInput,
   Trash2,
@@ -40,9 +41,14 @@ import {
   findNode,
   getParent,
   isContainer,
+  presetProp,
   useDocumentStore,
+  type ComponentDefinition,
+  type ComponentInstanceNode,
   type Node,
   type NodeId,
+  type OverrideValue,
+  type PresetKind,
   type RNPrimitive,
 } from "@rn-canvas/document";
 import {
@@ -154,6 +160,9 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   const updateProps = useDocumentStore((s) => s.updateProps);
   const updateStyle = useDocumentStore((s) => s.updateStyle);
   const updateDesign = useDocumentStore((s) => s.updateDesign);
+  const componentRegistry = useDocumentStore((s) => s.components);
+  const editingComponentId = useDocumentStore((s) => s.editingComponentId);
+  const beginComponentEdit = useDocumentStore((s) => s.beginComponentEdit);
   const [error, setError] = useState<string | null>(null);
 
   const nodes = root
@@ -224,6 +233,45 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
     return (
       <Shell>
         <Empty>Select a layer to edit its properties.</Empty>
+      </Shell>
+    );
+  }
+
+  // A placed instance edits its exposed-prop overrides, not raw style — its
+  // structure comes from the definition (edit it via focus mode).
+  if (!multi && primary.type === "ComponentInstance") {
+    return (
+      <Shell>
+        <SelectionHeader
+          nodes={nodes}
+          onName={(name) => setDesignAll({ name })}
+          onLock={(locked) => setDesignAll({ locked })}
+          onHide={(hidden) => setDesignAll({ hidden })}
+          {...editLifecycle}
+        />
+        <div className="px-md">
+          <button
+            type="button"
+            onClick={() => beginComponentEdit(primary.componentId)}
+            className="flex w-full items-center justify-center gap-sm rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink transition-colors hover:bg-raised"
+          >
+            <Pencil size={14} aria-hidden="true" /> Edit component
+          </button>
+        </div>
+        <ActionRow
+          canUngroup={false}
+          canGroup={false}
+          onDuplicate={() => runAction(() => duplicateNodes(root.id, [primary.id]))}
+          onGroup={() => {}}
+          onUngroup={() => {}}
+          onDelete={() => runAction(() => deleteNodes(root.id, [primary.id]))}
+        />
+        <InstanceProperties
+          rootId={root.id}
+          instance={primary}
+          definition={componentRegistry[primary.componentId]}
+        />
+        {error && <p className="px-md text-sm text-live">{error}</p>}
       </Shell>
     );
   }
@@ -440,6 +488,12 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           onUngroup={() => runAction(() => ungroupNode(root.id, primary.id))}
           onDelete={() => runAction(() => deleteNodes(root.id, nodes.map((n) => n.id)))}
         />
+      )}
+
+      {/* In focus mode, expose the selected template node's value as a component
+          prop. The template root is real content here, so it's exposable too. */}
+      {editingComponentId === root.id && !multi && (
+        <ExposeControls componentId={root.id} node={primary} />
       )}
 
       {(canArrangeAbsolute || canArrangeFlex) && (
@@ -805,5 +859,169 @@ function SelectionHeader({
         {multi ? `${nodes.length} layers` : `${primary.type} · ${primary.id.slice(0, 8)}`}
       </div>
     </div>
+  );
+}
+
+/** A JS identifier derived from `base`, unique against `taken`. */
+function uniquePropName(base: string, taken: Iterable<string>): string {
+  const ident = /^[A-Za-z_$]/.test(base) ? base.replace(/[^\w$]/g, "") : `p${base.replace(/[^\w$]/g, "")}`;
+  const root = ident || "prop";
+  const used = new Set(taken);
+  if (!used.has(root)) return root;
+  let i = 2;
+  while (used.has(`${root}${i}`)) i += 1;
+  return `${root}${i}`;
+}
+
+/** Per-instance override editors for a definition's exposed props. */
+function InstanceProperties({
+  rootId,
+  instance,
+  definition,
+}: {
+  rootId: NodeId;
+  instance: ComponentInstanceNode;
+  definition: ComponentDefinition | undefined;
+}) {
+  const setInstanceOverride = useDocumentStore((s) => s.setInstanceOverride);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!definition) {
+    return (
+      <Section title="Properties">
+        <p className="text-sm text-ink-faint">Component definition is missing.</p>
+      </Section>
+    );
+  }
+  if (definition.props.length === 0) {
+    return (
+      <Section title="Properties">
+        <p className="text-sm text-ink-faint">
+          No exposed properties yet. Use “Edit component” to expose some.
+        </p>
+      </Section>
+    );
+  }
+
+  const set = (name: string, value: OverrideValue) => {
+    try {
+      setError(null);
+      setInstanceOverride(rootId, instance.id, name, value);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <Section title="Properties">
+      <FieldGrid>
+        {definition.props.map((prop) => {
+          const current = instance.overrides[prop.name] ?? prop.default;
+          return (
+            <Field key={prop.name} label={prop.name}>
+              {prop.valueType === "color" ? (
+                <ColorField
+                  value={typeof current === "string" ? current : undefined}
+                  onChange={(v) => set(prop.name, v)}
+                />
+              ) : prop.valueType === "boolean" ? (
+                <SegmentedControl
+                  value={current === false ? "off" : "on"}
+                  onChange={(v) => set(prop.name, v === "on")}
+                  options={[
+                    { value: "on", content: "On", title: "On" },
+                    { value: "off", content: "Off", title: "Off" },
+                  ]}
+                />
+              ) : prop.valueType === "number" ? (
+                <NumberField
+                  label=""
+                  value={typeof current === "number" ? current : undefined}
+                  onChange={(v) => v !== undefined && set(prop.name, v)}
+                />
+              ) : prop.valueType === "enum" ? (
+                <Select
+                  value={typeof current === "string" ? current : undefined}
+                  onChange={(v) => set(prop.name, v)}
+                  options={(prop.enumValues ?? []).map((value) => ({ value, label: value }))}
+                />
+              ) : prop.valueType === "node" ? (
+                <span className="text-sm text-ink-faint">Slot — edit on canvas</span>
+              ) : (
+                <TextField
+                  value={typeof current === "string" ? current : ""}
+                  onChange={(v) => set(prop.name, v)}
+                />
+              )}
+            </Field>
+          );
+        })}
+      </FieldGrid>
+      {error && <p className="mt-xs text-sm text-live">{error}</p>}
+    </Section>
+  );
+}
+
+/** Expose a selected template node's value as a component prop (focus mode). */
+function ExposeControls({ componentId, node }: { componentId: NodeId; node: Node }) {
+  const components = useDocumentStore((s) => s.components);
+  const updateComponent = useDocumentStore((s) => s.updateComponent);
+  const definition = components[componentId];
+  if (!definition) return null;
+  const props = definition.props;
+
+  const expose = (kind: PresetKind, styleKey?: "color" | "backgroundColor") => {
+    const base =
+      kind === "text" ? "text"
+      : kind === "color" ? (styleKey === "color" ? "textColor" : "background")
+      : kind === "visibility" ? "visible"
+      : "slot";
+    const name = uniquePropName(base, props.map((p) => p.name));
+    updateComponent(componentId, {
+      props: [...props, presetProp(name, kind, node.id, styleKey)],
+    });
+  };
+  const remove = (name: string) =>
+    updateComponent(componentId, { props: props.filter((p) => p.name !== name) });
+
+  const colorKey = node.type === "Text" ? "color" : "backgroundColor";
+
+  return (
+    <Section title="Expose as property">
+      <div className="flex flex-wrap gap-xs">
+        {node.type === "Text" && (
+          <ExposeButton label="Text" onClick={() => expose("text")} />
+        )}
+        <ExposeButton label="Color" onClick={() => expose("color", colorKey)} />
+        <ExposeButton label="Visibility" onClick={() => expose("visibility")} />
+        {isContainer(node) && <ExposeButton label="Slot" onClick={() => expose("slot")} />}
+      </div>
+      {props.length > 0 && (
+        <div className="mt-sm flex flex-col gap-2xs">
+          {props.map((prop) => (
+            <div key={prop.name} className="flex items-center justify-between gap-sm text-sm">
+              <span>
+                {prop.name} <span className="text-ink-faint">· {prop.valueType}</span>
+              </span>
+              <IconButton title={`Remove ${prop.name}`} onClick={() => remove(prop.name)}>
+                <Trash2 size={13} aria-hidden="true" />
+              </IconButton>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function ExposeButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+    >
+      + {label}
+    </button>
   );
 }

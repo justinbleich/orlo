@@ -314,10 +314,14 @@ export function RNNodeOverlay({
     );
     const rawHit = hitTestLayout(result.layout, point);
     if (!rawHit) return;
-    // Inside an instance, a double-click selects the instance rather than editing
-    // its internal (non-document) text — internals are edited via the definition.
-    if (ownerInstanceId(rawHit.node.id)) {
-      useDocumentStore.getState().setSelection([resolveHit(rawHit).node.id]);
+    // Double-clicking inside an instance opens its definition in focus mode —
+    // internals aren't document nodes, so they're edited via the component.
+    const ownerId = ownerInstanceId(rawHit.node.id);
+    if (ownerId) {
+      const inst = findNode(root, ownerId);
+      if (inst && inst.type === "ComponentInstance") {
+        useDocumentStore.getState().beginComponentEdit(inst.componentId);
+      }
       return;
     }
     const node = rawHit.node;

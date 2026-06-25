@@ -575,3 +575,27 @@ retarget to `@rn-canvas/document`.
   content on canvas selects the instance atomically (Inspector reads `COMPONENTINSTANCE`). No console
   errors; studio 25 tests pass; tsc clean. Per-instance override editors + expose-prop UI are slice 3b
   (the Inspector currently shows the generic node panel for an instance).
+
+### Slice 3b (focus-mode editing + per-instance overrides)
+
+- Editing a definition happens in a deliberate **focus mode**: `beginComponentEdit(componentId)` hosts
+  the template as a transient root keyed by the component id, so all existing layer/inspector/canvas
+  editing machinery operates on it unchanged. The store **mirrors** that root live into
+  `components[id].template` (in `mutateRoot` when `rootId === editingComponentId`), so instances
+  re-expand immediately and prop edits validate against the live template. `endComponentEdit(commit)`
+  drops the transient root and reconciles; Cancel restores `editingOriginalDefinition`.
+  `editingComponentId` + the original-definition snapshot are threaded through `Snapshot`/undo/redo.
+- Preservation is structural: overrides key by prop **name** and bind by node **id**, so template
+  edits keep instance overrides. `pruneDefinitionProps` drops targets for deleted nodes (and emptied
+  props); `reconcileOverrides` drops overrides orphaned by a removed/renamed prop — both run in the
+  store's `commitRegistry` on every registry change.
+- UI: double-click an instance (or the Components-row pencil) enters focus mode; a "Editing <Name> —
+  Done / Cancel" banner (`App.tsx`) exits; the Screens list filters the editing root. The Inspector
+  branches on `ComponentInstance` to a **Properties** section with per-`valueType` override editors
+  (`setInstanceOverride`), and in focus mode shows **Expose as property** controls (text/color/
+  visibility/slot via `presetProp`) + the definition's prop list. `presetProp` is the preset→general-
+  binding factory.
+- Verified live: promote → Edit → expose the text as a prop → Done → set instance A = "One", B =
+  "Two" → both render independently with the override editor reflecting each. document 45 / render-web
+  3 / studio 25 pass; tsc clean; no console errors. (Note: the live multi-context "Storybook" preview
+  is slice 3c; the variant matrix stays Phase 2D, as focused DS work independent of screens.)

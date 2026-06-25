@@ -1,5 +1,5 @@
 import type { Plugin } from "vite";
-import type { ComponentRegistry, Node } from "@rn-canvas/document";
+import type { ComponentRegistry, Node, TokenRegistry } from "@rn-canvas/document";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,6 +17,7 @@ type CodegenRequest = {
   screenName?: string;
   targetPath?: string;
   components?: ComponentRegistry;
+  tokens?: TokenRegistry;
 };
 
 type GeneratedComponent = {
@@ -24,6 +25,8 @@ type GeneratedComponent = {
   fileName: string;
   code: string;
 };
+
+type GeneratedTheme = { fileName: string; code: string };
 
 type SidecarRequest = {
   sidecarPath?: string;
@@ -51,6 +54,7 @@ type GeneratedScreen = {
   code: string;
   sidecar: string;
   components: GeneratedComponent[];
+  theme?: GeneratedTheme;
 };
 
 function readRequestJson<T>(req: import("node:http").IncomingMessage): Promise<T> {
@@ -131,11 +135,12 @@ async function runCodegen(
   root: Node,
   screenName: string,
   components?: ComponentRegistry,
+  tokens?: TokenRegistry,
 ): Promise<GeneratedScreen> {
   const dir = await mkdtemp(join(tmpdir(), "rncanvas-codegen-"));
   const inputPath = join(dir, "input.json");
   try {
-    await writeFile(inputPath, JSON.stringify({ root, screenName, components }));
+    await writeFile(inputPath, JSON.stringify({ root, screenName, components, tokens }));
     const { stdout } = await execFileAsync("pnpm", [
       "--filter",
       "@rn-canvas/codegen",
@@ -195,7 +200,7 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName, body.components);
+          const generated = await runCodegen(body.root, screenName, body.components, body.tokens);
           const paths = resolveTargetPath(screenName, body.targetPath);
           sendJson(res, 200, {
             ...generated,
@@ -218,15 +223,16 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName, body.components);
+          const generated = await runCodegen(body.root, screenName, body.components, body.tokens);
           const paths = resolveTargetPath(screenName, body.targetPath);
-          await mkdir(dirname(paths.tsxPath), { recursive: true });
+          const exportDir = dirname(paths.tsxPath);
+          await mkdir(exportDir, { recursive: true });
           await writeFile(paths.tsxPath, `${generated.code}\n`);
           await writeFile(paths.sidecarPath, `${generated.sidecar}\n`);
           // Write each used component as its own module beside the screen.
           const componentPaths: string[] = [];
           if (generated.components.length > 0) {
-            const componentsDir = join(dirname(paths.tsxPath), "components");
+            const componentsDir = join(exportDir, "components");
             await mkdir(componentsDir, { recursive: true });
             for (const component of generated.components) {
               const filePath = join(componentsDir, component.fileName);
@@ -234,11 +240,19 @@ export function simScreenshotPlugin(): Plugin {
               componentPaths.push(relative(repoRoot, filePath));
             }
           }
+          // Write the shared theme module at the export root (next to the screen).
+          let themePath: string | undefined;
+          if (generated.theme) {
+            const filePath = join(exportDir, generated.theme.fileName);
+            await writeFile(filePath, `${generated.theme.code}\n`);
+            themePath = relative(repoRoot, filePath);
+          }
           sendJson(res, 200, {
             ...generated,
             targetPath: relative(repoRoot, paths.tsxPath),
             sidecarPath: relative(repoRoot, paths.sidecarPath),
             componentPaths,
+            themePath,
             wrote: true,
           });
         } catch (error) {

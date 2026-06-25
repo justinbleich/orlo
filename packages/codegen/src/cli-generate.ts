@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
-import type { ComponentRegistry, Node } from "@rn-canvas/document";
+import type { ComponentRegistry, Node, TokenRegistry } from "@rn-canvas/document";
 import { generateScreen } from "./index";
 
 type CliInput = {
   root: Node;
   screenName?: string;
   components?: ComponentRegistry;
+  tokens?: TokenRegistry;
 };
 
 const inputPath = process.argv[2];
@@ -21,6 +22,7 @@ try {
   process.stdout.write(JSON.stringify(generateScreen(input.root, {
     screenName: input.screenName,
     components: input.components,
+    tokens: input.tokens,
   })));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

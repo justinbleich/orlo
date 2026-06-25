@@ -77,6 +77,8 @@ type CodegenResult = {
   sidecarPath: string;
   components?: { name: string; fileName: string; code: string }[];
   componentPaths?: string[];
+  theme?: { fileName: string; code: string };
+  themePath?: string;
   wrote?: boolean;
 };
 
@@ -85,6 +87,7 @@ type OpenDocumentResult = {
   screenName: string;
   root: Node;
   components?: import("@rn-canvas/document").ComponentRegistry;
+  tokens?: import("@rn-canvas/document").TokenRegistry;
   targetPath: string;
   sidecarPath: string;
 };
@@ -502,7 +505,13 @@ export default function App() {
         const res = await fetch(`/api/codegen/${mode}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ root: focusedRoot, screenName, targetPath, components: componentRegistry }),
+          body: JSON.stringify({
+            root: focusedRoot,
+            screenName,
+            targetPath,
+            components: componentRegistry,
+            tokens: useDocumentStore.getState().tokens,
+          }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -541,6 +550,7 @@ export default function App() {
         { [opened.root.id]: opened.root },
         [opened.root.id],
         opened.components,
+        opened.tokens,
       );
       resetCanvasHistory();
       setScreenName(opened.screenName);
@@ -890,6 +900,29 @@ export default function App() {
                       >
                         {codegenResult.code}
                       </pre>
+                      {codegenResult.theme && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                          <p style={{ margin: 0, color: color.inkDim, fontSize: text.sm }}>
+                            {codegenResult.theme.fileName}
+                          </p>
+                          <pre
+                            style={{
+                              margin: 0,
+                              padding: space.md,
+                              background: color.canvas,
+                              border: `1px solid ${color.line}`,
+                              borderRadius: radius.base,
+                              color: color.inkDim,
+                              fontSize: text.xs,
+                              lineHeight: 1.55,
+                              overflow: "auto",
+                              whiteSpace: "pre-wrap",
+                            }}
+                          >
+                            {codegenResult.theme.code}
+                          </pre>
+                        </div>
+                      )}
                       {codegenResult.components?.map((component) => (
                         <div key={component.fileName} style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
                           <p style={{ margin: 0, color: color.inkDim, fontSize: text.sm }}>

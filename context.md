@@ -674,3 +674,26 @@ these document-level RN design tokens.
   created a color token, bound the frame fill to it, changed the token value → the canvas fill
   propagated (blue → red) with the Inspector following; no console errors. Codegen output unchanged
   this slice (still literals); the `theme.ts` + file-canonical work is 2D-2.
+
+### Slice 2D-2 (token codegen: theme.ts + sidecar)
+
+- Codegen now emits tokens. `emit-core` `createEmitter` takes `tokens`; style entries carry a
+  `styleKey → tokenName` map (`StyleEntry` triple), and `styleObjectExpr` emits `theme.color.<name>`
+  for bound keys (literal otherwise). `usesTheme(styleEntries)` adds `import { theme } from "<prefix>theme"`
+  (`./` screens, `../` component modules). `emit-theme.ts` `emitTheme(registry)` →
+  `export const theme = { color: { <name>: <value> } } as const`. `generateScreen({tokens})` returns a
+  `theme` module when the screen or any used component (transitively) binds a token.
+- **Naming/identity contract honored:** bindings are by stable token id (`design.tokens`); the emitted
+  key is `registry[id].name`, resolved at emit. Renaming a token changes only the emitted key — the
+  binding is never rewritten (verified by test + live). Mirrors components→definition.name.
+- Sidecar persists the token registry (`SidecarDocument.tokens?`, additive, validated); studio
+  `requestCodegen` sends `tokens`; the vite plugin threads them to `cli-generate`, writes `theme.ts`
+  at the export root on Sync, and returns it for the Code tab; `/api/documents/open` passes tokens to
+  `loadRoots`.
+- Verified: codegen 28 tests (theme ref + import, rename-changes-only-the-key identity, emitTheme,
+  no-token screen omits theme, sidecar tokens round-trip); all suites green; tsc clean. Live —
+  `/api/codegen/preview` returns `theme.color.<name>` + a `theme.ts`; in-app bind → Preview shows the
+  ref + module; renaming the token re-keys the output with the binding untouched; no console errors.
+- **2D-2b (next):** promote `theme.ts` to the canonical, read-on-load source (single-writer file SoT).
+  Deferred deliberately — needs a parse-back + load/save lifecycle and is the file-I/O the perf
+  guardrail covers. This slice keeps the registry sidecar-canonical and writes `theme.ts` as artifact.

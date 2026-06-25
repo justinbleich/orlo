@@ -7,9 +7,11 @@
  */
 import {
   validateComponentRegistry,
+  validateTokenRegistry,
   validateTree,
   type ComponentRegistry,
   type Node,
+  type TokenRegistry,
 } from "@rn-canvas/document";
 
 export interface SidecarDocument {
@@ -19,14 +21,17 @@ export interface SidecarDocument {
   root: Node;
   /** Reusable component definitions referenced by this document (Phase 2C). */
   components?: ComponentRegistry;
+  /** Design tokens referenced by this document (Phase 2D). */
+  tokens?: TokenRegistry;
 }
 
 export function buildSidecar(
   root: Node,
-  opts: { screenName?: string; components?: ComponentRegistry } = {},
+  opts: { screenName?: string; components?: ComponentRegistry; tokens?: TokenRegistry } = {},
 ): SidecarDocument {
   const doc: SidecarDocument = { version: 1, screenName: opts.screenName ?? "Screen", root };
   if (opts.components && Object.keys(opts.components).length > 0) doc.components = opts.components;
+  if (opts.tokens && Object.keys(opts.tokens).length > 0) doc.tokens = opts.tokens;
   return doc;
 }
 
@@ -58,6 +63,16 @@ export function parseSidecar(json: string): SidecarDocument {
     const regErrors = validateComponentRegistry(sidecar.components);
     if (regErrors.length > 0) {
       const first = regErrors[0];
+      throw new Error(`Invalid .rncanvas.json sidecar: ${first.key} ${first.reason}`);
+    }
+  }
+  if (sidecar.tokens !== undefined) {
+    if (typeof sidecar.tokens !== "object" || sidecar.tokens === null) {
+      throw new Error("Invalid .rncanvas.json sidecar: tokens must be an object");
+    }
+    const tokenErrors = validateTokenRegistry(sidecar.tokens);
+    if (tokenErrors.length > 0) {
+      const first = tokenErrors[0];
       throw new Error(`Invalid .rncanvas.json sidecar: ${first.key} ${first.reason}`);
     }
   }

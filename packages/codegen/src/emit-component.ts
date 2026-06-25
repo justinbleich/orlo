@@ -12,12 +12,14 @@ import type {
   ComponentProp,
   ComponentRegistry,
   NodeId,
+  TokenRegistry,
 } from "@rn-canvas/document";
 import {
   createEmitter,
   moduleImports,
   stylesDeclaration,
   toComponentName,
+  usesTheme,
   valueToExpr,
   type NodeBindings,
 } from "./emit-core";
@@ -75,10 +77,11 @@ function propTSType(prop: ComponentProp): t.TSType {
 export function emitComponent(
   definition: ComponentDefinition,
   components?: ComponentRegistry,
+  tokens?: TokenRegistry,
 ): GeneratedComponent {
   const name = toComponentName(definition.name);
   const bindings = buildBindings(definition);
-  const emitter = createEmitter({ components, bindings });
+  const emitter = createEmitter({ components, bindings, tokens });
   const body = emitter.build(definition.template);
 
   // Props interface: each exposed prop typed by its valueType; node/defaulted props optional.
@@ -125,7 +128,11 @@ export function emitComponent(
     extra.push(decl);
   }
 
-  const imports = moduleImports(emitter.used, emitter.componentImports, "./", extra);
+  // Component modules live under `components/`, so the shared theme is one up.
+  const imports = moduleImports(emitter.used, emitter.componentImports, "./", extra, {
+    used: usesTheme(emitter.styleEntries),
+    prefix: "../",
+  });
   const stylesConst = stylesDeclaration(emitter.styleEntries);
   const file = t.file(
     t.program([...imports, propsInterface, fn, stylesConst], [], "module"),

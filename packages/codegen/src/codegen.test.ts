@@ -383,3 +383,71 @@ test("the sidecar round-trips the component registry", () => {
   bad.components.card1.name = "lowercase";
   assert.throws(() => parseSidecar(JSON.stringify(bad)), /Invalid .rncanvas.json sidecar/);
 });
+
+import { emitTheme } from "./index";
+import type { TokenRegistry } from "@rn-canvas/document";
+
+function tokenBoundScreen() {
+  return createNode("View", {
+    id: "screen",
+    style: { padding: 16, backgroundColor: "#3b82f6" },
+    design: { tokens: { backgroundColor: "tk1" } },
+    children: [createNode("Text", { props: { text: "Hi" }, style: { color: "#111111" } })],
+  });
+}
+const reg = (name: string): TokenRegistry => ({
+  tk1: { id: "tk1", name, category: "color", value: "#3b82f6" },
+});
+
+test("a token-bound style emits theme.color.<name> + a theme import", () => {
+  const gen = generateScreen(tokenBoundScreen(), { screenName: "Home", tokens: reg("brandPrimary") });
+  assertParses(gen.code);
+  assert.match(gen.code, /import \{ theme \} from "\.\/theme"/);
+  assert.match(gen.code, /backgroundColor: theme\.color\.brandPrimary/);
+  assert.match(gen.code, /color: "#111111"/); // unbound key stays literal
+  assert.ok(gen.theme, "a theme module is emitted");
+  assert.match(gen.theme!.code, /brandPrimary: "#3b82f6"/);
+  assertParses(gen.theme!.code);
+});
+
+test("renaming a token changes only the emitted key, not the binding (identity contract)", () => {
+  const root = tokenBoundScreen(); // binding is by id "tk1", never the name
+  const before = generateScreen(root, { screenName: "Home", tokens: reg("brandPrimary") });
+  const after = generateScreen(root, { screenName: "Home", tokens: reg("accent") });
+  assert.match(before.code, /theme\.color\.brandPrimary/);
+  assert.match(after.code, /theme\.color\.accent/);
+  assert.ok(!after.code.includes("brandPrimary"));
+  // The document binding is untouched across the rename.
+  assert.deepEqual(root.design?.tokens, { backgroundColor: "tk1" });
+});
+
+test("a screen with no token bindings imports no theme", () => {
+  const gen = generateScreen(createNode("View", { style: { padding: 8 } }), {
+    screenName: "Home",
+    tokens: reg("brandPrimary"),
+  });
+  assert.equal(gen.theme, undefined);
+  assert.ok(!gen.code.includes("./theme"));
+});
+
+test("emitTheme emits the registry as a typed theme module", () => {
+  const theme = emitTheme({
+    a: { id: "a", name: "bg", category: "color", value: "#fff" },
+    b: { id: "b", name: "fg", category: "color", value: "#000" },
+  });
+  assert.equal(theme.fileName, "theme.ts");
+  assert.match(theme.code, /export const theme = \{/);
+  assert.match(theme.code, /bg: "#fff"/);
+  assert.match(theme.code, /fg: "#000"/);
+  assert.match(theme.code, /\} as const/);
+  assertParses(theme.code);
+});
+
+test("the sidecar round-trips the token registry", () => {
+  const tokens = reg("brandPrimary");
+  const sidecar = serializeSidecar(buildSidecar(tokenBoundScreen(), { screenName: "Home", tokens }));
+  assert.deepEqual(parseSidecar(sidecar).tokens, tokens);
+  const bad = JSON.parse(sidecar);
+  bad.tokens.tk1.value = 42;
+  assert.throws(() => parseSidecar(JSON.stringify(bad)), /Invalid .rncanvas.json sidecar/);
+});

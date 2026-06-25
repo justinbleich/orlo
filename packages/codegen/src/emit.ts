@@ -12,12 +12,13 @@
  */
 import * as t from "@babel/types";
 import _generate from "@babel/generator";
-import type { ComponentRegistry, Node } from "@rn-canvas/document";
+import type { ComponentRegistry, Node, TokenRegistry } from "@rn-canvas/document";
 import {
   createEmitter,
   moduleImports,
   stylesDeclaration,
   toComponentName,
+  usesTheme,
 } from "./emit-core";
 
 // @babel/generator's default export is interop-wrapped under ESM.
@@ -30,16 +31,21 @@ export interface EmitOptions {
   screenName?: string;
   /** Definitions used to resolve ComponentInstance usages (Phase 2C). */
   components?: ComponentRegistry;
+  /** Design tokens; token-bound style keys emit `theme.color.<name>` (Phase 2D). */
+  tokens?: TokenRegistry;
 }
 
 export function emitScreen(root: Node, opts: EmitOptions = {}): string {
   const screenName = toComponentName(opts.screenName ?? "Screen");
-  const emitter = createEmitter({ components: opts.components });
+  const emitter = createEmitter({ components: opts.components, tokens: opts.tokens });
 
   // Build the tree first so `used` + `styleEntries` + `componentImports` populate.
   const tree: t.Expression = root.design?.hidden ? t.nullLiteral() : emitter.build(root);
 
-  const imports = moduleImports(emitter.used, emitter.componentImports, "./components/");
+  const imports = moduleImports(emitter.used, emitter.componentImports, "./components/", [], {
+    used: usesTheme(emitter.styleEntries),
+    prefix: "./",
+  });
   const component = t.exportDefaultDeclaration(
     t.functionDeclaration(
       t.identifier(screenName),

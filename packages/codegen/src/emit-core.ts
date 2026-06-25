@@ -16,8 +16,13 @@ import {
   type Node,
   type NodeId,
   type RNPrimitive,
+  type TokenRegistry,
 } from "@rn-canvas/document";
 import type { RNStyle } from "@rn-canvas/styles";
+
+/** A style entry for `StyleSheet.create`: key, value, and which style keys are
+ *  token-bound (styleKey → token *name*, the emitted `theme.color.<name>`). */
+export type StyleEntry = [string, RNStyle, Record<string, string>?];
 
 export const IDENT_RE = /^[A-Za-z_$][\w$]*$/;
 
@@ -55,10 +60,24 @@ export function valueToExpr(v: unknown): t.Expression {
   return t.identifier("undefined");
 }
 
-export function styleObjectExpr(style: RNStyle): t.ObjectExpression {
+/** `theme.color.<name>` member expression. */
+function themeRef(name: string): t.MemberExpression {
+  return t.memberExpression(
+    t.memberExpression(t.identifier("theme"), t.identifier("color")),
+    t.identifier(name),
+  );
+}
+
+export function styleObjectExpr(
+  style: RNStyle,
+  themeBindings?: Record<string, string>,
+): t.ObjectExpression {
   return t.objectExpression(
     Object.entries(style).map(([k, v]) =>
-      t.objectProperty(keyNode(k), valueToExpr(v)),
+      t.objectProperty(
+        keyNode(k),
+        themeBindings?.[k] ? themeRef(themeBindings[k]) : valueToExpr(v),
+      ),
     ),
   );
 }
@@ -96,6 +115,8 @@ export interface EmitterOptions {
   components?: ComponentRegistry;
   /** Component-template prop substitutions, keyed by template node id. */
   bindings?: Map<NodeId, NodeBindings>;
+  /** Design tokens; bound style keys emit `theme.color.<name>` (Phase 2D). */
+  tokens?: TokenRegistry;
 }
 
 export interface Emitter {
@@ -104,14 +125,19 @@ export interface Emitter {
   used: Set<RNPrimitive>;
   /** Component names referenced as usages (imported from their own modules). */
   componentImports: Set<string>;
-  styleEntries: Array<[string, RNStyle]>;
+  styleEntries: StyleEntry[];
+}
+
+/** Whether any style entry references a design token (→ needs the theme import). */
+export function usesTheme(styleEntries: StyleEntry[]): boolean {
+  return styleEntries.some((entry) => entry[2] && Object.keys(entry[2]).length > 0);
 }
 
 export function createEmitter(options: EmitterOptions = {}): Emitter {
-  const { components, bindings } = options;
+  const { components, bindings, tokens } = options;
   const used = new Set<RNPrimitive>();
   const componentImports = new Set<string>();
-  const styleEntries: Array<[string, RNStyle]> = [];
+  const styleEntries: StyleEntry[] = [];
   const counters: Record<string, number> = {};
 
   const visibleChildren = (node: Node): Node[] =>
@@ -123,6 +149,18 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
     return counters[base] === 1 ? base : `${base}${counters[base]}`;
   }
 
+  /** Style keys on this node bound to a token → the token's emitted name. */
+  function themeBindingsFor(node: Node): Record<string, string> {
+    const bound = node.design?.tokens;
+    if (!bound || !tokens) return {};
+    const result: Record<string, string> = {};
+    for (const [styleKey, tokenId] of Object.entries(bound)) {
+      const token = tokens[tokenId];
+      if (token && styleKey in node.style) result[styleKey] = token.name;
+    }
+    return result;
+  }
+
   /** `style={…}` attribute, merging a static StyleSheet ref with prop-bound keys. */
   function styleAttr(node: Node, bind: NodeBindings | undefined): t.JSXAttribute | null {
     const hasStatic = Object.keys(node.style).length > 0;
@@ -131,7 +169,7 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
     let staticRef: t.Expression | null = null;
     if (hasStatic) {
       const key = styleKeyFor(node);
-      styleEntries.push([key, node.style]);
+      styleEntries.push([key, node.style, themeBindingsFor(node)]);
       staticRef = t.memberExpression(t.identifier("styles"), t.identifier(key));
     }
     if (!dynamic) return exprAttr("style", staticRef!);
@@ -281,12 +319,15 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
   return { build, used, componentImports, styleEntries };
 }
 
-/** Assemble a `react-native` import plus component-module imports for a file. */
+/** Assemble a `react-native` import, component-module imports, and (when used) the
+ *  shared `theme` import for a file. `themePrefix` is relative to this module
+ *  (`./` for screens, `../` for component modules under `components/`). */
 export function moduleImports(
   used: Set<RNPrimitive>,
   componentImports: Set<string>,
   componentPrefix: string,
   extra: t.Statement[] = [],
+  theme?: { used: boolean; prefix: string },
 ): t.Statement[] {
   const rnNames = [...new Set<string>([...used, "StyleSheet"])].sort();
   const rnImport = t.importDeclaration(
@@ -301,21 +342,27 @@ export function moduleImports(
         t.stringLiteral(`${componentPrefix}${name}`),
       ),
     );
-  return [rnImport, ...componentDecls, ...extra];
+  const themeDecls = theme?.used
+    ? [
+        t.importDeclaration(
+          [t.importSpecifier(t.identifier("theme"), t.identifier("theme"))],
+          t.stringLiteral(`${theme.prefix}theme`),
+        ),
+      ]
+    : [];
+  return [rnImport, ...componentDecls, ...themeDecls, ...extra];
 }
 
 /** `const styles = StyleSheet.create({ … })` (emitted even when empty, so the
  *  `StyleSheet` import is always used and output stays uniform). */
-export function stylesDeclaration(
-  styleEntries: Array<[string, RNStyle]>,
-): t.VariableDeclaration {
+export function stylesDeclaration(styleEntries: StyleEntry[]): t.VariableDeclaration {
   return t.variableDeclaration("const", [
     t.variableDeclarator(
       t.identifier("styles"),
       t.callExpression(t.memberExpression(t.identifier("StyleSheet"), t.identifier("create")), [
         t.objectExpression(
-          styleEntries.map(([key, style]) =>
-            t.objectProperty(t.identifier(key), styleObjectExpr(style)),
+          styleEntries.map(([key, style, themeBindings]) =>
+            t.objectProperty(t.identifier(key), styleObjectExpr(style, themeBindings)),
           ),
         ),
       ]),

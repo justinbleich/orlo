@@ -155,9 +155,20 @@ export function validateDesign(design: unknown): PropError[] {
     return [{ key: "design", reason: "expected a design metadata object" }];
   }
   const errors: PropError[] = [];
-  const allowed = new Set(["name", "locked", "hidden", "annotations"]);
+  const allowed = new Set(["name", "locked", "hidden", "annotations", "tokens"]);
   for (const key of Object.keys(design)) {
     if (!allowed.has(key)) errors.push({ key: `design.${key}`, reason: "unknown design field" });
+  }
+  if (design.tokens !== undefined) {
+    if (!isPlainObject(design.tokens)) {
+      errors.push({ key: "design.tokens", reason: "expected a styleKey → tokenId object" });
+    } else {
+      for (const [styleKey, tokenId] of Object.entries(design.tokens)) {
+        if (typeof tokenId !== "string") {
+          errors.push({ key: `design.tokens.${styleKey}`, reason: "expected a token id string" });
+        }
+      }
+    }
   }
   if (design.name !== undefined && typeof design.name !== "string") {
     errors.push({ key: "design.name", reason: "expected a string" });

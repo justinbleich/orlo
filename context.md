@@ -625,3 +625,52 @@ retarget to `@rn-canvas/document`.
   the in-app Preview renders the screen + module. Known wart: promoting a bare primitive auto-names the
   component after its type (e.g. "Text"), shadowing the RN primitive in output — guard the auto-namer
   (flagged as a follow-up; codegen itself is faithful).
+
+## Phase 2D scope (locked) — variants, tokens & library
+
+Three of the four pillars reuse the proven shape: a global registry + per-node bindings + reconcile-on-
+edit + codegen substitution (the same machinery as components). Variants are the genuinely new model.
+Decisions: **tokens first**, **color tokens first** (spacing/typography as fast follows on the same
+machinery), and the variant model is the **full Figma-style component-set** (axes + per-combination
+overrides), not variants-lite.
+
+Slice order:
+- **2D-1 Token model (color):** a global token registry (sibling of `components` in the store) + per-
+  node bindings (`tokenBindings: { styleKey → tokenId }`, design-time metadata). Style values stay
+  **resolved literals** so render/Yoga/codegen are untouched; a token edit re-resolves every bound
+  value (the "propagates to every bound component on canvas" DoD). Recommended representation:
+  resolved-literal + sidecar bindings (not a reference inside `RNStyle`, which is typed as string|number
+  and feeds Yoga). Minimal inspector: bind/unbind a color style key to a token. Model/store/tests.
+- **2D-2 Token codegen + sidecar:** tokens → a shared `theme.ts`; token-bound style keys emit
+  `theme.color.primary` instead of the literal (extends the emitter's style serialization + a theme
+  module, like slice 4's component modules); registry persists in the sidecar.
+- **2D-3 Variants (full component-set):** named variant axes + per-combination overrides on a
+  definition; instances pick a combination; codegen emits a component taking variant props that switch
+  styles/structure. Heaviest pillar.
+- **2D-4 Variant matrix view:** all combinations auto-laid-out on a DS canvas surface independent of
+  screens (the agreed mental model).
+- **2D-5 Library panel:** grow the Components section into browse/search/insert for components + tokens.
+
+Existing studio `design-tokens.css` / `studio-theme.ts` are the **app chrome's** tokens — unrelated to
+these document-level RN design tokens.
+
+### Slice 2D-1 (token model: color)
+
+- Model (`packages/document`): `ColorToken`/`DesignToken`/`TokenRegistry`; `DesignMeta.tokens`
+  (styleKey → tokenId) — a binding that codegen will read but, like `design.hidden`, never emit.
+  Style values stay **resolved literals**, so render/Yoga/codegen are untouched. `tokens.ts`:
+  `reapplyTokens` (re-resolve bound literals; drop bindings to removed tokens — identity-preserving)
+  and `validateTokenRegistry`. `validate.ts` allows `design.tokens`.
+- Store: `tokens` registry in state + `Snapshot` (undo/redo); `addToken`/`updateToken`/`removeToken`,
+  `bindStyleToken` (records binding + writes the resolved literal), `unbindStyleToken` (keeps literal).
+  A token value change commits through `commitTokens`, which **reapplies across every root and
+  component template** — the propagation guarantee. `loadRoots` takes an optional token registry.
+- UI: a **Tokens** panel section (create/edit-value/rename/delete color tokens) and a per-color-field
+  **Bind token** control in the Inspector (a token `Select` + unbind ×), single-selection only.
+- **Bug found + fixed (pre-existing):** `addRoot` had been a no-op since 2C slice 1 — `commit` was
+  converted to take `{ roots }` but `addRoot` still passed a positional `Roots` map, so "Add screen"/
+  `addFrame` silently did nothing. Fixed + guarded with a regression test.
+- Verified: document 53 / codegen 23 / styles 19 / render-web 3 / studio 25 pass; tsc clean. Live —
+  created a color token, bound the frame fill to it, changed the token value → the canvas fill
+  propagated (blue → red) with the Inspector following; no console errors. Codegen output unchanged
+  this slice (still literals); the `theme.ts` + file-canonical work is 2D-2.

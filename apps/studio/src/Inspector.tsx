@@ -33,6 +33,7 @@ import {
   Type as TypeIcon,
   Ungroup as UngroupIcon,
   Unlock,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -713,6 +714,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </Field>
           <Field label="Color">
             <ColorField {...editLifecycle} value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
+            {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="color" />}
           </Field>
         </Section>
       )}
@@ -720,6 +722,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
       <Section title="Appearance">
         <Field label="Fill">
           <ColorField {...editLifecycle} value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
+          {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="backgroundColor" />}
         </Field>
         <Field label="Opacity">
           <NumberField {...editLifecycle} label="○" {...num("opacity")} min={0} max={1} step={0.05} onChange={(v) => setStyle("opacity", v)} />
@@ -734,6 +737,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         </FieldGrid>
         <Field label="Border color">
           <ColorField {...editLifecycle} value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
+          {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="borderColor" />}
         </Field>
       </Section>
 
@@ -1011,6 +1015,33 @@ function ExposeControls({ componentId, node }: { componentId: NodeId; node: Node
         </div>
       )}
     </Section>
+  );
+}
+
+/** Bind/unbind a single node's color style key to a design token (Phase 2D). */
+function TokenBind({ rootId, nodeId, styleKey }: { rootId: NodeId; nodeId: NodeId; styleKey: string }) {
+  const tokens = useDocumentStore((s) => s.tokens);
+  const root = useDocumentStore((s) => s.roots[rootId]);
+  const bind = useDocumentStore((s) => s.bindStyleToken);
+  const unbind = useDocumentStore((s) => s.unbindStyleToken);
+  const colorTokens = Object.values(tokens).filter((t) => t.category === "color");
+  if (colorTokens.length === 0) return null;
+  const node = root ? findNode(root, nodeId) : undefined;
+  const bound = node?.design?.tokens?.[styleKey];
+  return (
+    <div className="flex items-center gap-xs">
+      <Select
+        value={bound}
+        onChange={(id) => bind(rootId, nodeId, styleKey, id)}
+        options={colorTokens.map((t) => ({ value: t.id, label: t.name }))}
+        placeholder="Bind token"
+      />
+      {bound && (
+        <IconButton title="Unbind token" onClick={() => unbind(rootId, nodeId, styleKey)}>
+          <X size={13} aria-hidden="true" />
+        </IconButton>
+      )}
+    </div>
   );
 }
 

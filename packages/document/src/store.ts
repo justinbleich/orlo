@@ -11,9 +11,11 @@ import type {
   ComponentDefinition,
   ComponentRegistry,
   DesignMeta,
+  DesignToken,
   Node,
   NodeId,
   OverrideValue,
+  TokenRegistry,
 } from "./types";
 import {
   findNode,
@@ -35,6 +37,7 @@ import {
   validateComponentRegistry,
   validateInstance,
 } from "./components";
+import { reapplyTokens, validateTokenRegistry } from "./tokens";
 
 export type Roots = Record<NodeId, Node>;
 
@@ -43,6 +46,8 @@ export type Roots = Record<NodeId, Node>;
 export interface Snapshot {
   roots: Roots;
   components: ComponentRegistry;
+  /** Design tokens, keyed by id (Phase 2D). */
+  tokens: TokenRegistry;
   /** The component whose template is open for editing (hosted as a transient root). */
   editingComponentId: NodeId | null;
   /** Definition captured at edit-start, so Cancel can discard the session. */
@@ -54,6 +59,8 @@ export interface DocumentState {
   roots: Roots;
   /** Reusable component definitions, keyed by id (Phase 2C). Not per-frame. */
   components: ComponentRegistry;
+  /** Design tokens, keyed by id (Phase 2D). Global, like components. */
+  tokens: TokenRegistry;
   /** Component whose template is open in focus mode (its template is a transient root). */
   editingComponentId: NodeId | null;
   /** Definition captured when focus mode opened, for Cancel. */
@@ -70,7 +77,12 @@ export interface DocumentState {
 
   /** Replace the open document atomically. Used by sidecar loading; opening a
    *  document starts a fresh undo history rather than mixing document sessions. */
-  loadRoots(roots: Roots, selection?: NodeId[], components?: ComponentRegistry): void;
+  loadRoots(
+    roots: Roots,
+    selection?: NodeId[],
+    components?: ComponentRegistry,
+    tokens?: TokenRegistry,
+  ): void;
 
   addRoot(root: Node): void;
   removeRoot(rootId: NodeId): void;
@@ -88,6 +100,15 @@ export interface DocumentState {
   beginComponentEdit(componentId: NodeId): void;
   /** Close focus mode; `commit` writes the edited template back to the definition. */
   endComponentEdit(commit?: boolean): void;
+
+  // --- Design tokens (Phase 2D) ---
+  addToken(token: DesignToken): void;
+  updateToken(tokenId: NodeId, partial: Partial<DesignToken>): void;
+  removeToken(tokenId: NodeId): void;
+  /** Bind a node's style key to a token: records the binding + resolves the literal. */
+  bindStyleToken(rootId: NodeId, nodeId: NodeId, styleKey: string, tokenId: NodeId): void;
+  /** Drop a style key's token binding, keeping the last resolved literal. */
+  unbindStyleToken(rootId: NodeId, nodeId: NodeId, styleKey: string): void;
 
   insertChild(rootId: NodeId, parentId: NodeId, child: Node, index?: number): void;
   removeNode(rootId: NodeId, id: NodeId): void;
@@ -109,13 +130,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
   const snapshotOf = (state: DocumentState): Snapshot => ({
     roots: state.roots,
     components: state.components,
+    tokens: state.tokens,
     editingComponentId: state.editingComponentId,
     editingOriginalDefinition: state.editingOriginalDefinition,
     selection: state.selection,
   });
 
-  /** Commit new roots and/or registry, snapshotting the prior document for undo. */
-  const commit = (next: { roots?: Roots; components?: ComponentRegistry }) => {
+  /** Commit new roots/registry/tokens, snapshotting the prior document for undo. */
+  const commit = (next: {
+    roots?: Roots;
+    components?: ComponentRegistry;
+    tokens?: TokenRegistry;
+  }) => {
     set((state) => ({
       past: state.interaction
         ? state.past
@@ -123,7 +149,31 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       future: [],
       roots: next.roots ?? state.roots,
       components: next.components ?? state.components,
+      tokens: next.tokens ?? state.tokens,
     }));
+  };
+
+  /**
+   * Commit a token-registry change, re-resolving every token-bound style literal
+   * across roots and component templates (and dropping bindings to removed tokens).
+   * Validates the registry before committing.
+   */
+  const commitTokens = (tokens: TokenRegistry) => {
+    const errors = validateTokenRegistry(tokens);
+    if (errors.length > 0) {
+      const first = errors[0];
+      throw new Error(`Invalid token: ${first.key} ${first.reason}`);
+    }
+    const { roots, components } = get();
+    const reconciledRoots: Roots = {};
+    for (const [id, root] of Object.entries(roots)) {
+      reconciledRoots[id] = reapplyTokens(root, tokens);
+    }
+    const reconciledComponents: ComponentRegistry = {};
+    for (const [id, def] of Object.entries(components)) {
+      reconciledComponents[id] = { ...def, template: reapplyTokens(def.template, tokens) };
+    }
+    commit({ roots: reconciledRoots, components: reconciledComponents, tokens });
   };
 
   /**
@@ -173,6 +223,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
   return {
     roots: {},
     components: {},
+    tokens: {},
     editingComponentId: null,
     editingOriginalDefinition: null,
     selection: [],
@@ -191,7 +242,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       if (!state.interaction) return;
       const changed =
         state.roots !== state.interaction.roots ||
-        state.components !== state.interaction.components;
+        state.components !== state.interaction.components ||
+        state.tokens !== state.interaction.tokens;
       set({
         interaction: null,
         past: changed
@@ -206,6 +258,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       set({
         roots: state.interaction.roots,
         components: state.interaction.components,
+        tokens: state.interaction.tokens,
         editingComponentId: state.interaction.editingComponentId,
         editingOriginalDefinition: state.interaction.editingOriginalDefinition,
         selection: state.interaction.selection,
@@ -213,7 +266,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       });
     },
 
-    loadRoots: (roots, selection, components) => {
+    loadRoots: (roots, selection, components, tokens) => {
       for (const [rootId, root] of Object.entries(roots)) {
         if (root.id !== rootId) {
           throw new Error(`Root key does not match node id: ${rootId}`);
@@ -232,10 +285,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         const first = regErrors[0];
         throw new Error(`Invalid component registry: ${first.key} ${first.reason}`);
       }
+      const tokenRegistry = tokens ?? {};
+      const tokenErrors = validateTokenRegistry(tokenRegistry);
+      if (tokenErrors.length > 0) {
+        const first = tokenErrors[0];
+        throw new Error(`Invalid token registry: ${first.key} ${first.reason}`);
+      }
       const nextSelection = selection ?? Object.keys(roots).slice(0, 1);
       set({
         roots,
         components: registry,
+        tokens: tokenRegistry,
         editingComponentId: null,
         editingOriginalDefinition: null,
         selection: nextSelection,
@@ -251,7 +311,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         const first = errors[0];
         throw new Error(`Invalid document root ${root.id}: ${first.key} ${first.reason}`);
       }
-      commit({ ...get().roots, [root.id]: root });
+      commit({ roots: { ...get().roots, [root.id]: root } });
     },
     removeRoot: (rootId) => {
       const next = { ...get().roots };
@@ -385,6 +445,46 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       });
     },
 
+    addToken: (token) => {
+      commitTokens({ ...get().tokens, [token.id]: token });
+    },
+    updateToken: (tokenId, partial) => {
+      const { tokens } = get();
+      const current = tokens[tokenId];
+      if (!current) throw new Error(`Token not found: ${tokenId}`);
+      commitTokens({ ...tokens, [tokenId]: { ...current, ...partial, id: tokenId } });
+    },
+    removeToken: (tokenId) => {
+      const next = { ...get().tokens };
+      delete next[tokenId];
+      // commitTokens reapplies, dropping every binding to the removed token.
+      commitTokens(next);
+    },
+    bindStyleToken: (rootId, nodeId, styleKey, tokenId) => {
+      const token = get().tokens[tokenId];
+      if (!token) throw new Error(`Token not found: ${tokenId}`);
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, nodeId);
+        if (!node) throw new Error(`Node not found: ${nodeId}`);
+        const withValue = opUpdateStyle(tree, nodeId, { [styleKey]: token.value });
+        const bound = findNode(withValue, nodeId);
+        const tokens = { ...(bound?.design?.tokens ?? {}), [styleKey]: tokenId };
+        return opUpdateDesign(withValue, nodeId, { tokens });
+      });
+    },
+    unbindStyleToken: (rootId, nodeId, styleKey) => {
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, nodeId);
+        const current = node?.design?.tokens;
+        if (!current || !(styleKey in current)) return tree;
+        const tokens = { ...current };
+        delete tokens[styleKey];
+        return opUpdateDesign(tree, nodeId, {
+          tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
+        });
+      });
+    },
+
     insertChild: (rootId, parentId, child, index) =>
       mutateRoot(rootId, (t) => opInsertChild(t, parentId, child, index)),
     removeNode: (rootId, id) => mutateRoot(rootId, (t) => opRemoveNode(t, id)),
@@ -408,6 +508,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         return {
           roots: previous.roots,
           components: previous.components,
+          tokens: previous.tokens,
           editingComponentId: previous.editingComponentId,
           editingOriginalDefinition: previous.editingOriginalDefinition,
           selection: previous.selection,
@@ -423,6 +524,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         return {
           roots: next.roots,
           components: next.components,
+          tokens: next.tokens,
           editingComponentId: next.editingComponentId,
           editingOriginalDefinition: next.editingOriginalDefinition,
           selection: next.selection,

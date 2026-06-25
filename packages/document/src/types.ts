@@ -3,7 +3,7 @@
  * The renderer, codegen, and harness all derive from this; none holds canonical
  * state of its own.
  */
-import type { RNStyle } from "@rn-canvas/styles";
+import type { Color, RNStyle } from "@rn-canvas/styles";
 
 export const RN_PRIMITIVES = [
   "View",
@@ -30,7 +30,27 @@ export interface DesignMeta {
   locked?: boolean; // honored by the canvas interaction layer: no select/move
   hidden?: boolean; // honored by the canvas interaction layer: not rendered
   annotations?: Annotation[];
+  /**
+   * Design-token bindings: styleKey → token id (Phase 2D). The resolved value
+   * stays in `style[styleKey]` (so render/Yoga/codegen are untouched); codegen
+   * READS this to emit a theme reference but, like `hidden`, never emits the map.
+   */
+  tokens?: Record<string, string>;
 }
+
+// --- Design tokens (Phase 2D) ---
+
+/** A named color value in the design system. Spacing/typography extend later. */
+export interface ColorToken {
+  id: string;
+  name: string;
+  category: "color";
+  value: Color;
+}
+
+export type DesignToken = ColorToken;
+
+export type TokenRegistry = Record<string, DesignToken>;
 
 interface NodeBase {
   id: NodeId;

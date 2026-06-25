@@ -31,6 +31,7 @@ import {
   findNode,
   findRootContaining,
   getParent,
+  RN_PRIMITIVES,
   useDocumentStore,
   type NodeId,
   type RNPrimitive,
@@ -325,6 +326,7 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
   const [screensOpen, setScreensOpen] = useState(true);
   const [layersOpen, setLayersOpen] = useState(true);
   const [componentsOpen, setComponentsOpen] = useState(true);
+  const [tokensOpen, setTokensOpen] = useState(true);
   const roots = useDocumentStore((state) => state.roots);
   const selection = useDocumentStore((state) => state.selection);
   const setSelection = useDocumentStore((state) => state.setSelection);
@@ -334,6 +336,10 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
   const removeComponent = useDocumentStore((state) => state.removeComponent);
   const editingComponentId = useDocumentStore((state) => state.editingComponentId);
   const beginComponentEdit = useDocumentStore((state) => state.beginComponentEdit);
+  const tokens = useDocumentStore((state) => state.tokens);
+  const addToken = useDocumentStore((state) => state.addToken);
+  const updateToken = useDocumentStore((state) => state.updateToken);
+  const removeToken = useDocumentStore((state) => state.removeToken);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
   const setArmedComponent = useStudioStore((state) => state.setArmedComponent);
   const selectedId = selection[0] ?? null;
@@ -368,11 +374,24 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
 
   function createComponent() {
     if (!focusedRoot || !selectedId || !selectedNode) return;
-    const base = pascalCase(selectedNode.design?.name ?? selectedNode.type);
+    const pascal = pascalCase(selectedNode.design?.name ?? selectedNode.type);
+    // Avoid auto-naming a component exactly like an RN primitive (e.g. "Text",
+    // "View"), which would shadow the imported primitive in generated screens.
+    const base = (RN_PRIMITIVES as readonly string[]).includes(pascal)
+      ? `${pascal}Component`
+      : pascal;
     const taken = new Set(componentList.map((comp) => comp.name));
     let name = base;
     for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
     promoteToComponent(focusedRoot.id, selectedId, name);
+  }
+
+  const tokenList = Object.values(tokens);
+  function createColorToken() {
+    const taken = new Set(tokenList.map((token) => token.name));
+    let name = "color1";
+    for (let i = 2; taken.has(name); i += 1) name = `color${i}`;
+    addToken({ id: crypto.randomUUID(), name, category: "color", value: "#3b82f6" });
   }
 
   function deleteScreen(rootId: NodeId) {
@@ -575,6 +594,46 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                 </div>
               );
             })}
+          </div>
+        )}
+      </NavigatorSection>
+      <hr className="m-0 border-0 border-t border-line-soft" aria-hidden="true" />
+      <NavigatorSection
+        label="Tokens"
+        open={tokensOpen}
+        onToggle={() => setTokensOpen((open) => !open)}
+        action={
+          <button type="button" style={panelIconButton} onClick={createColorToken} title="Add color token">
+            <Plus size={16} aria-hidden="true" />
+          </button>
+        }
+      >
+        {tokenList.length === 0 ? (
+          <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
+            Add a color token, then bind a fill to it in the Inspector.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+            {tokenList.map((token) => (
+              <div key={token.id} style={{ display: "flex", alignItems: "center", gap: space.xs }}>
+                <input
+                  type="color"
+                  value={token.value}
+                  onChange={(e) => updateToken(token.id, { value: e.target.value })}
+                  title="Token value"
+                  style={{ width: 22, height: 22, padding: 0, border: `1px solid ${color.line}`, borderRadius: radius.sm, background: "none", cursor: "pointer", flex: "0 0 auto" }}
+                />
+                <input
+                  value={token.name}
+                  onChange={(e) => { try { updateToken(token.id, { name: e.target.value }); } catch { /* keep last valid name */ } }}
+                  spellCheck={false}
+                  style={{ ...panelButton, flex: 1, minWidth: 0, fontFamily: "var(--font-mono)" }}
+                />
+                <button type="button" onClick={() => removeToken(token.id)} style={panelIconButton} title="Delete token">
+                  <Trash2 size={15} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </NavigatorSection>

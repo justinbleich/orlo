@@ -5,20 +5,29 @@
  *
  * Design metadata lives ONLY here, never in the emitted code (see emit.ts).
  */
-import { validateTree, type Node } from "@rn-canvas/document";
+import {
+  validateComponentRegistry,
+  validateTree,
+  type ComponentRegistry,
+  type Node,
+} from "@rn-canvas/document";
 
 export interface SidecarDocument {
   version: 1;
   screenName: string;
   /** The full node tree, including design-time metadata. */
   root: Node;
+  /** Reusable component definitions referenced by this document (Phase 2C). */
+  components?: ComponentRegistry;
 }
 
 export function buildSidecar(
   root: Node,
-  opts: { screenName?: string } = {},
+  opts: { screenName?: string; components?: ComponentRegistry } = {},
 ): SidecarDocument {
-  return { version: 1, screenName: opts.screenName ?? "Screen", root };
+  const doc: SidecarDocument = { version: 1, screenName: opts.screenName ?? "Screen", root };
+  if (opts.components && Object.keys(opts.components).length > 0) doc.components = opts.components;
+  return doc;
 }
 
 export function serializeSidecar(doc: SidecarDocument): string {
@@ -41,6 +50,16 @@ export function parseSidecar(json: string): SidecarDocument {
   if (errors.length > 0) {
     const first = errors[0];
     throw new Error(`Invalid .rncanvas.json sidecar: ${first.key} ${first.reason}`);
+  }
+  if (sidecar.components !== undefined) {
+    if (typeof sidecar.components !== "object" || sidecar.components === null) {
+      throw new Error("Invalid .rncanvas.json sidecar: components must be an object");
+    }
+    const regErrors = validateComponentRegistry(sidecar.components);
+    if (regErrors.length > 0) {
+      const first = regErrors[0];
+      throw new Error(`Invalid .rncanvas.json sidecar: ${first.key} ${first.reason}`);
+    }
   }
   return sidecar;
 }

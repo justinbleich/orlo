@@ -1,8 +1,15 @@
-import type { Node } from "@rn-canvas/document";
+import {
+  childrenOf,
+  type ComponentDefinition,
+  type ComponentRegistry,
+  type Node,
+} from "@rn-canvas/document";
 import { emitScreen, type EmitOptions } from "./emit";
+import { emitComponent, type GeneratedComponent } from "./emit-component";
 import { buildSidecar, serializeSidecar, type SidecarDocument } from "./sidecar";
 
 export { emitScreen, type EmitOptions } from "./emit";
+export { emitComponent, type GeneratedComponent } from "./emit-component";
 export {
   buildSidecar,
   serializeSidecar,
@@ -21,6 +28,8 @@ export interface GeneratedScreen {
   code: string;
   /** Serialized `*.rncanvas.json` sidecar (canonical tree + design metadata). */
   sidecar: string;
+  /** Standalone modules for every component this screen uses (transitively). */
+  components: GeneratedComponent[];
 }
 
 export interface ScreenDocument {
@@ -28,13 +37,39 @@ export interface ScreenDocument {
   root: Node;
 }
 
-/** Generate a screen's code and its committed sidecar together (BUILD Phase 3). */
+/** Definitions used by a tree, transitively (instances + their templates + slots). */
+function collectUsedComponents(
+  node: Node,
+  registry: ComponentRegistry,
+  acc = new Map<string, ComponentDefinition>(),
+): Map<string, ComponentDefinition> {
+  if (node.type === "ComponentInstance") {
+    const def = registry[node.componentId];
+    if (def && !acc.has(def.id)) {
+      acc.set(def.id, def);
+      collectUsedComponents(def.template, registry, acc);
+    }
+    if (node.slots) {
+      for (const kids of Object.values(node.slots)) {
+        for (const kid of kids) collectUsedComponents(kid, registry, acc);
+      }
+    }
+    return acc;
+  }
+  for (const child of childrenOf(node)) collectUsedComponents(child, registry, acc);
+  return acc;
+}
+
+/** Generate a screen's code, its sidecar, and the component modules it uses. */
 export function generateScreen(root: Node, opts: EmitOptions = {}): GeneratedScreen {
   const screenName = opts.screenName ?? "Screen";
+  const registry = opts.components ?? {};
+  const used = [...collectUsedComponents(root, registry).values()];
   return {
     screenName,
-    code: emitScreen(root, { screenName }),
-    sidecar: serializeSidecar(buildSidecar(root, { screenName })),
+    code: emitScreen(root, { screenName, components: registry }),
+    sidecar: serializeSidecar(buildSidecar(root, { screenName, components: registry })),
+    components: used.map((def) => emitComponent(def, registry)),
   };
 }
 

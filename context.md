@@ -599,3 +599,29 @@ retarget to `@rn-canvas/document`.
   "Two" → both render independently with the override editor reflecting each. document 45 / render-web
   3 / studio 25 pass; tsc clean; no console errors. (Note: the live multi-context "Storybook" preview
   is slice 3c; the variant matrix stays Phase 2D, as focused DS work independent of screens.)
+
+### Slice 4 (codegen: definitions → components, instances → usages)
+
+- Closes Phase 2C's definition of done — components now export as real RN. `emit.buildJSX` no longer
+  throws on a `ComponentInstance`.
+- Codegen refactored around a shared `emit-core.ts` (`createEmitter`) used by both screen and component
+  emit. `emit-component.ts` `emitComponent(definition)` emits a standalone, typed module: a props
+  interface from `valueType`s (string/color→string, number, boolean, enum→literal union, node→
+  `ReactNode`), default params from `prop.default`, and binding substitutions at bound nodes — text →
+  `{prop}`, style key → `style={[styles.x, { key: prop }]}`, visibility → `{prop && <…/>}`, slot →
+  `{prop}`, multi-target → same var at each site. Nested instances import sibling modules from `./Name`.
+- `emit.ts` emits a `ComponentInstance` as `<Name …/>` (override attrs only; slot → named ReactNode
+  prop; no `style` attr), importing `Name` from `./components/Name`. `generateScreen(root, {components})`
+  returns `{ code, sidecar, components: GeneratedComponent[] }` — every definition used transitively.
+  Decisions held: **separate shared modules**, **no style on usages**, **thin screens** (a screen's
+  `StyleSheet` carries only screen-level layout; section internals live in their own modules).
+- Sidecar persists the registry: `SidecarDocument.components?` (additive, version 1), validated by
+  `parseSidecar`; the store's `loadRoots` already accepts it. Studio wiring: `requestCodegen` sends
+  `components`; `vite-sim-plugin` threads them to `cli-generate` → `generateScreen`; `/api/codegen/sync`
+  writes each component to `components/<Name>.tsx` beside the screen; the Code tab lists the modules.
+- Verified: codegen 23 tests (typed component + substitutions, parameterized usages + import, nested
+  sub-component, sidecar registry round-trip), all suites green, tsc clean; live — the real
+  `/api/codegen/preview` returns `<Card title="One"/>`/`<Card title="Two"/>` + a `Card.tsx` module, and
+  the in-app Preview renders the screen + module. Known wart: promoting a bare primitive auto-names the
+  component after its type (e.g. "Text"), shadowing the RN primitive in output — guard the auto-namer
+  (flagged as a follow-up; codegen itself is faithful).

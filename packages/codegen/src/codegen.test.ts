@@ -275,3 +275,111 @@ test("multi-screen generation rejects names that cannot be stable identifiers", 
     /Invalid screen name/,
   );
 });
+
+import { createInstance, type ComponentDefinition, type ComponentRegistry } from "@rn-canvas/document";
+import { buildSidecar, emitComponent, serializeSidecar } from "./index";
+
+function cardDefinition(): ComponentDefinition {
+  return {
+    id: "card1",
+    name: "Card",
+    template: createNode("View", {
+      id: "card",
+      style: { flexDirection: "row" },
+      children: [
+        createNode("Text", { id: "title", props: { text: "Title" }, style: { color: "#111111" } }),
+        createNode("View", { id: "icon", style: { backgroundColor: "#000000", width: 10, height: 10 } }),
+        createNode("View", { id: "slot" }),
+      ],
+    }),
+    props: [
+      { name: "title", valueType: "string", default: "Title", targets: [{ kind: "prop", nodeId: "title", path: "text" }] },
+      { name: "tint", valueType: "color", targets: [
+        { kind: "style", nodeId: "title", styleKey: "color" },
+        { kind: "style", nodeId: "icon", styleKey: "backgroundColor" },
+      ] },
+      { name: "showIcon", valueType: "boolean", default: true, targets: [{ kind: "visibility", nodeId: "icon" }] },
+      { name: "body", valueType: "node", targets: [{ kind: "slot", nodeId: "slot" }] },
+    ],
+  };
+}
+
+test("emitComponent emits a typed component with prop substitutions", () => {
+  const { name, fileName, code } = emitComponent(cardDefinition(), { card1: cardDefinition() });
+  assert.equal(name, "Card");
+  assert.equal(fileName, "Card.tsx");
+  assertParses(code);
+  // Typed props interface; node/defaulted props optional.
+  assert.match(code, /interface CardProps/);
+  assert.match(code, /title\?: string/);
+  assert.match(code, /tint: string/);
+  assert.match(code, /showIcon\?: boolean/);
+  assert.match(code, /body\?: ReactNode/);
+  assert.match(code, /import type \{ ReactNode \} from "react"/);
+  // Defaults become default params.
+  assert.match(code, /title = "Title"/);
+  assert.match(code, /showIcon = true/);
+  // Substitutions: text → {title}; multi-target color → both nodes reference tint;
+  // visibility guard; slot → {body}.
+  assert.match(code, /\{title\}/);
+  assert.match(code, /color: tint/);
+  assert.match(code, /backgroundColor: tint/);
+  assert.match(code, /showIcon && <View/);
+  assert.match(code, /\{body\}/);
+});
+
+test("a screen emits instances as parameterized usages + a component import", () => {
+  const registry: ComponentRegistry = { card1: cardDefinition() };
+  const screen = createNode("View", {
+    id: "screen",
+    children: [
+      { ...createInstance("card1", { id: "i1" }), overrides: { title: "One", tint: "#ff0000" } },
+      { ...createInstance("card1", { id: "i2" }), overrides: { title: "Two", showIcon: false } },
+    ],
+  });
+  const gen = generateScreen(screen, { screenName: "Home", components: registry });
+  assertParses(gen.code);
+  assert.match(gen.code, /import \{ Card \} from "\.\/components\/Card"/);
+  assert.match(gen.code, /<Card title=\{"One"\} tint=\{"#ff0000"\} \/>/);
+  assert.match(gen.code, /<Card title=\{"Two"\} showIcon=\{false\} \/>/);
+  // No style attr on the usage; screen StyleSheet carries only screen-level layout.
+  assert.ok(!/Card[^>]*style=/.test(gen.code));
+  // The used component is emitted as its own module.
+  assert.deepEqual(gen.components.map((c) => c.fileName), ["Card.tsx"]);
+  assertParses(gen.components[0].code);
+});
+
+test("a nested instance pulls in its sub-component module", () => {
+  const card = cardDefinition();
+  const outer: ComponentDefinition = {
+    id: "outer1",
+    name: "Banner",
+    template: createNode("View", {
+      id: "banner",
+      children: [{ ...createInstance("card1", { id: "inner" }), overrides: { title: "Hi" } }],
+    }),
+    props: [],
+  };
+  const registry: ComponentRegistry = { card1: card, outer1: outer };
+  // Banner's module imports Card from a sibling module.
+  const bannerModule = emitComponent(outer, registry);
+  assert.match(bannerModule.code, /import \{ Card \} from "\.\/Card"/);
+  assert.match(bannerModule.code, /<Card title=\{"Hi"\} \/>/);
+  // A screen using Banner emits both component modules.
+  const screen = createNode("View", { id: "s", children: [createInstance("outer1", { id: "b1" })] });
+  const gen = generateScreen(screen, { screenName: "Home", components: registry });
+  assert.deepEqual(gen.components.map((c) => c.name).sort(), ["Banner", "Card"]);
+});
+
+test("the sidecar round-trips the component registry", () => {
+  const registry: ComponentRegistry = { card1: cardDefinition() };
+  const screen = createNode("View", { id: "s", children: [createInstance("card1", { id: "i1" })] });
+  const sidecar = serializeSidecar(buildSidecar(screen, { screenName: "Home", components: registry }));
+  const parsed = parseSidecar(sidecar);
+  assert.deepEqual(parsed.components, registry);
+
+  // A malformed registry is rejected.
+  const bad = JSON.parse(sidecar);
+  bad.components.card1.name = "lowercase";
+  assert.throws(() => parseSidecar(JSON.stringify(bad)), /Invalid .rncanvas.json sidecar/);
+});

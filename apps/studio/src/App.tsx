@@ -75,6 +75,8 @@ type CodegenResult = {
   sidecar: string;
   targetPath: string;
   sidecarPath: string;
+  components?: { name: string; fileName: string; code: string }[];
+  componentPaths?: string[];
   wrote?: boolean;
 };
 
@@ -82,6 +84,7 @@ type OpenDocumentResult = {
   version: 1;
   screenName: string;
   root: Node;
+  components?: import("@rn-canvas/document").ComponentRegistry;
   targetPath: string;
   sidecarPath: string;
 };
@@ -499,7 +502,7 @@ export default function App() {
         const res = await fetch(`/api/codegen/${mode}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ root: focusedRoot, screenName, targetPath }),
+          body: JSON.stringify({ root: focusedRoot, screenName, targetPath, components: componentRegistry }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -519,7 +522,7 @@ export default function App() {
         setCodegenBusy(false);
       }
     },
-    [focusedRoot, screenName, targetPath],
+    [focusedRoot, screenName, targetPath, componentRegistry],
   );
 
   const openSidecar = useCallback(async () => {
@@ -537,6 +540,7 @@ export default function App() {
       useDocumentStore.getState().loadRoots(
         { [opened.root.id]: opened.root },
         [opened.root.id],
+        opened.components,
       );
       resetCanvasHistory();
       setScreenName(opened.screenName);
@@ -886,6 +890,29 @@ export default function App() {
                       >
                         {codegenResult.code}
                       </pre>
+                      {codegenResult.components?.map((component) => (
+                        <div key={component.fileName} style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                          <p style={{ margin: 0, color: color.inkDim, fontSize: text.sm }}>
+                            components/{component.fileName}
+                          </p>
+                          <pre
+                            style={{
+                              margin: 0,
+                              padding: space.md,
+                              background: color.canvas,
+                              border: `1px solid ${color.line}`,
+                              borderRadius: radius.base,
+                              color: color.inkDim,
+                              fontSize: text.xs,
+                              lineHeight: 1.55,
+                              overflow: "auto",
+                              whiteSpace: "pre-wrap",
+                            }}
+                          >
+                            {component.code}
+                          </pre>
+                        </div>
+                      ))}
                     </>
                   )}
                 </div>

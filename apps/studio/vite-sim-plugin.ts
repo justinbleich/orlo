@@ -1,5 +1,5 @@
 import type { Plugin } from "vite";
-import type { Node } from "@rn-canvas/document";
+import type { ComponentRegistry, Node } from "@rn-canvas/document";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +16,13 @@ type CodegenRequest = {
   root?: Node;
   screenName?: string;
   targetPath?: string;
+  components?: ComponentRegistry;
+};
+
+type GeneratedComponent = {
+  name: string;
+  fileName: string;
+  code: string;
 };
 
 type SidecarRequest = {
@@ -43,6 +50,7 @@ type GeneratedScreen = {
   screenName: string;
   code: string;
   sidecar: string;
+  components: GeneratedComponent[];
 };
 
 function readRequestJson<T>(req: import("node:http").IncomingMessage): Promise<T> {
@@ -119,11 +127,15 @@ function resolveExternalSourcePath(input?: string) {
   return sourcePath;
 }
 
-async function runCodegen(root: Node, screenName: string): Promise<GeneratedScreen> {
+async function runCodegen(
+  root: Node,
+  screenName: string,
+  components?: ComponentRegistry,
+): Promise<GeneratedScreen> {
   const dir = await mkdtemp(join(tmpdir(), "rncanvas-codegen-"));
   const inputPath = join(dir, "input.json");
   try {
-    await writeFile(inputPath, JSON.stringify({ root, screenName }));
+    await writeFile(inputPath, JSON.stringify({ root, screenName, components }));
     const { stdout } = await execFileAsync("pnpm", [
       "--filter",
       "@rn-canvas/codegen",
@@ -183,7 +195,7 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName);
+          const generated = await runCodegen(body.root, screenName, body.components);
           const paths = resolveTargetPath(screenName, body.targetPath);
           sendJson(res, 200, {
             ...generated,
@@ -206,15 +218,27 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName);
+          const generated = await runCodegen(body.root, screenName, body.components);
           const paths = resolveTargetPath(screenName, body.targetPath);
           await mkdir(dirname(paths.tsxPath), { recursive: true });
           await writeFile(paths.tsxPath, `${generated.code}\n`);
           await writeFile(paths.sidecarPath, `${generated.sidecar}\n`);
+          // Write each used component as its own module beside the screen.
+          const componentPaths: string[] = [];
+          if (generated.components.length > 0) {
+            const componentsDir = join(dirname(paths.tsxPath), "components");
+            await mkdir(componentsDir, { recursive: true });
+            for (const component of generated.components) {
+              const filePath = join(componentsDir, component.fileName);
+              await writeFile(filePath, `${component.code}\n`);
+              componentPaths.push(relative(repoRoot, filePath));
+            }
+          }
           sendJson(res, 200, {
             ...generated,
             targetPath: relative(repoRoot, paths.tsxPath),
             sidecarPath: relative(repoRoot, paths.sidecarPath),
+            componentPaths,
             wrote: true,
           });
         } catch (error) {

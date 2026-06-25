@@ -18,15 +18,20 @@ export interface GeneratedTheme {
   code: string;
 }
 
-/** `export const theme = { color: { <name>: <value>, … } } as const;` */
+/** `export const theme = { color: {…}, spacing: {…}, … } as const;` (only
+ *  categories that have tokens are emitted, in a stable order). */
 export function emitTheme(registry: TokenRegistry): GeneratedTheme {
-  const colors = Object.values(registry)
-    .filter((token) => token.category === "color")
-    .map((token) => t.objectProperty(keyNode(token.name), valueToExpr(token.value)));
+  const order = ["color", "spacing", "fontSize"] as const;
+  const groups = order.flatMap((category) => {
+    const props = Object.values(registry)
+      .filter((token) => token.category === category)
+      .map((token) => t.objectProperty(keyNode(token.name), valueToExpr(token.value)));
+    return props.length > 0
+      ? [t.objectProperty(t.identifier(category), t.objectExpression(props))]
+      : [];
+  });
 
-  const themeObject = t.objectExpression([
-    t.objectProperty(t.identifier("color"), t.objectExpression(colors)),
-  ]);
+  const themeObject = t.objectExpression(groups);
 
   const decl = t.exportNamedDeclaration(
     t.variableDeclaration("const", [

@@ -20,9 +20,15 @@ import {
 } from "@rn-canvas/document";
 import type { RNStyle } from "@rn-canvas/styles";
 
+/** Where a token-bound style key resolves in the theme module. */
+export interface ThemeRef {
+  category: string;
+  name: string;
+}
+
 /** A style entry for `StyleSheet.create`: key, value, and which style keys are
- *  token-bound (styleKey → token *name*, the emitted `theme.color.<name>`). */
-export type StyleEntry = [string, RNStyle, Record<string, string>?];
+ *  token-bound (styleKey → `theme.<category>.<name>`). */
+export type StyleEntry = [string, RNStyle, Record<string, ThemeRef>?];
 
 export const IDENT_RE = /^[A-Za-z_$][\w$]*$/;
 
@@ -60,23 +66,23 @@ export function valueToExpr(v: unknown): t.Expression {
   return t.identifier("undefined");
 }
 
-/** `theme.color.<name>` member expression. */
-function themeRef(name: string): t.MemberExpression {
+/** `theme.<category>.<name>` member expression. */
+function themeMember(ref: ThemeRef): t.MemberExpression {
   return t.memberExpression(
-    t.memberExpression(t.identifier("theme"), t.identifier("color")),
-    t.identifier(name),
+    t.memberExpression(t.identifier("theme"), t.identifier(ref.category)),
+    t.identifier(ref.name),
   );
 }
 
 export function styleObjectExpr(
   style: RNStyle,
-  themeBindings?: Record<string, string>,
+  themeBindings?: Record<string, ThemeRef>,
 ): t.ObjectExpression {
   return t.objectExpression(
     Object.entries(style).map(([k, v]) =>
       t.objectProperty(
         keyNode(k),
-        themeBindings?.[k] ? themeRef(themeBindings[k]) : valueToExpr(v),
+        themeBindings?.[k] ? themeMember(themeBindings[k]) : valueToExpr(v),
       ),
     ),
   );
@@ -149,14 +155,16 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
     return counters[base] === 1 ? base : `${base}${counters[base]}`;
   }
 
-  /** Style keys on this node bound to a token → the token's emitted name. */
-  function themeBindingsFor(node: Node): Record<string, string> {
+  /** Style keys on this node bound to a token → its `theme.<category>.<name>` ref. */
+  function themeBindingsFor(node: Node): Record<string, ThemeRef> {
     const bound = node.design?.tokens;
     if (!bound || !tokens) return {};
-    const result: Record<string, string> = {};
+    const result: Record<string, ThemeRef> = {};
     for (const [styleKey, tokenId] of Object.entries(bound)) {
       const token = tokens[tokenId];
-      if (token && styleKey in node.style) result[styleKey] = token.name;
+      if (token && styleKey in node.style) {
+        result[styleKey] = { category: token.category, name: token.name };
+      }
     }
     return result;
   }

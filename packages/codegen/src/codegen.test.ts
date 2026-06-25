@@ -451,3 +451,35 @@ test("the sidecar round-trips the token registry", () => {
   bad.tokens.tk1.value = 42;
   assert.throws(() => parseSidecar(JSON.stringify(bad)), /Invalid .rncanvas.json sidecar/);
 });
+
+test("spacing and fontSize tokens emit theme.<category>.<name>", () => {
+  const tokens: TokenRegistry = {
+    c1: { id: "c1", name: "brand", category: "color", value: "#3b82f6" },
+    s1: { id: "s1", name: "lg", category: "spacing", value: 24 },
+    f1: { id: "f1", name: "body", category: "fontSize", value: 16 },
+  };
+  const root = createNode("View", {
+    id: "screen",
+    style: { padding: 24, backgroundColor: "#3b82f6" },
+    design: { tokens: { padding: "s1", backgroundColor: "c1" } },
+    children: [
+      createNode("Text", {
+        id: "t",
+        props: { text: "Hi" },
+        style: { fontSize: 16, color: "#111111" },
+        design: { tokens: { fontSize: "f1" } },
+      }),
+    ],
+  });
+  const gen = generateScreen(root, { screenName: "Home", tokens });
+  assertParses(gen.code);
+  assert.match(gen.code, /padding: theme\.spacing\.lg/);
+  assert.match(gen.code, /backgroundColor: theme\.color\.brand/);
+  assert.match(gen.code, /fontSize: theme\.fontSize\.body/);
+  assert.match(gen.code, /color: "#111111"/); // unbound stays literal
+  // theme module groups by category.
+  assert.match(gen.theme!.code, /color: \{\s*brand:/);
+  assert.match(gen.theme!.code, /spacing: \{\s*lg: 24/);
+  assert.match(gen.theme!.code, /fontSize: \{\s*body: 16/);
+  assertParses(gen.theme!.code);
+});

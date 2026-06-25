@@ -43,6 +43,7 @@ import {
   getParent,
   isContainer,
   presetProp,
+  tokenCategoryForStyleKey,
   useDocumentStore,
   type ComponentDefinition,
   type ComponentInstanceNode,
@@ -638,6 +639,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         )}
         <Field label="Padding">
           <NumberField {...editLifecycle} label="P" {...num("padding")} min={0} onChange={(v) => setStyle("padding", v)} />
+          {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="padding" />}
         </Field>
       </Section>
 
@@ -664,6 +666,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           <FieldGrid>
             <Field label="Gap">
               <NumberField {...editLifecycle} label="G" {...num("gap")} min={0} onChange={(v) => setStyle("gap", v)} />
+              {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="gap" />}
             </Field>
             <Field label="Wrap">
               <SegmentedControl
@@ -689,6 +692,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           <FieldGrid>
             <Field label="Size">
               <NumberField {...editLifecycle} label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
+              {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="fontSize" />}
             </Field>
             <Field label="Line height">
               <NumberField {...editLifecycle} label="LH" {...num("lineHeight")} min={0} onChange={(v) => setStyle("lineHeight", v)} />
@@ -733,6 +737,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </Field>
           <Field label="Radius">
             <NumberField {...editLifecycle} label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
+            {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="borderRadius" />}
           </Field>
         </FieldGrid>
         <Field label="Border color">
@@ -1018,14 +1023,16 @@ function ExposeControls({ componentId, node }: { componentId: NodeId; node: Node
   );
 }
 
-/** Bind/unbind a single node's color style key to a design token (Phase 2D). */
+/** Bind/unbind a node's style key to a design token of the matching category. */
 function TokenBind({ rootId, nodeId, styleKey }: { rootId: NodeId; nodeId: NodeId; styleKey: string }) {
   const tokens = useDocumentStore((s) => s.tokens);
   const root = useDocumentStore((s) => s.roots[rootId]);
   const bind = useDocumentStore((s) => s.bindStyleToken);
   const unbind = useDocumentStore((s) => s.unbindStyleToken);
-  const colorTokens = Object.values(tokens).filter((t) => t.category === "color");
-  if (colorTokens.length === 0) return null;
+  const category = tokenCategoryForStyleKey(styleKey);
+  if (!category) return null;
+  const candidates = Object.values(tokens).filter((t) => t.category === category);
+  if (candidates.length === 0) return null;
   const node = root ? findNode(root, nodeId) : undefined;
   const bound = node?.design?.tokens?.[styleKey];
   return (
@@ -1033,7 +1040,7 @@ function TokenBind({ rootId, nodeId, styleKey }: { rootId: NodeId; nodeId: NodeI
       <Select
         value={bound}
         onChange={(id) => bind(rootId, nodeId, styleKey, id)}
-        options={colorTokens.map((t) => ({ value: t.id, label: t.name }))}
+        options={candidates.map((t) => ({ value: t.id, label: t.name }))}
         placeholder="Bind token"
       />
       {bound && (

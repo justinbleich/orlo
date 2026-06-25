@@ -5,6 +5,7 @@ import {
   createNode,
   findNode,
   reapplyTokens,
+  tokenCategoryForStyleKey,
   useDocumentStore,
   validateTokenRegistry,
   type ColorToken,
@@ -94,13 +95,34 @@ test("validateTokenRegistry checks names, category, and color values", () => {
     validateTokenRegistry({
       a: brand(),
       b: { ...brand(), id: "b" },
-    }).some((e) => e.reason === "duplicate token name"),
+    }).some((e) => e.reason === "duplicate token name in category"),
   );
   assert.ok(
     validateTokenRegistry({ t1: { ...brand(), value: 42 as unknown as string } }).some(
       (e) => e.key === "value",
     ),
   );
+});
+
+test("spacing/fontSize tokens are number-valued and bind by style-key category", () => {
+  const spacing = { s4: { id: "s4", name: "space4", category: "spacing" as const, value: 4 } };
+  assert.deepEqual(validateTokenRegistry(spacing), []);
+  assert.ok(
+    validateTokenRegistry({ s4: { ...spacing.s4, value: "4px" as unknown as number } }).some(
+      (e) => e.key === "value",
+    ),
+  );
+  assert.equal(tokenCategoryForStyleKey("padding"), "spacing");
+  assert.equal(tokenCategoryForStyleKey("fontSize"), "fontSize");
+  assert.equal(tokenCategoryForStyleKey("backgroundColor"), "color");
+  assert.equal(tokenCategoryForStyleKey("flexDirection"), null);
+
+  // Binding a spacing token writes its numeric value to the style key.
+  const root = createNode("View", { id: "frame", children: [createNode("View", { id: "box" })] });
+  const store = useDocumentStore.getState();
+  store.loadRoots({ frame: root }, ["box"], {}, spacing);
+  store.bindStyleToken("frame", "box", "padding", "s4");
+  assert.equal(findNode(useDocumentStore.getState().roots.frame, "box")!.style.padding, 4);
 });
 
 test("reapplyTokens preserves identity when nothing is bound", () => {

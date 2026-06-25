@@ -697,3 +697,22 @@ these document-level RN design tokens.
 - **2D-2b (next):** promote `theme.ts` to the canonical, read-on-load source (single-writer file SoT).
   Deferred deliberately — needs a parse-back + load/save lifecycle and is the file-I/O the perf
   guardrail covers. This slice keeps the registry sidecar-canonical and writes `theme.ts` as artifact.
+
+### Slice 2D (spacing + typography tokens)
+
+- Generalized the token model to categories: `TokenCategory = "color" | "spacing" | "fontSize"`;
+  `DesignToken.value` is a color string for `color`, a number otherwise (`ColorToken` kept as a
+  narrowed alias). `validateTokenRegistry` is category-aware (color string vs finite number) with names
+  unique **per category**. `tokenCategoryForStyleKey` maps a style key → its bindable category (color
+  keys; spacing = padding/margin/gap/radius/borderWidth; `fontSize`). Reapply/bind/codegen are
+  unchanged in shape — value type just widened to string|number.
+- Codegen: theme bindings carry `{category, name}`; `styleObjectExpr` emits `theme.<category>.<name>`;
+  `emitTheme` groups by non-empty category (`{ color, spacing, fontSize }`).
+- UI: the Tokens panel add button is a category menu (Color/Spacing/Font size); color tokens use a
+  color swatch, numeric tokens a number input. The Inspector `TokenBind` filters by the field's
+  category and now appears on padding / gap / radius / fontSize as well as the color fields.
+- Scope note: typography = scalar `fontSize` tokens (the foundational primitive). Composite "text
+  style" tokens (one token → multiple type properties) are a deliberately larger, later construct.
+- Verified: document 54 / codegen 29 / studio 25 pass; tsc clean. Live — created color+spacing+
+  fontSize tokens, bound the frame's padding to a spacing token → Preview emits
+  `padding: theme.spacing.space1` with a `spacing` group in `theme.ts`; clean console on a fresh run.

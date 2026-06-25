@@ -40,15 +40,20 @@ export interface DesignMeta {
 
 // --- Design tokens (Phase 2D) ---
 
-/** A named color value in the design system. Spacing/typography extend later. */
-export interface ColorToken {
+/** Token categories. `color` holds a color string; `spacing`/`fontSize` hold dp
+ *  numbers. Each maps to a `theme.<category>` group in the emitted theme module. */
+export type TokenCategory = "color" | "spacing" | "fontSize";
+
+/** A named design value. `value` is a color string for `color`, else a number. */
+export interface DesignToken {
   id: string;
   name: string;
-  category: "color";
-  value: Color;
+  category: TokenCategory;
+  value: Color | number;
 }
 
-export type DesignToken = ColorToken;
+/** Back-compat alias for a color token (value is a color string). */
+export type ColorToken = DesignToken & { category: "color"; value: Color };
 
 export type TokenRegistry = Record<string, DesignToken>;
 

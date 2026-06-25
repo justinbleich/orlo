@@ -387,11 +387,13 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
   }
 
   const tokenList = Object.values(tokens);
-  function createColorToken() {
-    const taken = new Set(tokenList.map((token) => token.name));
-    let name = "color1";
-    for (let i = 2; taken.has(name); i += 1) name = `color${i}`;
-    addToken({ id: crypto.randomUUID(), name, category: "color", value: "#3b82f6" });
+  function createToken(category: "color" | "spacing" | "fontSize") {
+    const base = category === "color" ? "color" : category === "spacing" ? "space" : "text";
+    const taken = new Set(tokenList.filter((t) => t.category === category).map((t) => t.name));
+    let name = `${base}1`;
+    for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
+    const value = category === "color" ? "#3b82f6" : category === "spacing" ? 8 : 16;
+    addToken({ id: crypto.randomUUID(), name, category, value });
   }
 
   function deleteScreen(rootId: NodeId) {
@@ -603,30 +605,52 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
         open={tokensOpen}
         onToggle={() => setTokensOpen((open) => !open)}
         action={
-          <button type="button" style={panelIconButton} onClick={createColorToken} title="Add color token">
-            <Plus size={16} aria-hidden="true" />
-          </button>
+          <Menu.Root>
+            <Menu.Trigger style={panelIconButton} title="Add token">
+              <Plus size={16} aria-hidden="true" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner side="bottom" align="end" sideOffset={6} className="z-50">
+                <Menu.Popup className="studio-popup min-w-36 rounded-md border border-line bg-chrome p-control shadow-popover outline-none">
+                  <Menu.Item onClick={() => createToken("color")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Color</Menu.Item>
+                  <Menu.Item onClick={() => createToken("spacing")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Spacing</Menu.Item>
+                  <Menu.Item onClick={() => createToken("fontSize")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Font size</Menu.Item>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
         }
       >
         {tokenList.length === 0 ? (
           <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
-            Add a color token, then bind a fill to it in the Inspector.
+            Add a token, then bind a style value to it in the Inspector.
           </p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
             {tokenList.map((token) => (
               <div key={token.id} style={{ display: "flex", alignItems: "center", gap: space.xs }}>
-                <input
-                  type="color"
-                  value={token.value}
-                  onChange={(e) => updateToken(token.id, { value: e.target.value })}
-                  title="Token value"
-                  style={{ width: 22, height: 22, padding: 0, border: `1px solid ${color.line}`, borderRadius: radius.sm, background: "none", cursor: "pointer", flex: "0 0 auto" }}
-                />
+                {token.category === "color" ? (
+                  <input
+                    type="color"
+                    value={token.value as string}
+                    onChange={(e) => updateToken(token.id, { value: e.target.value })}
+                    title="Token value"
+                    style={{ width: 22, height: 22, padding: 0, border: `1px solid ${color.line}`, borderRadius: radius.sm, background: "none", cursor: "pointer", flex: "0 0 auto" }}
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    value={token.value as number}
+                    onChange={(e) => updateToken(token.id, { value: Number(e.target.value) })}
+                    title={`${token.category} value`}
+                    style={{ ...panelButton, width: 48, flex: "0 0 auto", textAlign: "right" }}
+                  />
+                )}
                 <input
                   value={token.name}
                   onChange={(e) => { try { updateToken(token.id, { name: e.target.value }); } catch { /* keep last valid name */ } }}
                   spellCheck={false}
+                  title={token.category}
                   style={{ ...panelButton, flex: 1, minWidth: 0, fontFamily: "var(--font-mono)" }}
                 />
                 <button type="button" onClick={() => removeToken(token.id)} style={panelIconButton} title="Delete token">

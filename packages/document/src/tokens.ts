@@ -9,11 +9,44 @@
  * registry + bindings + reconcile mirror each other.
  */
 import { validateStyle } from "@rn-canvas/styles";
-import type { Node, TokenRegistry } from "./types";
+import type { Node, TokenCategory, TokenRegistry } from "./types";
 import { childrenOf, isContainer } from "./types";
 import type { NodeError } from "./validate";
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+
+/** Which token category, if any, can bind to a given style key. */
+const STYLE_KEY_CATEGORY: Record<string, TokenCategory> = {
+  color: "color",
+  backgroundColor: "color",
+  borderColor: "color",
+  shadowColor: "color",
+  padding: "spacing",
+  paddingTop: "spacing",
+  paddingRight: "spacing",
+  paddingBottom: "spacing",
+  paddingLeft: "spacing",
+  paddingHorizontal: "spacing",
+  paddingVertical: "spacing",
+  margin: "spacing",
+  marginTop: "spacing",
+  marginRight: "spacing",
+  marginBottom: "spacing",
+  marginLeft: "spacing",
+  marginHorizontal: "spacing",
+  marginVertical: "spacing",
+  gap: "spacing",
+  rowGap: "spacing",
+  columnGap: "spacing",
+  borderRadius: "spacing",
+  borderWidth: "spacing",
+  fontSize: "fontSize",
+};
+
+/** The token category bindable to `styleKey`, or null if none. */
+export function tokenCategoryForStyleKey(styleKey: string): TokenCategory | null {
+  return STYLE_KEY_CATEGORY[styleKey] ?? null;
+}
 
 /**
  * Re-resolve every token-bound style literal in a tree against the registry, and
@@ -79,10 +112,12 @@ export function reapplyTokens(node: Node, registry: TokenRegistry): Node {
   return next;
 }
 
-/** Validate the token registry: identifier/unique names, color category + value. */
+const CATEGORIES = new Set<TokenCategory>(["color", "spacing", "fontSize"]);
+
+/** Validate the registry: identifier names (unique per category), category + value. */
 export function validateTokenRegistry(registry: TokenRegistry): NodeError[] {
   const errors: NodeError[] = [];
-  const seen = new Set<string>();
+  const seenByCategory = new Map<string, Set<string>>();
   for (const [id, token] of Object.entries(registry)) {
     if (token.id !== id) {
       errors.push({ nodeId: id, key: "id", reason: "registry key must equal token id" });
@@ -90,14 +125,20 @@ export function validateTokenRegistry(registry: TokenRegistry): NodeError[] {
     if (!IDENTIFIER.test(token.name)) {
       errors.push({ nodeId: id, key: "name", reason: "token name must be a JS identifier" });
     }
+    const seen = seenByCategory.get(token.category) ?? new Set<string>();
     if (seen.has(token.name)) {
-      errors.push({ nodeId: id, key: "name", reason: "duplicate token name" });
+      errors.push({ nodeId: id, key: "name", reason: "duplicate token name in category" });
     }
     seen.add(token.name);
-    if (token.category !== "color") {
-      errors.push({ nodeId: id, key: "category", reason: "expected 'color'" });
-    } else if (!validateStyle({ color: token.value }).ok) {
-      errors.push({ nodeId: id, key: "value", reason: "expected a color string" });
+    seenByCategory.set(token.category, seen);
+    if (!CATEGORIES.has(token.category)) {
+      errors.push({ nodeId: id, key: "category", reason: "unknown token category" });
+    } else if (token.category === "color") {
+      if (!validateStyle({ color: token.value as string }).ok) {
+        errors.push({ nodeId: id, key: "value", reason: "expected a color string" });
+      }
+    } else if (typeof token.value !== "number" || !Number.isFinite(token.value)) {
+      errors.push({ nodeId: id, key: "value", reason: `expected a number for ${token.category}` });
     }
   }
   return errors;

@@ -31,10 +31,11 @@ export type {
   ComponentRegistry,
   ColorToken,
   DesignToken,
+  TokenCategory,
   TokenRegistry,
 } from "./types";
 
-export { reapplyTokens, validateTokenRegistry } from "./tokens";
+export { reapplyTokens, validateTokenRegistry, tokenCategoryForStyleKey } from "./tokens";
 export { RN_PRIMITIVES, canHaveChildren, isContainer, childrenOf } from "./types";
 
 export {

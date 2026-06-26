@@ -716,3 +716,36 @@ these document-level RN design tokens.
 - Verified: document 54 / codegen 29 / studio 25 pass; tsc clean. Live — created color+spacing+
   fontSize tokens, bound the frame's padding to a spacing token → Preview emits
   `padding: theme.spacing.space1` with a `spacing` group in `theme.ts`; clean console on a fresh run.
+
+### Slice 2D-2b (theme.ts as the canonical token source) + token binding UI
+
+- **theme.ts is now canonical for token values + names** ("design in code with a canvas"). Single-writer:
+  the tool reads `theme.ts` on document open and writes it (debounced) on token edits — no watcher, no
+  bidirectional sync, all off the canvas hot path. The sidecar stays canonical for **id↔name identity**
+  (the design-time layer idiomatic code can't carry), mirroring components→definition.name.
+- Codegen `parse-theme.ts`: `parseTheme()` is the Babel parse-back of `emitTheme` (fails closed on
+  dynamic/unknown, like `parse-external`). `reconcileTokens(parsed, prior)` reconciles the file's
+  `category:name` against the sidecar's ids — reuse id on match (bindings survive), mint on add, drop on
+  remove. `openDocument(sidecarJson, themeSource?)` = parseSidecar → reconcile → `reapplyTokens` so file
+  values win in the tree; no theme file ⇒ fall back to sidecar tokens (pre-2D-2b docs). CLIs
+  `cli-open-document.ts` / `cli-emit-theme.ts`.
+- Studio: `/api/documents/open` reconciles the adjacent `theme.ts`; new `/api/tokens/save` writes it.
+  `App.tsx` subscribes to the `tokens` slice and debounce-writes (400ms, fire-and-forget). A
+  `skipTokenWriteRef` gate suppresses the write on document **loads** (seed/open/import) so a freshly
+  *read* registry never echoes back and clobbers the file — this caught a real bug where the empty seed
+  would otherwise overwrite an existing `theme.ts` on app start. Tool renames keep bindings (id stable);
+  a hand-rename in the file is inherently remove+add and cleanly drops the dangling binding.
+- **Identity decision matters:** rename-survives-reopen requires a Sync (the sidecar is the saved
+  document / id store). The debounced theme write keeps values canonical; identity persistence rides with
+  the document save.
+- Shipped together with the **token binding UI** (the Inspector token pickers + Tokens panel + instance
+  token links) that 2D-2b builds on. Pickers: `TokenColorField` / `TokenNumberField` over a shared
+  `TokenPickerPopover` (Tokens grid/chip list + Custom literal editor + create-from-value).
+- Verified: codegen 37 / document 63 / studio 25 pass; tsc clean in all three. Live (preview MCP) —
+  edit a token in-tool → debounced `/api/tokens/save` writes `theme.ts`; reopen → tool reflects the file
+  value with id stable + binding intact + bound node reapplied; hand-rename in file → dangling binding
+  dropped; confirmed **no** spurious write on seed/open (skip-gate). The token picker renders + opens
+  cleanly on a fresh load (earlier "crashes" were Fast-Refresh/HMR-transient errors during live editing,
+  not a user-path bug — each carried an HMR `?t=` query string and none reproduced on a clean reload).
+- Committed as `360ad45` on `phase2/2d-tokens`. (`generated/theme.ts` left untracked — it carried live
+  test values; `generated/Screen.*` restored to HEAD. `AGENTS.md` is unrelated, left untracked.)

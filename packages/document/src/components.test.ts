@@ -10,6 +10,7 @@ import {
   promoteToComponent,
   pruneVariants,
   resolveVariant,
+  upsertVariantOverride,
   useDocumentStore,
   validateComponentRegistry,
   validateInstance,
@@ -515,4 +516,54 @@ test("validateInstance flags unknown variant axes/values", () => {
   const registry = { btn: buttonDef() };
   const bad: ComponentInstanceNode = { ...btnInstance(), variant: { size: "xl" } };
   assert.match(validateInstance(bad, registry).map((e) => e.reason).join(" "), /not a value of axis/);
+});
+
+test("upsertVariantOverride sets, merges, and clears, staying sparse", () => {
+  let def = buttonDef();
+  def = { ...def, combinations: [] };
+  // set a style override on a fresh cell
+  def = upsertVariantOverride(def, { size: "lg", state: "default" }, "root", { style: { padding: 16 } });
+  assert.equal(def.combinations!.length, 1);
+  assert.deepEqual(def.combinations![0].overrides[0], { nodeId: "root", style: { padding: 16 } });
+  // merge another key into the same cell+node
+  def = upsertVariantOverride(def, { size: "lg", state: "default" }, "root", { style: { opacity: 0.8 } });
+  assert.deepEqual(def.combinations![0].overrides[0].style, { padding: 16, opacity: 0.8 });
+  // clearing the last key (and no hidden) removes the override → empty combo dropped
+  def = upsertVariantOverride(def, { size: "lg", state: "default" }, "root", { style: { padding: undefined, opacity: undefined } });
+  assert.deepEqual(def.combinations, []);
+});
+
+test("variant authoring actions flow through the store and reconcile", () => {
+  const store = useDocumentStore.getState();
+  const root = createNode("View", { id: "frame", children: [
+    createNode("View", { id: "card", style: { backgroundColor: "#fff" } }),
+  ] });
+  store.loadRoots({ frame: root }, ["card"]);
+  store.promoteToComponent("frame", "card", "Card");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+  const tmplRoot = useDocumentStore.getState().components[cid].template.id;
+
+  store.addVariantAxis(cid, "tone");
+  store.addVariantValue(cid, "tone", "solid");
+  // override the solid cell's fill
+  store.setVariantOverride(cid, { tone: "solid" }, tmplRoot, { style: { backgroundColor: "#ff0000" } });
+  let def = useDocumentStore.getState().components[cid];
+  assert.deepEqual(def.variants, [{ name: "tone", values: ["default", "solid"] }]);
+  assert.equal(def.combinations!.length, 1);
+
+  // place an instance and select the solid variant → it expands red
+  store.placeInstance("frame", "frame", cid);
+  const instId = childrenOf(useDocumentStore.getState().roots.frame).find((c) => c.id !== "card")!.id;
+  store.setInstanceVariant("frame", instId, "tone", "solid");
+  const inst = findNode(useDocumentStore.getState().roots.frame, instId) as ComponentInstanceNode;
+  assert.deepEqual(inst.variant, { tone: "solid" });
+  const expanded = expandComponents(inst, useDocumentStore.getState().components);
+  assert.equal(expanded.style.backgroundColor, "#ff0000");
+
+  // removing the value prunes the combination and clamps the instance selection
+  store.removeVariantValue(cid, "tone", "solid");
+  def = useDocumentStore.getState().components[cid];
+  assert.deepEqual(def.combinations, []);
+  const clamped = findNode(useDocumentStore.getState().roots.frame, instId) as ComponentInstanceNode;
+  assert.equal(clamped.variant?.tone, undefined);
 });

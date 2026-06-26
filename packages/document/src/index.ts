@@ -69,6 +69,7 @@ export {
   pruneDefinitionProps,
   pruneVariants,
   resolveVariant,
+  upsertVariantOverride,
   validateComponentRegistry,
   validateInstance,
   type PresetKind,

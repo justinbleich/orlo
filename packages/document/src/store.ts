@@ -36,6 +36,7 @@ import {
   promoteToComponent as promoteOp,
   pruneDefinitionProps,
   pruneVariants,
+  upsertVariantOverride,
   reconcileOverrides,
   validateComponentRegistry,
   validateInstance,
@@ -103,6 +104,22 @@ export interface DocumentState {
   beginComponentEdit(componentId: NodeId): void;
   /** Close focus mode; `commit` writes the edited template back to the definition. */
   endComponentEdit(commit?: boolean): void;
+
+  // --- Variants (Phase 2D-3) ---
+  addVariantAxis(componentId: NodeId, name: string): void;
+  removeVariantAxis(componentId: NodeId, name: string): void;
+  addVariantValue(componentId: NodeId, axisName: string, value: string): void;
+  removeVariantValue(componentId: NodeId, axisName: string, value: string): void;
+  /** Set/clear a node's per-combination style/visibility override. A style value of
+   *  `undefined` clears that key; `hidden: null` clears the visibility flag. */
+  setVariantOverride(
+    componentId: NodeId,
+    combination: Record<string, string>,
+    nodeId: NodeId,
+    patch: { style?: Record<string, unknown>; hidden?: boolean | null },
+  ): void;
+  /** Choose an instance's value for one axis. */
+  setInstanceVariant(rootId: NodeId, instanceId: NodeId, axisName: string, value: string): void;
 
   // --- Design tokens (Phase 2D) ---
   addToken(token: DesignToken): void;
@@ -477,6 +494,59 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         selection: fallback ? [fallback] : [],
       });
     },
+
+    // --- Variants (Phase 2D-3) ---
+    addVariantAxis: (componentId, name) => {
+      const { components, roots } = get();
+      const def = components[componentId];
+      if (!def) throw new Error(`Component not found: ${componentId}`);
+      const variants = [...(def.variants ?? []), { name, values: ["default"] }];
+      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+    },
+    removeVariantAxis: (componentId, name) => {
+      const { components, roots } = get();
+      const def = components[componentId];
+      if (!def) throw new Error(`Component not found: ${componentId}`);
+      const variants = (def.variants ?? []).filter((axis) => axis.name !== name);
+      // pruneVariants (in commitRegistry) drops combinations that referenced the axis.
+      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+    },
+    addVariantValue: (componentId, axisName, value) => {
+      const { components, roots } = get();
+      const def = components[componentId];
+      if (!def) throw new Error(`Component not found: ${componentId}`);
+      const variants = (def.variants ?? []).map((axis) =>
+        axis.name === axisName ? { ...axis, values: [...axis.values, value] } : axis,
+      );
+      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+    },
+    removeVariantValue: (componentId, axisName, value) => {
+      const { components, roots } = get();
+      const def = components[componentId];
+      if (!def) throw new Error(`Component not found: ${componentId}`);
+      const variants = (def.variants ?? []).map((axis) =>
+        axis.name === axisName ? { ...axis, values: axis.values.filter((v) => v !== value) } : axis,
+      );
+      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+    },
+    setVariantOverride: (componentId, combination, nodeId, patch) => {
+      const { components, roots } = get();
+      const def = components[componentId];
+      if (!def) throw new Error(`Component not found: ${componentId}`);
+      const next = upsertVariantOverride(def, combination, nodeId, patch);
+      commitRegistry({ ...components, [componentId]: next }, roots);
+    },
+    setInstanceVariant: (rootId, instanceId, axisName, value) =>
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, instanceId);
+        if (!node || node.type !== "ComponentInstance") {
+          throw new Error(`Instance not found: ${instanceId}`);
+        }
+        const nextInstance = { ...node, variant: { ...node.variant, [axisName]: value } };
+        const errors = validateInstance(nextInstance, get().components);
+        if (errors.length > 0) throw new Error(`Invalid variant: ${errors[0].reason}`);
+        return replaceNode(tree, instanceId, nextInstance);
+      }),
 
     addToken: (token) => {
       commitTokens({ ...get().tokens, [token.id]: token });

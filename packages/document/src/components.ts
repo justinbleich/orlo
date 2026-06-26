@@ -19,6 +19,7 @@ import type {
   NodeId,
   OverrideValue,
   VariantCombination,
+  VariantNodeOverride,
 } from "./types";
 import { childrenOf, isContainer } from "./types";
 import { validateTree, type NodeError } from "./validate";
@@ -328,6 +329,49 @@ export function pruneVariants(definition: ComponentDefinition): ComponentDefinit
     return [combo];
   });
   return changed ? { ...definition, combinations: next } : definition;
+}
+
+/**
+ * Set or clear a node's per-combination style/visibility override (authoring).
+ * `values` is a full cell (a value per axis). A style value of `undefined` clears
+ * that key; `hidden: null` clears the flag. Empty overrides and empty combinations
+ * are dropped, keeping `combinations` sparse. Pure — the store validates via
+ * commitRegistry afterward.
+ */
+export function upsertVariantOverride(
+  definition: ComponentDefinition,
+  values: Record<string, string>,
+  nodeId: NodeId,
+  patch: { style?: Record<string, unknown>; hidden?: boolean | null },
+): ComponentDefinition {
+  const axes = definition.variants ?? [];
+  const sig = (v: Record<string, string>) => axes.map((a) => v[a.name]).join(" ");
+  const target = sig(values);
+  const combos = definition.combinations ?? [];
+  const current = combos.find((c) => sig(c.values) === target);
+
+  const existing = current?.overrides.find((o) => o.nodeId === nodeId);
+  const nextOverride: VariantNodeOverride = { nodeId, ...existing };
+  if (patch.style) {
+    const style: Record<string, unknown> = { ...(nextOverride.style ?? {}) };
+    for (const [key, value] of Object.entries(patch.style)) {
+      if (value === undefined || value === null) delete style[key];
+      else style[key] = value;
+    }
+    if (Object.keys(style).length > 0) nextOverride.style = style as VariantNodeOverride["style"];
+    else delete nextOverride.style;
+  }
+  if (patch.hidden !== undefined) {
+    if (patch.hidden === null) delete nextOverride.hidden;
+    else nextOverride.hidden = patch.hidden;
+  }
+
+  const overrides = (current?.overrides ?? []).filter((o) => o.nodeId !== nodeId);
+  if (nextOverride.style || nextOverride.hidden !== undefined) overrides.push(nextOverride);
+
+  const combinations = combos.filter((c) => sig(c.values) !== target);
+  if (overrides.length > 0) combinations.push({ values, overrides });
+  return { ...definition, combinations };
 }
 
 /** Drop an instance's overrides/slots whose prop no longer exists on the definition,

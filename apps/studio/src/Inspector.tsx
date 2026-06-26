@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -43,6 +43,7 @@ import {
   getParent,
   isContainer,
   presetProp,
+  resolveVariant,
   tokenCategoryForStyleKey,
   useDocumentStore,
   type ComponentDefinition,
@@ -52,6 +53,7 @@ import {
   type OverrideValue,
   type PresetKind,
   type RNPrimitive,
+  type VariantAxis,
 } from "@rn-canvas/document";
 import {
   absoluteConstraintMode,
@@ -71,6 +73,7 @@ import {
   ungroupNode,
 } from "./document-actions";
 import {
+  cn,
   ColorField,
   Field,
   FieldGrid,
@@ -179,6 +182,31 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   const primary = nodes[0];
   const multi = nodes.length > 1;
 
+  // Variant authoring: while a component-set is open in focus mode and a non-base
+  // combination is selected, a single template node's style/visibility edits route
+  // into that combination's override instead of the base template.
+  const setVariantOverride = useDocumentStore((s) => s.setVariantOverride);
+  const activeVariant = useStudioStore((s) => s.activeVariant);
+  const editingDef =
+    editingComponentId && editingComponentId === rootId
+      ? componentRegistry[editingComponentId]
+      : undefined;
+  const variantAxes = editingDef?.variants ?? [];
+  const activeCombo = variantAxes.length ? resolveVariant(editingDef!, activeVariant) : null;
+  const isBaseCombo =
+    !activeCombo || variantAxes.every((axis) => activeCombo[axis.name] === axis.values[0]);
+  const variantEditing =
+    !!activeCombo && !isBaseCombo && !multi && !!primary && primary.type !== "ComponentInstance";
+  const comboOverrideStyle = variantEditing
+    ? (editingDef!.combinations ?? [])
+        .find((c) => variantAxes.every((a) => c.values[a.name] === activeCombo![a.name]))
+        ?.overrides.find((o) => o.nodeId === primary.id)?.style
+    : undefined;
+
+  // Clear the active combination whenever focus mode opens/closes/switches.
+  const resetActiveVariant = useStudioStore((s) => s.resetActiveVariant);
+  useEffect(() => resetActiveVariant(), [editingComponentId, resetActiveVariant]);
+
   // Batch an edit across every selected node as ONE undo entry; roll back fully
   // on validation failure. All writes go through the validated store actions.
   function batch(fn: (id: NodeId) => void) {
@@ -205,9 +233,20 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   };
 
   const styleVal = <K extends keyof Style>(key: K): Maybe<Style[K]> =>
-    shared(nodes, (n) => n.style[key]);
-  const setStyle = (key: keyof Style, value: unknown) =>
-    batch((id) => updateStyle(rootId!, id, { [key]: value }));
+    shared(nodes, (n) =>
+      variantEditing && n.id === primary.id
+        ? ((comboOverrideStyle?.[key] ?? n.style[key]) as Style[K])
+        : n.style[key],
+    );
+  const setStyle = (key: keyof Style, value: unknown) => {
+    if (variantEditing) {
+      runAction(() =>
+        setVariantOverride(editingComponentId!, activeCombo!, primary.id, { style: { [key]: value } }),
+      );
+    } else {
+      batch((id) => updateStyle(rootId!, id, { [key]: value }));
+    }
+  };
   const setDesignAll = (partial: Record<string, unknown>) =>
     batch((id) => updateDesign(rootId!, id, partial));
   const setPrimaryProp = (key: string, value: unknown) => {
@@ -496,8 +535,14 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         />
       )}
 
-      {/* In focus mode, expose the selected template node's value as a component
-          prop. The template root is real content here, so it's exposable too. */}
+      {/* In focus mode: manage variant axes/combinations, and expose the selected
+          template node's value as a component prop. */}
+      {editingComponentId === root.id && (
+        <VariantControls
+          componentId={root.id}
+          selectedNodeId={!multi && primary && primary.type !== "ComponentInstance" ? primary.id : null}
+        />
+      )}
       {editingComponentId === root.id && !multi && (
         <ExposeControls componentId={root.id} node={primary} />
       )}
@@ -918,6 +963,7 @@ function InstanceProperties({
   definition: ComponentDefinition | undefined;
 }) {
   const setInstanceOverride = useDocumentStore((s) => s.setInstanceOverride);
+  const setInstanceVariant = useDocumentStore((s) => s.setInstanceVariant);
   const [error, setError] = useState<string | null>(null);
 
   if (!definition) {
@@ -927,16 +973,8 @@ function InstanceProperties({
       </Section>
     );
   }
-  if (definition.props.length === 0) {
-    return (
-      <Section title="Properties">
-        <p className="text-sm text-ink-faint">
-          No exposed properties yet. Use “Edit component” to expose some.
-        </p>
-      </Section>
-    );
-  }
 
+  const axes = definition.variants ?? [];
   const set = (name: string, value: OverrideValue) => {
     try {
       setError(null);
@@ -945,10 +983,41 @@ function InstanceProperties({
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  const setVariant = (axisName: string, value: string) => {
+    try {
+      setError(null);
+      setInstanceVariant(rootId, instance.id, axisName, value);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   return (
-    <Section title="Properties">
-      <FieldGrid>
+    <>
+      {axes.length > 0 && (
+        <Section title="Variants">
+          <FieldGrid>
+            {axes.map((axis) => (
+              <Field key={axis.name} label={axis.name}>
+                <Select
+                  value={instance.variant?.[axis.name] ?? axis.values[0]}
+                  onChange={(v) => setVariant(axis.name, v)}
+                  options={axis.values.map((value) => ({ value, label: value }))}
+                />
+              </Field>
+            ))}
+          </FieldGrid>
+        </Section>
+      )}
+      {definition.props.length === 0 ? (
+        <Section title="Properties">
+          <p className="text-sm text-ink-faint">
+            No exposed properties yet. Use “Edit component” to expose some.
+          </p>
+        </Section>
+      ) : (
+        <Section title="Properties">
+          <FieldGrid>
         {definition.props.map((prop) => {
           const current = instance.overrides[prop.name] ?? prop.default;
           return (
@@ -993,8 +1062,181 @@ function InstanceProperties({
             </Field>
           );
         })}
-      </FieldGrid>
-      {error && <p className="mt-xs text-sm text-live">{error}</p>}
+          </FieldGrid>
+        </Section>
+      )}
+      {error && <p className="px-md text-sm text-live">{error}</p>}
+    </>
+  );
+}
+
+/** Focus-mode variant editor: manage axes/values, pick the combination being
+ *  authored (non-base selections route node style/visibility edits into it), and
+ *  toggle a node's visibility within the active combination. */
+function VariantControls({
+  componentId,
+  selectedNodeId,
+}: {
+  componentId: NodeId;
+  selectedNodeId: NodeId | null;
+}) {
+  const def = useDocumentStore((s) => s.components[componentId]);
+  const addVariantAxis = useDocumentStore((s) => s.addVariantAxis);
+  const removeVariantAxis = useDocumentStore((s) => s.removeVariantAxis);
+  const addVariantValue = useDocumentStore((s) => s.addVariantValue);
+  const removeVariantValue = useDocumentStore((s) => s.removeVariantValue);
+  const setVariantOverride = useDocumentStore((s) => s.setVariantOverride);
+  const activeVariant = useStudioStore((s) => s.activeVariant);
+  const setActiveVariant = useStudioStore((s) => s.setActiveVariant);
+  const [axisDraft, setAxisDraft] = useState("");
+  const [valueDrafts, setValueDrafts] = useState<Record<string, string>>({});
+  const [err, setErr] = useState<string | null>(null);
+
+  if (!def) return null;
+  const axes = def.variants ?? [];
+  const run = (fn: () => void) => {
+    try {
+      setErr(null);
+      fn();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const activeCombo: Record<string, string> = axes.length ? resolveVariant(def, activeVariant) : {};
+  const isBase = axes.every((a) => activeCombo[a.name] === a.values[0]);
+  const hiddenHere =
+    !isBase && selectedNodeId
+      ? !!(def.combinations ?? [])
+          .find((c) => axes.every((a) => c.values[a.name] === activeCombo[a.name]))
+          ?.overrides.find((o) => o.nodeId === selectedNodeId)?.hidden
+      : false;
+
+  const inputCls =
+    "h-7 min-w-0 flex-1 rounded-sm border border-line bg-chrome-2 px-sm text-xs text-ink placeholder:text-ink-faint outline-none focus-visible:border-accent-line focus-visible:bg-raised";
+
+  return (
+    <Section title="Variants">
+      <div className="flex flex-col gap-control">
+        {axes.map((axis) => (
+          <div key={axis.name} className="flex flex-col gap-2xs rounded-sm border border-line/40 p-xs">
+            <div className="flex items-center gap-xs">
+              <span className="flex-1 font-mono text-xs text-ink">{axis.name}</span>
+              <button
+                type="button"
+                title={`Remove axis ${axis.name}`}
+                onClick={() => run(() => removeVariantAxis(componentId, axis.name))}
+                className="text-ink-faint hover:text-ink"
+              >
+                <X size={12} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2xs">
+              {axis.values.map((value) => (
+                <span
+                  key={value}
+                  className="inline-flex items-center gap-2xs rounded-xs border border-line bg-chrome-2 px-xs py-2xs text-2xs text-ink-dim"
+                >
+                  {value}
+                  {axis.values.length > 1 && (
+                    <button
+                      type="button"
+                      title={`Remove ${value}`}
+                      onClick={() => run(() => removeVariantValue(componentId, axis.name, value))}
+                      className="text-ink-faint hover:text-ink"
+                    >
+                      <X size={10} aria-hidden="true" />
+                    </button>
+                  )}
+                </span>
+              ))}
+              <input
+                value={valueDrafts[axis.name] ?? ""}
+                onChange={(e) => setValueDrafts((d) => ({ ...d, [axis.name]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const v = (valueDrafts[axis.name] ?? "").trim();
+                    if (v) {
+                      run(() => addVariantValue(componentId, axis.name, v));
+                      setValueDrafts((d) => ({ ...d, [axis.name]: "" }));
+                    }
+                  }
+                }}
+                placeholder="+ value"
+                spellCheck={false}
+                className={cn(inputCls, "h-6 w-20 flex-none")}
+              />
+            </div>
+          </div>
+        ))}
+
+        <div className="flex items-center gap-xs">
+          <input
+            value={axisDraft}
+            onChange={(e) => setAxisDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && axisDraft.trim()) {
+                run(() => addVariantAxis(componentId, axisDraft.trim()));
+                setAxisDraft("");
+              }
+            }}
+            placeholder="New axis (e.g. size)"
+            spellCheck={false}
+            className={inputCls}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              if (axisDraft.trim()) {
+                run(() => addVariantAxis(componentId, axisDraft.trim()));
+                setAxisDraft("");
+              }
+            }}
+            className="rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-xs text-ink hover:bg-raised"
+          >
+            Add axis
+          </button>
+        </div>
+
+        {axes.length > 0 && (
+          <>
+            <FieldGrid>
+              {axes.map((axis) => (
+                <Field key={axis.name} label={axis.name}>
+                  <Select
+                    value={activeCombo[axis.name]}
+                    onChange={(v) => setActiveVariant(axis.name, v)}
+                    options={axis.values.map((value) => ({ value, label: value }))}
+                  />
+                </Field>
+              ))}
+            </FieldGrid>
+            <p className={cn("m-0 text-xs", isBase ? "text-ink-faint" : "text-accent")}>
+              {isBase
+                ? "Editing the base template — set a non-default combination to author a variant."
+                : `Style/visibility edits apply to ${axes
+                    .map((a) => `${a.name}=${activeCombo[a.name]}`)
+                    .join(", ")}.`}
+            </p>
+            {!isBase && selectedNodeId && (
+              <label className="flex items-center gap-xs text-xs text-ink">
+                <input
+                  type="checkbox"
+                  checked={hiddenHere}
+                  onChange={(e) =>
+                    run(() =>
+                      setVariantOverride(componentId, activeCombo, selectedNodeId, {
+                        hidden: e.target.checked ? true : null,
+                      }),
+                    )
+                  }
+                />
+                Hide this node in this combination
+              </label>
+            )}
+          </>
+        )}
+        {err && <p className="m-0 text-xs text-live">{err}</p>}
+      </div>
     </Section>
   );
 }

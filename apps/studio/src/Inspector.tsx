@@ -53,7 +53,6 @@ import {
   type OverrideValue,
   type PresetKind,
   type RNPrimitive,
-  type VariantAxis,
 } from "@rn-canvas/document";
 import {
   absoluteConstraintMode,
@@ -182,28 +181,28 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   const primary = nodes[0];
   const multi = nodes.length > 1;
 
-  // Variant authoring: while a component-set is open in focus mode and a non-base
-  // combination is selected, a single template node's style/visibility edits route
-  // into that combination's override instead of the base template.
+  // Variant authoring: while a component is open in focus mode and a non-default
+  // variant is selected, a single template layer's style/visibility edits route
+  // into that variant's override instead of the base template.
   const setVariantOverride = useDocumentStore((s) => s.setVariantOverride);
   const activeVariant = useStudioStore((s) => s.activeVariant);
   const editingDef =
     editingComponentId && editingComponentId === rootId
       ? componentRegistry[editingComponentId]
       : undefined;
-  const variantAxes = editingDef?.variants ?? [];
-  const activeCombo = variantAxes.length ? resolveVariant(editingDef!, activeVariant) : null;
-  const isBaseCombo =
-    !activeCombo || variantAxes.every((axis) => activeCombo[axis.name] === axis.values[0]);
+  const variantProperties = editingDef?.variants ?? [];
+  const activeValues = variantProperties.length ? resolveVariant(editingDef!, activeVariant) : null;
+  const isDefaultVariant =
+    !activeValues || variantProperties.every((p) => activeValues[p.name] === p.values[0]);
   const variantEditing =
-    !!activeCombo && !isBaseCombo && !multi && !!primary && primary.type !== "ComponentInstance";
-  const comboOverrideStyle = variantEditing
+    !!activeValues && !isDefaultVariant && !multi && !!primary && primary.type !== "ComponentInstance";
+  const variantOverrideStyle = variantEditing
     ? (editingDef!.combinations ?? [])
-        .find((c) => variantAxes.every((a) => c.values[a.name] === activeCombo![a.name]))
+        .find((c) => variantProperties.every((p) => c.values[p.name] === activeValues![p.name]))
         ?.overrides.find((o) => o.nodeId === primary.id)?.style
     : undefined;
 
-  // Clear the active combination whenever focus mode opens/closes/switches.
+  // Clear the active variant whenever focus mode opens/closes/switches.
   const resetActiveVariant = useStudioStore((s) => s.resetActiveVariant);
   useEffect(() => resetActiveVariant(), [editingComponentId, resetActiveVariant]);
 
@@ -235,13 +234,13 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   const styleVal = <K extends keyof Style>(key: K): Maybe<Style[K]> =>
     shared(nodes, (n) =>
       variantEditing && n.id === primary.id
-        ? ((comboOverrideStyle?.[key] ?? n.style[key]) as Style[K])
+        ? ((variantOverrideStyle?.[key] ?? n.style[key]) as Style[K])
         : n.style[key],
     );
   const setStyle = (key: keyof Style, value: unknown) => {
     if (variantEditing) {
       runAction(() =>
-        setVariantOverride(editingComponentId!, activeCombo!, primary.id, { style: { [key]: value } }),
+        setVariantOverride(editingComponentId!, activeValues!, primary.id, { style: { [key]: value } }),
       );
     } else {
       batch((id) => updateStyle(rootId!, id, { [key]: value }));
@@ -535,8 +534,8 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         />
       )}
 
-      {/* In focus mode: manage variant axes/combinations, and expose the selected
-          template node's value as a component prop. */}
+      {/* In focus mode: manage variant properties/values, and expose the selected
+          template layer's value as a component prop. */}
       {editingComponentId === root.id && (
         <VariantControls
           componentId={root.id}
@@ -974,7 +973,7 @@ function InstanceProperties({
     );
   }
 
-  const axes = definition.variants ?? [];
+  const properties = definition.variants ?? [];
   const set = (name: string, value: OverrideValue) => {
     try {
       setError(null);
@@ -983,10 +982,10 @@ function InstanceProperties({
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-  const setVariant = (axisName: string, value: string) => {
+  const setVariant = (propertyName: string, value: string) => {
     try {
       setError(null);
-      setInstanceVariant(rootId, instance.id, axisName, value);
+      setInstanceVariant(rootId, instance.id, propertyName, value);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -994,15 +993,15 @@ function InstanceProperties({
 
   return (
     <>
-      {axes.length > 0 && (
-        <Section title="Variants">
+      {properties.length > 0 && (
+        <Section title="Variant">
           <FieldGrid>
-            {axes.map((axis) => (
-              <Field key={axis.name} label={axis.name}>
+            {properties.map((property) => (
+              <Field key={property.name} label={property.name}>
                 <Select
-                  value={instance.variant?.[axis.name] ?? axis.values[0]}
-                  onChange={(v) => setVariant(axis.name, v)}
-                  options={axis.values.map((value) => ({ value, label: value }))}
+                  value={instance.variant?.[property.name] ?? property.values[0]}
+                  onChange={(v) => setVariant(property.name, v)}
+                  options={property.values.map((value) => ({ value, label: value }))}
                 />
               </Field>
             ))}
@@ -1070,9 +1069,10 @@ function InstanceProperties({
   );
 }
 
-/** Focus-mode variant editor: manage axes/values, pick the combination being
- *  authored (non-base selections route node style/visibility edits into it), and
- *  toggle a node's visibility within the active combination. */
+/** Focus-mode variant editor: manage variant properties + values, pick the
+ *  variant being authored via a matrix preview (non-default selections route
+ *  layer style/visibility edits into it), and toggle a layer's visibility
+ *  within the active variant. */
 function VariantControls({
   componentId,
   selectedNodeId,
@@ -1088,12 +1088,12 @@ function VariantControls({
   const setVariantOverride = useDocumentStore((s) => s.setVariantOverride);
   const activeVariant = useStudioStore((s) => s.activeVariant);
   const setActiveVariant = useStudioStore((s) => s.setActiveVariant);
-  const [axisDraft, setAxisDraft] = useState("");
+  const [propertyDraft, setPropertyDraft] = useState("");
   const [valueDrafts, setValueDrafts] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
 
   if (!def) return null;
-  const axes = def.variants ?? [];
+  const properties = def.variants ?? [];
   const run = (fn: () => void) => {
     try {
       setErr(null);
@@ -1102,12 +1102,13 @@ function VariantControls({
       setErr(e instanceof Error ? e.message : String(e));
     }
   };
-  const activeCombo: Record<string, string> = axes.length ? resolveVariant(def, activeVariant) : {};
-  const isBase = axes.every((a) => activeCombo[a.name] === a.values[0]);
+  const activeValues: Record<string, string> =
+    properties.length ? resolveVariant(def, activeVariant) : {};
+  const isDefault = properties.every((p) => activeValues[p.name] === p.values[0]);
   const hiddenHere =
-    !isBase && selectedNodeId
+    !isDefault && selectedNodeId
       ? !!(def.combinations ?? [])
-          .find((c) => axes.every((a) => c.values[a.name] === activeCombo[a.name]))
+          .find((c) => properties.every((p) => c.values[p.name] === activeValues[p.name]))
           ?.overrides.find((o) => o.nodeId === selectedNodeId)?.hidden
       : false;
 
@@ -1117,31 +1118,31 @@ function VariantControls({
   return (
     <Section title="Variants">
       <div className="flex flex-col gap-control">
-        {axes.map((axis) => (
-          <div key={axis.name} className="flex flex-col gap-2xs rounded-sm border border-line/40 p-xs">
+        {properties.map((property) => (
+          <div key={property.name} className="flex flex-col gap-2xs rounded-sm border border-line/40 p-xs">
             <div className="flex items-center gap-xs">
-              <span className="flex-1 font-mono text-xs text-ink">{axis.name}</span>
+              <span className="flex-1 font-mono text-xs text-ink">{property.name}</span>
               <button
                 type="button"
-                title={`Remove axis ${axis.name}`}
-                onClick={() => run(() => removeVariantAxis(componentId, axis.name))}
+                title={`Remove property ${property.name}`}
+                onClick={() => run(() => removeVariantAxis(componentId, property.name))}
                 className="text-ink-faint hover:text-ink"
               >
                 <X size={12} aria-hidden="true" />
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-2xs">
-              {axis.values.map((value) => (
+              {property.values.map((value) => (
                 <span
                   key={value}
                   className="inline-flex items-center gap-2xs rounded-xs border border-line bg-chrome-2 px-xs py-2xs text-2xs text-ink-dim"
                 >
                   {value}
-                  {axis.values.length > 1 && (
+                  {property.values.length > 1 && (
                     <button
                       type="button"
                       title={`Remove ${value}`}
-                      onClick={() => run(() => removeVariantValue(componentId, axis.name, value))}
+                      onClick={() => run(() => removeVariantValue(componentId, property.name, value))}
                       className="text-ink-faint hover:text-ink"
                     >
                       <X size={10} aria-hidden="true" />
@@ -1150,14 +1151,14 @@ function VariantControls({
                 </span>
               ))}
               <input
-                value={valueDrafts[axis.name] ?? ""}
-                onChange={(e) => setValueDrafts((d) => ({ ...d, [axis.name]: e.target.value }))}
+                value={valueDrafts[property.name] ?? ""}
+                onChange={(e) => setValueDrafts((d) => ({ ...d, [property.name]: e.target.value }))}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
-                    const v = (valueDrafts[axis.name] ?? "").trim();
+                    const v = (valueDrafts[property.name] ?? "").trim();
                     if (v) {
-                      run(() => addVariantValue(componentId, axis.name, v));
-                      setValueDrafts((d) => ({ ...d, [axis.name]: "" }));
+                      run(() => addVariantValue(componentId, property.name, v));
+                      setValueDrafts((d) => ({ ...d, [property.name]: "" }));
                     }
                   }
                 }}
@@ -1171,66 +1172,63 @@ function VariantControls({
 
         <div className="flex items-center gap-xs">
           <input
-            value={axisDraft}
-            onChange={(e) => setAxisDraft(e.target.value)}
+            value={propertyDraft}
+            onChange={(e) => setPropertyDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && axisDraft.trim()) {
-                run(() => addVariantAxis(componentId, axisDraft.trim()));
-                setAxisDraft("");
+              if (e.key === "Enter" && propertyDraft.trim()) {
+                run(() => addVariantAxis(componentId, propertyDraft.trim()));
+                setPropertyDraft("");
               }
             }}
-            placeholder="New axis (e.g. size)"
+            placeholder="New property (e.g. size)"
             spellCheck={false}
             className={inputCls}
           />
           <button
             type="button"
             onClick={() => {
-              if (axisDraft.trim()) {
-                run(() => addVariantAxis(componentId, axisDraft.trim()));
-                setAxisDraft("");
+              if (propertyDraft.trim()) {
+                run(() => addVariantAxis(componentId, propertyDraft.trim()));
+                setPropertyDraft("");
               }
             }}
             className="rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-xs text-ink hover:bg-raised"
           >
-            Add axis
+            Add property
           </button>
         </div>
 
-        {axes.length > 0 && (
+        {properties.length > 0 && (
           <>
-            <FieldGrid>
-              {axes.map((axis) => (
-                <Field key={axis.name} label={axis.name}>
-                  <Select
-                    value={activeCombo[axis.name]}
-                    onChange={(v) => setActiveVariant(axis.name, v)}
-                    options={axis.values.map((value) => ({ value, label: value }))}
-                  />
-                </Field>
-              ))}
-            </FieldGrid>
-            <p className={cn("m-0 text-xs", isBase ? "text-ink-faint" : "text-accent")}>
-              {isBase
-                ? "Editing the base template — set a non-default combination to author a variant."
-                : `Style/visibility edits apply to ${axes
-                    .map((a) => `${a.name}=${activeCombo[a.name]}`)
+            <div className="eyebrow pt-xs">Editing variant</div>
+            <VariantPicker
+              properties={properties}
+              activeValues={activeValues}
+              onSelect={(values) => {
+                for (const p of properties) setActiveVariant(p.name, values[p.name]);
+              }}
+            />
+            <p className={cn("m-0 text-xs", isDefault ? "text-ink-faint" : "text-accent")}>
+              {isDefault
+                ? "Editing the default variant — pick another cell to author an override."
+                : `Edits apply to ${properties
+                    .map((p) => `${p.name}=${activeValues[p.name]}`)
                     .join(", ")}.`}
             </p>
-            {!isBase && selectedNodeId && (
+            {!isDefault && selectedNodeId && (
               <label className="flex items-center gap-xs text-xs text-ink">
                 <input
                   type="checkbox"
                   checked={hiddenHere}
                   onChange={(e) =>
                     run(() =>
-                      setVariantOverride(componentId, activeCombo, selectedNodeId, {
+                      setVariantOverride(componentId, activeValues, selectedNodeId, {
                         hidden: e.target.checked ? true : null,
                       }),
                     )
                   }
                 />
-                Hide this node in this combination
+                Hide this layer in this variant
               </label>
             )}
           </>
@@ -1238,6 +1236,117 @@ function VariantControls({
         {err && <p className="m-0 text-xs text-live">{err}</p>}
       </div>
     </Section>
+  );
+}
+
+/** Compact picker for the active variant. 1 property → chip row. 2 properties →
+ *  matrix grid. 3+ → per-property dropdowns (matrix would be unwieldy). */
+function VariantPicker({
+  properties,
+  activeValues,
+  onSelect,
+}: {
+  properties: { name: string; values: string[] }[];
+  activeValues: Record<string, string>;
+  onSelect: (values: Record<string, string>) => void;
+}) {
+  if (properties.length === 1) {
+    const property = properties[0];
+    return (
+      <div className="flex flex-wrap gap-2xs">
+        {property.values.map((value) => {
+          const active = activeValues[property.name] === value;
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onSelect({ ...activeValues, [property.name]: value })}
+              className={cn(
+                "rounded-xs border px-xs py-2xs text-2xs transition-colors",
+                active
+                  ? "border-accent-line bg-accent-soft text-accent"
+                  : "border-line bg-chrome-2 text-ink-dim hover:bg-raised hover:text-ink",
+              )}
+            >
+              {value}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+  if (properties.length === 2) {
+    const [rowProp, colProp] = properties;
+    return (
+      <div className="overflow-x-auto">
+        <table className="border-separate border-spacing-2xs text-2xs">
+          <thead>
+            <tr>
+              <td />
+              {colProp.values.map((cv) => (
+                <th
+                  key={cv}
+                  className="px-xs py-2xs text-left font-normal text-ink-faint"
+                  title={`${colProp.name} = ${cv}`}
+                >
+                  {cv}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rowProp.values.map((rv) => (
+              <tr key={rv}>
+                <th
+                  className="pr-xs text-right font-normal text-ink-faint"
+                  title={`${rowProp.name} = ${rv}`}
+                >
+                  {rv}
+                </th>
+                {colProp.values.map((cv) => {
+                  const active =
+                    activeValues[rowProp.name] === rv && activeValues[colProp.name] === cv;
+                  return (
+                    <td key={cv}>
+                      <button
+                        type="button"
+                        title={`${rowProp.name}=${rv}, ${colProp.name}=${cv}`}
+                        onClick={() =>
+                          onSelect({
+                            ...activeValues,
+                            [rowProp.name]: rv,
+                            [colProp.name]: cv,
+                          })
+                        }
+                        className={cn(
+                          "h-6 w-6 rounded-xs border transition-colors",
+                          active
+                            ? "border-accent-line bg-accent-soft"
+                            : "border-line bg-chrome-2 hover:bg-raised",
+                        )}
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  return (
+    <FieldGrid>
+      {properties.map((property) => (
+        <Field key={property.name} label={property.name}>
+          <Select
+            value={activeValues[property.name]}
+            onChange={(v) => onSelect({ ...activeValues, [property.name]: v })}
+            options={property.values.map((value) => ({ value, label: value }))}
+          />
+        </Field>
+      ))}
+    </FieldGrid>
   );
 }
 

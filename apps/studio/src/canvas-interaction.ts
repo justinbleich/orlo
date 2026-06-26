@@ -1,6 +1,6 @@
 /**
  * Pure canvas interaction helpers — creation model, flex insert/reorder indices,
- * and hit testing. Kept separate from RNNodeOverlay so behavior is testable.
+ * and hit testing. Kept separate from LayerOverlay so behavior is testable.
  *
  * Creation model (Phase 2A): **flex-flow** — draw-to-create always inserts a
  * relative (flex) child at a Yoga-derived index. Absolute placement is opt-in

@@ -1,5 +1,5 @@
 import { forwardRef, useState } from "react";
-import { Link2 } from "lucide-react";
+import { Link2, Link2Off } from "lucide-react";
 import { NumberField } from "./NumberField";
 import { cn } from "./cn";
 import type { EditLifecycle } from "./controls";
@@ -61,6 +61,73 @@ export function TokenNumberField({
     value: t.value,
   }));
 
+  // When a token is linked, replace the number field with a chip showing the
+  // token name + resolved value (matches the color field's inline-name affordance
+  // so tokens read as first-class values, not a hidden binding).
+  if (linked) {
+    return (
+      <div
+        className={cn(
+          "flex h-7 min-w-0 items-center rounded-sm border border-accent-line/60 bg-chrome-2 pl-control-y pr-2xs",
+          "transition-colors focus-within:border-accent-line focus-within:bg-raised hover:bg-raised",
+          disabled && "opacity-50",
+        )}
+      >
+        <TokenPickerPopover
+          open={open}
+          onOpenChange={setOpen}
+          category={category}
+          tokens={pickerTokens}
+          linkedTokenId={linkedTokenId}
+          defaultPromoteName={defaultPromoteName}
+          hasValue={value !== undefined}
+          onLink={onLink}
+          onUnlink={onUnlink}
+          onPromote={onPromote}
+          trigger={
+            <TokenLinkTrigger
+              linked
+              linkedName={linked.name}
+              disabled={disabled}
+            />
+          }
+          customTab={
+            <CustomNumberTab
+              value={value}
+              min={min}
+              max={max}
+              step={step}
+              onChange={(v) => {
+                onEditStart?.();
+                onUnlink();
+                onChange(v);
+              }}
+            />
+          }
+        />
+        <span
+          title={`${linked.name} · ${linked.value}`}
+          className="ml-sm min-w-0 flex-1 truncate font-mono text-xs text-accent"
+        >
+          {linked.name}
+          <span className="ml-xs text-ink-faint">{linked.value}</span>
+        </span>
+        <button
+          type="button"
+          onClick={onUnlink}
+          title="Unlink token"
+          aria-label="Unlink token"
+          className={cn(
+            "ml-xs inline-flex size-5 shrink-0 items-center justify-center rounded-xs text-ink-faint",
+            "hover:bg-raised hover:text-ink",
+          )}
+        >
+          <Link2Off size={12} aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-w-0 items-center gap-2xs">
       <div className="min-w-0 flex-1">
@@ -95,11 +162,7 @@ export function TokenNumberField({
         onUnlink={onUnlink}
         onPromote={onPromote}
         trigger={
-          <TokenLinkTrigger
-            linked={!!linked}
-            linkedName={linked?.name}
-            disabled={disabled}
-          />
+          <TokenLinkTrigger linked={false} disabled={disabled} />
         }
         customTab={
           <CustomNumberTab

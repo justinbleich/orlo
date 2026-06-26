@@ -12,10 +12,10 @@ import {
 import { useCallback, useState } from "react";
 import { findNode, useDocumentStore } from "@rn-canvas/document";
 import {
-  RNFrameRenderer,
+  FrameRenderer,
   type LayoutReadyResult,
 } from "@rn-canvas/render-web";
-import { RNNodeOverlay } from "../RNNodeOverlay";
+import { LayerOverlay } from "../LayerOverlay";
 import { useStudioStore } from "../studio-store";
 
 // Below this on-screen width the rnw detail isn't legible, so we render a cheap
@@ -50,7 +50,9 @@ function LODProxy({ w, h, label }: { w: number; h: number; label: string }) {
  * is owned by the document store — the single source of truth — so editing a node
  * in the inspector re-renders here via the Zustand subscription.
  */
-export type RNFrameShape = TLBaseShape<
+// The persisted tldraw shape type stays "rnframe" so existing tldraw stores
+// keep loading after this rename. Only the TS symbols change.
+export type FrameShape = TLBaseShape<
   "rnframe",
   { w: number; h: number; rootId: string }
 >;
@@ -59,15 +61,15 @@ export type RNFrameShape = TLBaseShape<
 // so a custom shape type isn't assignable here — custom shapes are nonetheless a
 // supported runtime feature. The cast is isolated to this declaration.
 // @ts-expect-error custom shape type vs closed TLShape constraint
-export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
+export class FrameShapeUtil extends ShapeUtil<FrameShape> {
   static override type = "rnframe" as const;
-  static override props: RecordProps<RNFrameShape> = {
+  static override props: RecordProps<FrameShape> = {
     w: T.number,
     h: T.number,
     rootId: T.string,
   };
 
-  override getDefaultProps(): RNFrameShape["props"] {
+  override getDefaultProps(): FrameShape["props"] {
     return { w: 320, h: 120, rootId: "" };
   }
 
@@ -79,7 +81,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
   // capture listener also observes the pointer, never translate the host frame
   // while its document selection is inside the root.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  override onTranslate(initial: RNFrameShape, current: RNFrameShape): any {
+  override onTranslate(initial: FrameShape, current: FrameShape): any {
     const store = useDocumentStore.getState();
     const root = store.roots[current.props.rootId];
     const hasInnerSelection =
@@ -99,7 +101,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
   // App-side reconcile mirrors the shape box back from the root on undo.
   // tldraw is untyped in this build, so these handlers are loosely typed.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  override onResizeStart(shape: RNFrameShape): any {
+  override onResizeStart(shape: FrameShape): any {
     try {
       useDocumentStore.getState().beginInteraction();
     } catch {
@@ -109,7 +111,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  override onResize(shape: RNFrameShape, info: any): any {
+  override onResize(shape: FrameShape, info: any): any {
     const w = Math.max(40, Math.round(info.initialShape.props.w * info.scaleX));
     const h = Math.max(40, Math.round(info.initialShape.props.h * info.scaleY));
     const { rootId } = shape.props;
@@ -133,7 +135,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
     return undefined;
   }
 
-  override getGeometry(shape: RNFrameShape): Geometry2d {
+  override getGeometry(shape: FrameShape): Geometry2d {
     return new Rectangle2d({
       width: shape.props.w,
       height: shape.props.h,
@@ -141,7 +143,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
     });
   }
 
-  override component(shape: RNFrameShape) {
+  override component(shape: FrameShape) {
     const editor = useEditor();
     const [layoutResult, setLayoutResult] = useState<LayoutReadyResult | null>(null);
     const setStudioLayout = useStudioStore((state) => state.setLayout);
@@ -192,7 +194,7 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
           </div>
         ) : live ? (
           <div style={{ pointerEvents: "none" }}>
-            <RNFrameRenderer root={root} components={components} onLayoutReady={onLayoutReady} />
+            <FrameRenderer root={root} components={components} onLayoutReady={onLayoutReady} />
           </div>
         ) : (
           <LODProxy
@@ -202,13 +204,13 @@ export class RNFrameShapeUtil extends ShapeUtil<RNFrameShape> {
           />
         )}
         {root && live && layoutResult && (
-          <RNNodeOverlay root={root} result={layoutResult} active={interactive} />
+          <LayerOverlay root={root} result={layoutResult} active={interactive} />
         )}
       </HTMLContainer>
     );
   }
 
-  override indicator(shape: RNFrameShape) {
+  override indicator(shape: FrameShape) {
     return <rect width={shape.props.w} height={shape.props.h} rx={4} />;
   }
 

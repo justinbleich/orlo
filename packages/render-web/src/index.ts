@@ -1,8 +1,8 @@
-export { RNFrameRenderer, computeLayout, computePixelDiff } from "./RNFrameRenderer";
+export { FrameRenderer, computeLayout, computePixelDiff } from "./FrameRenderer";
 export type {
   LayoutReadyResult,
   RenderInstrumentation,
-} from "./RNFrameRenderer";
+} from "./FrameRenderer";
 export { createLayoutSnapshot } from "./yoga-layout";
 export type { LayoutBox, LayoutSnapshot } from "./yoga-layout";
 export {

@@ -30,7 +30,7 @@ export type LayoutReadyResult = {
   height: number;
 };
 
-type RNFrameRendererProps = {
+type FrameRendererProps = {
   root: Node;
   /** Component definitions used to expand any ComponentInstance nodes (Phase 2C). */
   components?: ComponentRegistry;
@@ -155,12 +155,12 @@ const RenderedLayoutBox = memo(
     previous.onNodePaint === next.onNodePaint && sameLayoutBox(previous.box, next.box),
 );
 
-export function RNFrameRenderer({
+export function FrameRenderer({
   root,
   components,
   onLayoutReady,
   instrumentation,
-}: RNFrameRendererProps) {
+}: FrameRendererProps) {
   const onLayoutReadyRef = useRef(onLayoutReady);
   const instrumentationRef = useRef(instrumentation);
   onLayoutReadyRef.current = onLayoutReady;

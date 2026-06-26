@@ -88,7 +88,7 @@ function localPoint(element: HTMLDivElement, clientX: number, clientY: number): 
   };
 }
 
-export function RNNodeOverlay({
+export function LayerOverlay({
   root,
   result,
   active,

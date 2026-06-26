@@ -19,11 +19,11 @@ interface StudioState {
   /** Latest Yoga result per live frame; derived UI data, never serialized. */
   layouts: Record<NodeId, LayoutReadyResult>;
   setLayout(rootId: NodeId, result: LayoutReadyResult): void;
-  /** While editing a component-set in focus mode, the variant combination being
-   *  authored (axis → value). Non-base selections route node style/visibility edits
-   *  into that combination's override. UI-only; cleared when focus mode ends. */
+  /** While editing a component in focus mode, the variant being authored
+   *  (property → value). Non-default selections route layer style/visibility
+   *  edits into that variant's override. UI-only; cleared when focus mode ends. */
   activeVariant: Record<string, string>;
-  setActiveVariant(axisName: string, value: string): void;
+  setActiveVariant(propertyName: string, value: string): void;
   resetActiveVariant(): void;
 }
 
@@ -36,7 +36,7 @@ export const useStudioStore = create<StudioState>((set) => ({
   setLayout: (rootId, result) =>
     set((state) => ({ layouts: { ...state.layouts, [rootId]: result } })),
   activeVariant: {},
-  setActiveVariant: (axisName, value) =>
-    set((state) => ({ activeVariant: { ...state.activeVariant, [axisName]: value } })),
+  setActiveVariant: (propertyName, value) =>
+    set((state) => ({ activeVariant: { ...state.activeVariant, [propertyName]: value } })),
   resetActiveVariant: () => set({ activeVariant: {} }),
 }));

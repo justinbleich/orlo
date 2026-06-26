@@ -18,7 +18,7 @@ import {
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
-import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
+import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
 import { Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { color, layout, radius, space, text } from "./studio-theme";
@@ -27,9 +27,10 @@ import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
 import { normalizeNodeSelection } from "./selection";
+import { useStudioStore } from "./studio-store";
 
-const shapeUtils = [RNFrameShapeUtil];
-const RNFRAME = RNFrameShapeUtil.type;
+const shapeUtils = [FrameShapeUtil];
+const FRAME_TYPE = FrameShapeUtil.type;
 
 // Lockdown: tldraw is a frame host, not a whiteboard. Hide its default chrome so
 // users can't reach tldraw-native shapes/styles (which aren't RN nodes and can't
@@ -49,9 +50,9 @@ const components: TLComponents = {
   DebugPanel: null,
 };
 
-// tldraw's shape vocabulary is RNFrame only. Keep navigation tools (select, hand,
+// tldraw's shape vocabulary is Frame only. Keep navigation tools (select, hand,
 // zoom); remove every shape-creating/destructive tool so no tldraw-native shape can
-// be made. RN primitives are document nodes created via the tool rail (draw-to-create).
+// be made. RN primitives are document layers created via the tool rail (draw-to-create).
 const KEEP_TOOLS = new Set(["select", "hand", "zoom"]);
 const overrides: TLUiOverrides = {
   tools(_editor, tools) {
@@ -65,8 +66,8 @@ const overrides: TLUiOverrides = {
 // tldraw's editor methods type shapes as the closed builtin union, so reads/
 // writes of our custom shape go through these narrow casts.
 type EditorShape = ReturnType<Editor["getCurrentPageShapes"]>[number];
-const isRNFrame = (s: EditorShape) => (s.type as string) === RNFRAME;
-const asRNFrame = (s: EditorShape) => s as unknown as RNFrameShape;
+const isFrame = (s: EditorShape) => (s.type as string) === FRAME_TYPE;
+const asFrame = (s: EditorShape) => s as unknown as FrameShape;
 type CreatePartial = Parameters<Editor["createShape"]>[0];
 type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
@@ -132,8 +133,8 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   const existing = new Set(
     editor
       .getCurrentPageShapes()
-      .filter(isRNFrame)
-      .map((s) => asRNFrame(s).props.rootId),
+      .filter(isFrame)
+      .map((s) => asFrame(s).props.rootId),
   );
   let i = existing.size;
   for (const root of Object.values(roots)) {
@@ -141,7 +142,7 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
     const { w, h } = rootSize(root);
     editor.createShape({
       id: createShapeId(),
-      type: RNFRAME,
+      type: FRAME_TYPE,
       x: 80 + (i % 3) * (DEVICE_FRAME.width + 50),
       y: 80 + Math.floor(i / 3) * (DEVICE_FRAME.height + 56),
       props: { rootId: root.id, w, h },
@@ -151,7 +152,7 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   }
 }
 
-/** RNFrame records derive from document roots, so reconciliation must never
+/** Frame records derive from document roots, so reconciliation must never
  *  become an independent tldraw undo entry. */
 function syncShapes(editor: Editor) {
   editor.run(
@@ -163,9 +164,9 @@ function syncShapes(editor: Editor) {
 function canvasGeometrySignature(editor: Editor) {
   return editor
     .getCurrentPageShapes()
-    .filter(isRNFrame)
+    .filter(isFrame)
     .map((shape) => {
-      const frame = asRNFrame(shape);
+      const frame = asFrame(shape);
       return [frame.id, frame.x, frame.y, frame.rotation, frame.props.w, frame.props.h];
     })
     .sort(([a], [b]) => String(a).localeCompare(String(b)))
@@ -187,7 +188,7 @@ export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
 
-  const [status, setStatus] = useState("Frame: drag · Resize: handles · Add: toolbar");
+  const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [screenName, setScreenName] = useState("Screen");
   const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
@@ -281,8 +282,8 @@ export default function App() {
       () => {
         if (reconcilingShapesRef.current) return;
         const sel = editor.getOnlySelectedShape();
-        if (!sel || !isRNFrame(sel)) return;
-        const rootId = asRNFrame(sel).props.rootId;
+        if (!sel || !isFrame(sel)) return;
+        const rootId = asFrame(sel).props.rootId;
         const s = useDocumentStore.getState();
         const curRoot = findRootContaining(Object.values(s.roots), s.selection[0] ?? "");
         if (curRoot?.id !== rootId) s.setSelection([rootId]);
@@ -326,7 +327,7 @@ export default function App() {
     if (!editor || !focusedRoot) return;
     const shape = editor
       .getCurrentPageShapes()
-      .find((s) => isRNFrame(s) && asRNFrame(s).props.rootId === focusedRoot.id);
+      .find((s) => isFrame(s) && asFrame(s).props.rootId === focusedRoot.id);
     if (shape && editor.getOnlySelectedShape()?.id !== shape.id) {
       editor.select(shape.id);
     }
@@ -345,6 +346,56 @@ export default function App() {
 
       const store = useDocumentStore.getState();
       const modifier = event.metaKey || event.ctrlKey;
+
+      // Single-key tool shortcuts (Figma-style, no modifier). V/Select disarms
+      // any active create-tool; F creates a new screen; R/T/I arm a primitive
+      // for the next canvas drag. Esc clears an armed tool.
+      if (!modifier && !event.altKey && !event.shiftKey && event.key.length === 1) {
+        const studio = useStudioStore.getState();
+        const k = event.key.toLowerCase();
+        if (k === "v") {
+          event.preventDefault();
+          studio.setArmedTool(null);
+          editorRef.current?.setCurrentTool("select");
+          setStatus("Select tool");
+          return;
+        }
+        if (k === "f") {
+          event.preventDefault();
+          addFrame();
+          setStatus("Added screen");
+          return;
+        }
+        if (k === "r") {
+          event.preventDefault();
+          studio.setArmedTool("View");
+          setStatus("View — drag to draw");
+          return;
+        }
+        if (k === "t") {
+          event.preventDefault();
+          studio.setArmedTool("Text");
+          setStatus("Text — drag to draw");
+          return;
+        }
+        if (k === "i") {
+          event.preventDefault();
+          studio.setArmedTool("Image");
+          setStatus("Image — drag to draw");
+          return;
+        }
+      }
+      if (event.key === "Escape" && !modifier) {
+        const studio = useStudioStore.getState();
+        if (studio.armedTool || studio.armedComponentId) {
+          event.preventDefault();
+          studio.setArmedTool(null);
+          studio.setArmedComponent(null);
+          setStatus("Tool disarmed");
+          return;
+        }
+      }
+
       if (modifier && event.key.toLowerCase() === "z") {
         const redoRequested = event.shiftKey;
         const documentAvailable = redoRequested ? store.canRedo() : store.canUndo();
@@ -378,7 +429,7 @@ export default function App() {
           event.preventDefault();
           event.stopImmediatePropagation();
           duplicateNodes(focused!.id, nodeIds);
-          setStatus(`Duplicated ${nodeIds.length} layer${nodeIds.length > 1 ? "s" : ""}`);
+          setStatus(`Duplicated ${nodeIds.length} layer${nodeIds.length === 1 ? "" : "s"}`);
         }
         return;
       }
@@ -427,7 +478,7 @@ export default function App() {
         event.preventDefault();
         event.stopImmediatePropagation();
         deleteNodes(focused!.id, nodeIds);
-        setStatus(`Deleted ${nodeIds.length} layer${nodeIds.length > 1 ? "s" : ""}`);
+        setStatus(`Deleted ${nodeIds.length} layer${nodeIds.length === 1 ? "" : "s"}`);
         return;
       }
 
@@ -435,8 +486,8 @@ export default function App() {
       if (!editor) return;
       const selectedRootIds = editor
         .getSelectedShapes()
-        .filter(isRNFrame)
-        .map((shape) => asRNFrame(shape).props.rootId)
+        .filter(isFrame)
+        .map((shape) => asFrame(shape).props.rootId)
         .filter((rootId) => {
           const root = store.roots[rootId];
           return !!root && !root.design?.locked;
@@ -474,8 +525,8 @@ export default function App() {
         () => {
           createMissingShapes(editor, roots);
           for (const shape of editor.getCurrentPageShapes()) {
-            if (!isRNFrame(shape)) continue;
-            const root = roots[asRNFrame(shape).props.rootId];
+            if (!isFrame(shape)) continue;
+            const root = roots[asFrame(shape).props.rootId];
             if (!root) {
               editor.deleteShapes([shape.id]);
               continue;
@@ -484,19 +535,19 @@ export default function App() {
             if (shape.isLocked !== shouldLock) {
               editor.updateShape({
                 id: shape.id,
-                type: RNFRAME,
+                type: FRAME_TYPE,
                 isLocked: shouldLock,
               } as unknown as UpdatePartial);
             }
             // Mirror the screen size from the root so a document undo of a frame
             // resize restores the box too. Only when it differs (a live drag has
             // already matched them, so this won't fight tldraw mid-gesture).
-            const frame = asRNFrame(shape);
+            const frame = asFrame(shape);
             const { w, h } = rootSize(root);
             if (frame.props.w !== w || frame.props.h !== h) {
               editor.updateShape({
                 id: shape.id,
-                type: RNFRAME,
+                type: FRAME_TYPE,
                 props: { ...frame.props, w, h },
               } as unknown as UpdatePartial);
             }
@@ -508,7 +559,7 @@ export default function App() {
                 .getCurrentPageShapes()
                 .find(
                   (shape) =>
-                    isRNFrame(shape) && asRNFrame(shape).props.rootId === selectedRoot.id,
+                    isFrame(shape) && asFrame(shape).props.rootId === selectedRoot.id,
                 )
             : undefined;
           if (selectedShape) editor.select(selectedShape.id);
@@ -535,7 +586,7 @@ export default function App() {
   const requestCodegen = useCallback(
     async (mode: "preview" | "sync") => {
       if (!focusedRoot) {
-        setCodegenError("Select a frame before syncing code.");
+        setCodegenError("Select a frame before exporting.");
         return null;
       }
       setCodegenBusy(true);
@@ -557,12 +608,12 @@ export default function App() {
         setCodegenResult(body);
         setStatus(
           mode === "sync"
-            ? `Synced ${body.targetPath} + ${body.sidecarPath}`
-            : `Generated preview for ${body.targetPath}`,
+            ? `Exported ${body.targetPath} + ${body.sidecarPath}`
+            : `Previewed export for ${body.targetPath}`,
         );
         return body as CodegenResult;
       } catch (e) {
-        const message = e instanceof Error ? e.message : "Codegen failed";
+        const message = e instanceof Error ? e.message : "Export failed";
         setCodegenError(message);
         setStatus(message);
         return null;
@@ -601,7 +652,7 @@ export default function App() {
       setCodegenResult(null);
       setStatus(`Opened ${opened.sidecarPath}`);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Sidecar load failed";
+      const message = e instanceof Error ? e.message : "Document load failed";
       setCodegenError(message);
       setStatus(message);
     } finally {
@@ -633,7 +684,7 @@ export default function App() {
       setCodegenResult(null);
       setStatus(`Imported ${imported.sourcePath}`);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "React Native import failed";
+      const message = e instanceof Error ? e.message : "Code import failed";
       setCodegenError(message);
       setStatus(message);
     } finally {
@@ -721,10 +772,10 @@ export default function App() {
             type="button"
             style={btn}
             disabled={codegenBusy || !focusedRoot}
-            title="Write generated RN + sidecar to the workspace"
+            title="Write React Native code + document file to the workspace"
             onClick={() => void requestCodegen("sync")}
           >
-            Sync Code
+            Export
           </button>
         </div>
       </header>
@@ -856,7 +907,7 @@ export default function App() {
                   <Eyebrow>Code</Eyebrow>
                   <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
                     <span style={{ color: color.inkDim, fontSize: text.xs }}>
-                      Sidecar path (.rncanvas.json)
+                      Document file (.rncanvas.json)
                     </span>
                     <input
                       value={sidecarPath}
@@ -870,7 +921,7 @@ export default function App() {
                     disabled={codegenBusy}
                     onClick={() => void openSidecar()}
                   >
-                    Open Sidecar
+                    Open Document
                   </button>
                   <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
                     <span style={{ color: color.inkDim, fontSize: text.xs }}>Screen name</span>
@@ -897,7 +948,7 @@ export default function App() {
                     disabled={codegenBusy}
                     onClick={() => void importSource()}
                   >
-                    Import RN Source
+                    Import from Code
                   </button>
                   <div style={{ display: "flex", gap: space.sm }}>
                     <button
@@ -906,7 +957,7 @@ export default function App() {
                       disabled={codegenBusy || !focusedRoot}
                       onClick={() => void requestCodegen("preview")}
                     >
-                      Preview
+                      Preview Export
                     </button>
                     <button
                       type="button"
@@ -914,7 +965,7 @@ export default function App() {
                       disabled={codegenBusy || !focusedRoot}
                       onClick={() => void requestCodegen("sync")}
                     >
-                      Sync Code
+                      Export
                     </button>
                   </div>
                   {codegenError && (

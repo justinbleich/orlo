@@ -81,6 +81,10 @@ import {
   SegmentedControl,
   Select,
   TextField,
+  TokenColorField,
+  TokenNumberField,
+  type ColorTokenOption,
+  type NumberTokenOption,
 } from "./studio-ui";
 import { normalizeNodeSelection, shareParent } from "./selection";
 import { useStudioStore } from "./studio-store";
@@ -638,8 +642,11 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </>
         )}
         <Field label="Padding">
-          <NumberField {...editLifecycle} label="P" {...num("padding")} min={0} onChange={(v) => setStyle("padding", v)} />
-          {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="padding" />}
+          {!multi ? (
+            <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="padding" label="P" {...num("padding")} min={0} onChange={(v) => setStyle("padding", v)} editLifecycle={editLifecycle} />
+          ) : (
+            <NumberField {...editLifecycle} label="P" {...num("padding")} min={0} onChange={(v) => setStyle("padding", v)} />
+          )}
         </Field>
       </Section>
 
@@ -665,8 +672,11 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </Field>
           <FieldGrid>
             <Field label="Gap">
-              <NumberField {...editLifecycle} label="G" {...num("gap")} min={0} onChange={(v) => setStyle("gap", v)} />
-              {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="gap" />}
+              {!multi ? (
+                <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="gap" label="G" {...num("gap")} min={0} onChange={(v) => setStyle("gap", v)} editLifecycle={editLifecycle} />
+              ) : (
+                <NumberField {...editLifecycle} label="G" {...num("gap")} min={0} onChange={(v) => setStyle("gap", v)} />
+              )}
             </Field>
             <Field label="Wrap">
               <SegmentedControl
@@ -691,8 +701,11 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           )}
           <FieldGrid>
             <Field label="Size">
-              <NumberField {...editLifecycle} label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
-              {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="fontSize" />}
+              {!multi ? (
+                <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="fontSize" label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} editLifecycle={editLifecycle} />
+              ) : (
+                <NumberField {...editLifecycle} label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
+              )}
             </Field>
             <Field label="Line height">
               <NumberField {...editLifecycle} label="LH" {...num("lineHeight")} min={0} onChange={(v) => setStyle("lineHeight", v)} />
@@ -717,16 +730,22 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
             />
           </Field>
           <Field label="Color">
-            <ColorField {...editLifecycle} value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
-            {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="color" />}
+            {!multi ? (
+              <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="color" value={colorVal("color")} onChange={(v) => setStyle("color", v)} editLifecycle={editLifecycle} />
+            ) : (
+              <ColorField {...editLifecycle} value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
+            )}
           </Field>
         </Section>
       )}
 
       <Section title="Appearance">
         <Field label="Fill">
-          <ColorField {...editLifecycle} value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
-          {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="backgroundColor" />}
+          {!multi ? (
+            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="backgroundColor" value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} editLifecycle={editLifecycle} />
+          ) : (
+            <ColorField {...editLifecycle} value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
+          )}
         </Field>
         <Field label="Opacity">
           <NumberField {...editLifecycle} label="○" {...num("opacity")} min={0} max={1} step={0.05} onChange={(v) => setStyle("opacity", v)} />
@@ -736,13 +755,19 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
             <NumberField {...editLifecycle} label="W" {...num("borderWidth")} min={0} onChange={(v) => setStyle("borderWidth", v)} />
           </Field>
           <Field label="Radius">
-            <NumberField {...editLifecycle} label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
-            {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="borderRadius" />}
+            {!multi ? (
+              <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderRadius" label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} editLifecycle={editLifecycle} />
+            ) : (
+              <NumberField {...editLifecycle} label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
+            )}
           </Field>
         </FieldGrid>
         <Field label="Border color">
-          <ColorField {...editLifecycle} value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
-          {!multi && <TokenBind rootId={root.id} nodeId={primary.id} styleKey="borderColor" />}
+          {!multi ? (
+            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderColor" value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} editLifecycle={editLifecycle} />
+          ) : (
+            <ColorField {...editLifecycle} value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
+          )}
         </Field>
       </Section>
 
@@ -929,7 +954,10 @@ function InstanceProperties({
           return (
             <Field key={prop.name} label={prop.name}>
               {prop.valueType === "color" ? (
-                <ColorField
+                <InstanceColorOverrideSlot
+                  rootId={rootId}
+                  instanceId={instance.id}
+                  propName={prop.name}
                   value={typeof current === "string" ? current : undefined}
                   onChange={(v) => set(prop.name, v)}
                 />
@@ -1023,32 +1051,185 @@ function ExposeControls({ componentId, node }: { componentId: NodeId; node: Node
   );
 }
 
-/** Bind/unbind a node's style key to a design token of the matching category. */
-function TokenBind({ rootId, nodeId, styleKey }: { rootId: NodeId; nodeId: NodeId; styleKey: string }) {
+const PROMOTE_PREFIX: Record<"color" | "spacing" | "fontSize", string> = {
+  color: "color",
+  spacing: "space",
+  fontSize: "text",
+};
+
+/** Suggest a sensible default name for promote-from-value: `<prefix><n>` where
+ *  n is the next free index among existing tokens of this category. */
+function nextDefaultPromoteName(
+  tokens: Record<string, { name: string; category: "color" | "spacing" | "fontSize" }>,
+  category: "color" | "spacing" | "fontSize",
+): string {
+  const prefix = PROMOTE_PREFIX[category];
+  const taken = new Set(
+    Object.values(tokens)
+      .filter((t) => t.category === category)
+      .map((t) => t.name),
+  );
+  let i = 1;
+  while (taken.has(`${prefix}${i}`)) i += 1;
+  return `${prefix}${i}`;
+}
+
+/** Color-field with token popover. Wires TokenColorField against the document store. */
+function ColorTokenSlot({
+  rootId,
+  nodeId,
+  styleKey,
+  value,
+  onChange,
+  editLifecycle,
+}: {
+  rootId: NodeId;
+  nodeId: NodeId;
+  styleKey: string;
+  value: string | undefined;
+  onChange: (v: string) => void;
+  editLifecycle: { onEditStart?: () => void; onEditEnd?: () => void; onEditCancel?: () => void };
+}) {
   const tokens = useDocumentStore((s) => s.tokens);
   const root = useDocumentStore((s) => s.roots[rootId]);
-  const bind = useDocumentStore((s) => s.bindStyleToken);
-  const unbind = useDocumentStore((s) => s.unbindStyleToken);
-  const category = tokenCategoryForStyleKey(styleKey);
-  if (!category) return null;
-  const candidates = Object.values(tokens).filter((t) => t.category === category);
-  if (candidates.length === 0) return null;
+  const link = useDocumentStore((s) => s.linkStyleToken);
+  const unlink = useDocumentStore((s) => s.unlinkStyleToken);
+  const promote = useDocumentStore((s) => s.promoteStyleToToken);
   const node = root ? findNode(root, nodeId) : undefined;
-  const bound = node?.design?.tokens?.[styleKey];
+  const linkedTokenId = node?.design?.tokens?.[styleKey];
+  const colorOptions: ColorTokenOption[] = Object.values(tokens)
+    .filter((t) => t.category === "color")
+    .map((t) => ({ id: t.id, name: t.name, value: t.value as string }));
   return (
-    <div className="flex items-center gap-xs">
-      <Select
-        value={bound}
-        onChange={(id) => bind(rootId, nodeId, styleKey, id)}
-        options={candidates.map((t) => ({ value: t.id, label: t.name }))}
-        placeholder="Bind token"
+    <TokenColorField
+      {...editLifecycle}
+      value={value}
+      onChange={onChange}
+      tokens={colorOptions}
+      linkedTokenId={linkedTokenId}
+      defaultPromoteName={nextDefaultPromoteName(tokens, "color")}
+      onLink={(id) => link(rootId, nodeId, styleKey, id)}
+      onUnlink={() => unlink(rootId, nodeId, styleKey)}
+      onPromote={(name) => promote(rootId, nodeId, styleKey, name)}
+    />
+  );
+}
+
+/** Color override on a component instance, with token popover. Mirrors
+ *  ColorTokenSlot but writes to `instance.overrides` + `instance.tokens`. */
+function InstanceColorOverrideSlot({
+  rootId,
+  instanceId,
+  propName,
+  value,
+  onChange,
+}: {
+  rootId: NodeId;
+  instanceId: NodeId;
+  propName: string;
+  value: string | undefined;
+  onChange: (v: string) => void;
+}) {
+  const tokens = useDocumentStore((s) => s.tokens);
+  const root = useDocumentStore((s) => s.roots[rootId]);
+  const link = useDocumentStore((s) => s.linkInstanceToken);
+  const unlink = useDocumentStore((s) => s.unlinkInstanceToken);
+  const promote = useDocumentStore((s) => s.promoteInstanceOverrideToToken);
+  const node = root ? findNode(root, instanceId) : undefined;
+  const linkedTokenId =
+    node?.type === "ComponentInstance" ? node.tokens?.[propName] : undefined;
+  const colorOptions: ColorTokenOption[] = Object.values(tokens)
+    .filter((t) => t.category === "color")
+    .map((t) => ({ id: t.id, name: t.name, value: t.value as string }));
+  return (
+    <TokenColorField
+      value={value}
+      onChange={onChange}
+      tokens={colorOptions}
+      linkedTokenId={linkedTokenId}
+      defaultPromoteName={nextDefaultPromoteName(tokens, "color")}
+      onLink={(id) => link(rootId, instanceId, propName, id)}
+      onUnlink={() => unlink(rootId, instanceId, propName)}
+      onPromote={(name) => promote(rootId, instanceId, propName, "color", name)}
+    />
+  );
+}
+
+/** NumberField with token popover for spacing/fontSize style keys. */
+function NumberTokenSlot({
+  rootId,
+  nodeId,
+  styleKey,
+  label,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  mixed,
+  placeholder,
+  editLifecycle,
+}: {
+  rootId: NodeId;
+  nodeId: NodeId;
+  styleKey: string;
+  label: React.ReactNode;
+  value: number | undefined;
+  onChange: (v: number | undefined) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  mixed?: boolean;
+  placeholder?: string;
+  editLifecycle: { onEditStart?: () => void; onEditEnd?: () => void; onEditCancel?: () => void };
+}) {
+  const tokens = useDocumentStore((s) => s.tokens);
+  const root = useDocumentStore((s) => s.roots[rootId]);
+  const link = useDocumentStore((s) => s.linkStyleToken);
+  const unlink = useDocumentStore((s) => s.unlinkStyleToken);
+  const promote = useDocumentStore((s) => s.promoteStyleToToken);
+  const category = tokenCategoryForStyleKey(styleKey);
+  // Caller passes only spacing/fontSize keys; if a wrong key slips in fall back
+  // to a plain NumberField so we never silently swallow the input.
+  if (category !== "spacing" && category !== "fontSize") {
+    return (
+      <NumberField
+        {...editLifecycle}
+        label={label}
+        value={value}
+        onChange={onChange}
+        min={min}
+        max={max}
+        step={step}
+        mixed={mixed}
+        placeholder={placeholder}
       />
-      {bound && (
-        <IconButton title="Unbind token" onClick={() => unbind(rootId, nodeId, styleKey)}>
-          <X size={13} aria-hidden="true" />
-        </IconButton>
-      )}
-    </div>
+    );
+  }
+  const node = root ? findNode(root, nodeId) : undefined;
+  const linkedTokenId = node?.design?.tokens?.[styleKey];
+  const numberOptions: NumberTokenOption[] = Object.values(tokens)
+    .filter((t) => t.category === category)
+    .map((t) => ({ id: t.id, name: t.name, value: t.value as number }));
+  return (
+    <TokenNumberField
+      {...editLifecycle}
+      label={label}
+      value={value}
+      onChange={onChange}
+      min={min}
+      max={max}
+      step={step}
+      mixed={mixed}
+      placeholder={placeholder}
+      category={category}
+      tokens={numberOptions}
+      linkedTokenId={linkedTokenId}
+      defaultPromoteName={nextDefaultPromoteName(tokens, category)}
+      onLink={(id) => link(rootId, nodeId, styleKey, id)}
+      onUnlink={() => unlink(rootId, nodeId, styleKey)}
+      onPromote={(name) => promote(rootId, nodeId, styleKey, name)}
+    />
   );
 }
 

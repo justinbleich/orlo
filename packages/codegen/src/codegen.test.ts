@@ -430,6 +430,53 @@ test("a screen with no token bindings imports no theme", () => {
   assert.ok(!gen.code.includes("./theme"));
 });
 
+test("instance overrides linked to tokens emit theme refs", () => {
+  const tokens: TokenRegistry = {
+    tk1: { id: "tk1", name: "brand", category: "color", value: "#3b82f6" },
+  };
+  const definition = {
+    id: "c1",
+    name: "Btn",
+    template: createNode("View", { id: "tpl" }),
+    props: [
+      {
+        name: "tint",
+        valueType: "color" as const,
+        targets: [{ kind: "style" as const, nodeId: "tpl", styleKey: "backgroundColor" }],
+      },
+    ],
+  };
+  const instance: Node = {
+    id: "i1",
+    type: "ComponentInstance",
+    componentId: "c1",
+    overrides: { tint: "#3b82f6" },
+    tokens: { tint: "tk1" },
+    style: {},
+  };
+  const root = createNode("View", { children: [instance] });
+  const gen = generateScreen(root, {
+    screenName: "Home",
+    tokens,
+    components: { c1: definition },
+  });
+  assertParses(gen.code);
+  // The instance JSX should reference the theme, not the hex literal.
+  assert.match(gen.code, /tint=\{theme\.color\.brand\}/);
+  assert.ok(!gen.code.includes('"#3b82f6"'), "no leaked hex literal");
+});
+
+test("dotted token names emit quoted keys + bracket-access references", () => {
+  const tokens: TokenRegistry = {
+    tk1: { id: "tk1", name: "color.primary.500", category: "color", value: "#3b82f6" },
+  };
+  const gen = generateScreen(tokenBoundScreen(), { screenName: "Home", tokens });
+  assertParses(gen.code);
+  assert.match(gen.code, /backgroundColor: theme\.color\["color\.primary\.500"\]/);
+  assert.match(gen.theme!.code, /"color\.primary\.500": "#3b82f6"/);
+  assertParses(gen.theme!.code);
+});
+
 test("emitTheme emits the registry as a typed theme module", () => {
   const theme = emitTheme({
     a: { id: "a", name: "bg", category: "color", value: "#fff" },
@@ -482,4 +529,107 @@ test("spacing and fontSize tokens emit theme.<category>.<name>", () => {
   assert.match(gen.theme!.code, /spacing: \{\s*lg: 24/);
   assert.match(gen.theme!.code, /fontSize: \{\s*body: 16/);
   assertParses(gen.theme!.code);
+});
+
+// --- Phase 2D-2b: theme.ts as the canonical token source ---
+
+import { openDocument, parseTheme, reconcileTokens } from "./index";
+
+test("parseTheme round-trips emitTheme output across categories", () => {
+  const tokens: TokenRegistry = {
+    c1: { id: "c1", name: "brand", category: "color", value: "#3b82f6" },
+    c2: { id: "c2", name: "color.primary.500", category: "color", value: "#abc" },
+    s1: { id: "s1", name: "lg", category: "spacing", value: 24 },
+    s2: { id: "s2", name: "tight", category: "spacing", value: -4 }, // negative literal
+    f1: { id: "f1", name: "body", category: "fontSize", value: 16 },
+  };
+  const parsed = parseTheme(emitTheme(tokens).code);
+  assert.equal(parsed.length, 5);
+  // Membership checks (order-independent), keyed by category:name.
+  const byKey = new Map(parsed.map((p) => [`${p.category}:${p.name}`, p.value]));
+  assert.equal(byKey.get("color:brand"), "#3b82f6");
+  assert.equal(byKey.get("color:color.primary.500"), "#abc");
+  assert.equal(byKey.get("spacing:lg"), 24);
+  assert.equal(byKey.get("spacing:tight"), -4);
+  assert.equal(byKey.get("fontSize:body"), 16);
+});
+
+test("parseTheme returns [] for a theme-less module and fails closed on dynamic values", () => {
+  assert.deepEqual(parseTheme(`export const other = 1;`), []);
+  assert.throws(
+    () => parseTheme(`export const theme = { color: { brand: someVar } } as const;`),
+    /Unsupported theme.ts source/,
+  );
+  assert.throws(
+    () => parseTheme(`export const theme = { shadow: { x: 1 } } as const;`),
+    /unknown category/,
+  );
+});
+
+test("reconcileTokens keeps ids on match, mints on add, drops on remove", () => {
+  const prior: TokenRegistry = {
+    tk1: { id: "tk1", name: "brand", category: "color", value: "#000" },
+    tk2: { id: "tk2", name: "lg", category: "spacing", value: 24 },
+  };
+  // File: brand changed value, lg removed, a new fontSize token added.
+  const next = reconcileTokens(
+    [
+      { category: "color", name: "brand", value: "#3b82f6" },
+      { category: "fontSize", name: "body", value: 16 },
+    ],
+    prior,
+  );
+  const entries = Object.values(next);
+  const brand = entries.find((t) => t.name === "brand")!;
+  assert.equal(brand.id, "tk1", "id reused on category:name match");
+  assert.equal(brand.value, "#3b82f6", "value comes from the file");
+  assert.ok(!entries.some((t) => t.name === "lg"), "removed-in-file token is dropped");
+  const body = entries.find((t) => t.name === "body")!;
+  assert.match(body.id, /[0-9a-f-]{8,}/, "added-in-file token gets a fresh id");
+});
+
+function boundSidecar(value: string) {
+  const tokens: TokenRegistry = {
+    tk1: { id: "tk1", name: "brand", category: "color", value },
+  };
+  const root = createNode("View", {
+    id: "screen",
+    style: { backgroundColor: value },
+    design: { tokens: { backgroundColor: "tk1" } },
+  });
+  return serializeSidecar(buildSidecar(root, { screenName: "Home", tokens }));
+}
+
+test("openDocument: file value overrides the sidecar literal and reapplies to bound nodes", () => {
+  const sidecar = boundSidecar("#000000"); // sidecar literal is black
+  const themeSource = emitTheme({
+    tk1: { id: "ignored", name: "brand", category: "color", value: "#3b82f6" },
+  }).code; // file says blue
+  const opened = openDocument(sidecar, themeSource);
+  // File wins for the value; the id stays stable (reconciled by category:name).
+  assert.equal(opened.tokens.tk1.value, "#3b82f6");
+  assert.equal(opened.tokens.tk1.id, "tk1");
+  assert.equal((opened.root.style as { backgroundColor?: string }).backgroundColor, "#3b82f6");
+  // Binding preserved.
+  assert.deepEqual(opened.root.design?.tokens, { backgroundColor: "tk1" });
+});
+
+test("openDocument: a hand-renamed token in the file drops its dangling binding", () => {
+  const sidecar = boundSidecar("#000000");
+  // The file renames brand → accent (a remove+add to a name-keyed file).
+  const themeSource = emitTheme({
+    x: { id: "x", name: "accent", category: "color", value: "#3b82f6" },
+  }).code;
+  const opened = openDocument(sidecar, themeSource);
+  assert.equal(Object.keys(opened.tokens).length, 1);
+  assert.ok(!opened.root.design?.tokens, "binding to the removed token is cleaned up");
+  // Literal is retained from the last resolved value.
+  assert.equal((opened.root.style as { backgroundColor?: string }).backgroundColor, "#000000");
+});
+
+test("openDocument: missing theme falls back to the sidecar tokens", () => {
+  const sidecar = boundSidecar("#123456");
+  const opened = openDocument(sidecar); // no theme source
+  assert.equal(opened.tokens.tk1.value, "#123456");
+  assert.deepEqual(opened.root.design?.tokens, { backgroundColor: "tk1" });
 });

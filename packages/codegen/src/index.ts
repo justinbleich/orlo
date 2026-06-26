@@ -1,5 +1,6 @@
 import {
   childrenOf,
+  reapplyTokens,
   type ComponentDefinition,
   type ComponentRegistry,
   type Node,
@@ -8,7 +9,8 @@ import {
 import { emitScreen, type EmitOptions } from "./emit";
 import { emitComponent, type GeneratedComponent } from "./emit-component";
 import { emitTheme, type GeneratedTheme } from "./emit-theme";
-import { buildSidecar, serializeSidecar, type SidecarDocument } from "./sidecar";
+import { parseTheme, reconcileTokens } from "./parse-theme";
+import { buildSidecar, parseSidecar, serializeSidecar, type SidecarDocument } from "./sidecar";
 
 export { emitScreen, type EmitOptions } from "./emit";
 export { emitComponent, type GeneratedComponent } from "./emit-component";
@@ -24,6 +26,7 @@ export {
   type ParseExternalOptions,
   type ParsedExternalScreen,
 } from "./parse-external";
+export { parseTheme, reconcileTokens, type ParsedToken } from "./parse-theme";
 
 export interface GeneratedScreen {
   screenName: string;
@@ -65,10 +68,18 @@ function collectUsedComponents(
   return acc;
 }
 
-/** Whether any node in a tree binds a style key to a token that exists in the registry. */
+/** Whether any node in a tree links a style key OR an instance override to a
+ *  token that exists in the registry. */
 function hasTokenBinding(node: Node, tokens: TokenRegistry): boolean {
   const bound = node.design?.tokens;
   if (bound && Object.values(bound).some((id) => tokens[id])) return true;
+  if (
+    node.type === "ComponentInstance" &&
+    node.tokens &&
+    Object.values(node.tokens).some((id) => tokens[id])
+  ) {
+    return true;
+  }
   if (childrenOf(node).some((child) => hasTokenBinding(child, tokens))) return true;
   if (node.type === "ComponentInstance" && node.slots) {
     for (const kids of Object.values(node.slots)) {
@@ -93,6 +104,35 @@ export function generateScreen(root: Node, opts: EmitOptions = {}): GeneratedScr
     sidecar: serializeSidecar(buildSidecar(root, { screenName, components: registry, tokens })),
     components: used.map((def) => emitComponent(def, registry, tokens)),
     theme: referencesToken ? emitTheme(tokens) : undefined,
+  };
+}
+
+export interface OpenedDocument {
+  screenName: string;
+  root: Node;
+  components?: ComponentRegistry;
+  tokens: TokenRegistry;
+}
+
+/**
+ * Open a committed document (Phase 2D-2b single-writer file model). The sidecar is
+ * canonical for the tree, components, and token *identity* (id↔name); the adjacent
+ * `theme.ts`, when present, is canonical for token *values + names*. We reconcile
+ * the file's tokens against the sidecar's ids, then `reapplyTokens` so file values
+ * win in the tree. With no theme source we fall back to the sidecar tokens as-is
+ * (pre-2D-2b documents, or a fresh doc with no theme file yet).
+ */
+export function openDocument(sidecarJson: string, themeSource?: string): OpenedDocument {
+  const sidecar = parseSidecar(sidecarJson);
+  const priorTokens = sidecar.tokens ?? {};
+  const tokens =
+    themeSource === undefined ? priorTokens : reconcileTokens(parseTheme(themeSource), priorTokens);
+  const root = themeSource === undefined ? sidecar.root : reapplyTokens(sidecar.root, tokens);
+  return {
+    screenName: sidecar.screenName,
+    root,
+    components: sidecar.components,
+    tokens,
   };
 }
 

@@ -9,11 +9,14 @@
  * registry + bindings + reconcile mirror each other.
  */
 import { validateStyle } from "@rn-canvas/styles";
-import type { Node, TokenCategory, TokenRegistry } from "./types";
-import { childrenOf, isContainer } from "./types";
+import type { Node, OverrideValue, TokenCategory, TokenRegistry } from "./types";
+import { isContainer } from "./types";
 import type { NodeError } from "./validate";
 
-const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+/** Dotted token names: first segment is a JS identifier; subsequent segments
+ *  may start with a digit (e.g. `color.primary.500`). Codegen quotes such names
+ *  as string keys and emits bracket access on the theme reference. */
+const IDENTIFIER = /^[A-Za-z_$][\w$]*(\.[\w$]+)*$/;
 
 /** Which token category, if any, can bind to a given style key. */
 const STYLE_KEY_CATEGORY: Record<string, TokenCategory> = {
@@ -92,21 +95,52 @@ export function reapplyTokens(node: Node, registry: TokenRegistry): Node {
       return reapplied;
     });
     if (changed) next = { ...next, children } as Node;
-  } else if (next.type === "ComponentInstance" && next.slots) {
-    let slotsChanged = false;
-    const slots = Object.fromEntries(
-      Object.entries(next.slots).map(([name, kids]) => {
-        let kidChanged = false;
-        const reapplied = kids.map((kid) => {
-          const r = reapplyTokens(kid, registry);
-          if (r !== kid) kidChanged = true;
-          return r;
-        });
-        if (kidChanged) slotsChanged = true;
-        return [name, kidChanged ? reapplied : kids];
-      }),
-    );
-    if (slotsChanged) next = { ...next, slots } as Node;
+  } else if (next.type === "ComponentInstance") {
+    // Re-resolve override values from any instance-level token links, and drop
+    // dangling links to removed tokens (mirroring the style-token logic above).
+    if (next.tokens) {
+      const overrides = { ...next.overrides };
+      const tokens: Record<string, string> = {};
+      let overridesChanged = false;
+      let tokensChanged = false;
+      for (const [propName, tokenId] of Object.entries(next.tokens)) {
+        const token = registry[tokenId];
+        if (token) {
+          tokens[propName] = tokenId;
+          if (overrides[propName] !== token.value) {
+            overrides[propName] = token.value as OverrideValue;
+            overridesChanged = true;
+          }
+        } else {
+          tokensChanged = true;
+        }
+      }
+      if (overridesChanged || tokensChanged) {
+        const nextInstance = { ...next } as typeof next;
+        if (overridesChanged) nextInstance.overrides = overrides;
+        if (tokensChanged) {
+          if (Object.keys(tokens).length > 0) nextInstance.tokens = tokens;
+          else delete nextInstance.tokens;
+        }
+        next = nextInstance;
+      }
+    }
+    if (next.slots) {
+      let slotsChanged = false;
+      const slots = Object.fromEntries(
+        Object.entries(next.slots).map(([name, kids]) => {
+          let kidChanged = false;
+          const reapplied = kids.map((kid) => {
+            const r = reapplyTokens(kid, registry);
+            if (r !== kid) kidChanged = true;
+            return r;
+          });
+          if (kidChanged) slotsChanged = true;
+          return [name, kidChanged ? reapplied : kids];
+        }),
+      );
+      if (slotsChanged) next = { ...next, slots } as Node;
+    }
   }
 
   return next;

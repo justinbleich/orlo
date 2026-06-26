@@ -15,8 +15,10 @@ import type {
   Node,
   NodeId,
   OverrideValue,
+  TokenCategory,
   TokenRegistry,
 } from "./types";
+import { isContainer } from "./types";
 import {
   findNode,
   insertChild as opInsertChild,
@@ -37,7 +39,7 @@ import {
   validateComponentRegistry,
   validateInstance,
 } from "./components";
-import { reapplyTokens, validateTokenRegistry } from "./tokens";
+import { reapplyTokens, tokenCategoryForStyleKey, validateTokenRegistry } from "./tokens";
 
 export type Roots = Record<NodeId, Node>;
 
@@ -105,10 +107,38 @@ export interface DocumentState {
   addToken(token: DesignToken): void;
   updateToken(tokenId: NodeId, partial: Partial<DesignToken>): void;
   removeToken(tokenId: NodeId): void;
-  /** Bind a node's style key to a token: records the binding + resolves the literal. */
-  bindStyleToken(rootId: NodeId, nodeId: NodeId, styleKey: string, tokenId: NodeId): void;
-  /** Drop a style key's token binding, keeping the last resolved literal. */
-  unbindStyleToken(rootId: NodeId, nodeId: NodeId, styleKey: string): void;
+  /** Link a node's style key to a token: records the link + resolves the literal. */
+  linkStyleToken(rootId: NodeId, nodeId: NodeId, styleKey: string, tokenId: NodeId): void;
+  /** Drop a style key's token link, keeping the last resolved literal. */
+  unlinkStyleToken(rootId: NodeId, nodeId: NodeId, styleKey: string): void;
+  /** Create a new token from the node's current literal value AND link the style key
+   *  to it, in one atomic step. Returns the new token id. */
+  promoteStyleToToken(rootId: NodeId, nodeId: NodeId, styleKey: string, name: string): NodeId;
+  /** Move `tokenId` so its registry insertion order comes immediately before
+   *  `beforeId`, or to the end when `beforeId` is null. Only reorders within the
+   *  same category — cross-category drags throw. */
+  reorderToken(tokenId: NodeId, beforeId: NodeId | null): void;
+  /** Link an instance's scalar override to a token. */
+  linkInstanceToken(rootId: NodeId, instanceId: NodeId, propName: string, tokenId: NodeId): void;
+  /** Drop an instance override's token link, keeping the last resolved value. */
+  unlinkInstanceToken(rootId: NodeId, instanceId: NodeId, propName: string): void;
+  /** Create a token from the instance's current override value AND link the
+   *  override to it. Returns the new token id. */
+  promoteInstanceOverrideToToken(
+    rootId: NodeId,
+    instanceId: NodeId,
+    propName: string,
+    category: TokenCategory,
+    name: string,
+  ): NodeId;
+  /** Every link to `tokenId` — style links AND instance-override links. `kind`
+   *  distinguishes the two; `styleKey` holds the style key or override prop name. */
+  getTokenUsage(tokenId: NodeId): {
+    rootId: NodeId;
+    nodeId: NodeId;
+    styleKey: string;
+    kind: "style" | "override";
+  }[];
 
   insertChild(rootId: NodeId, parentId: NodeId, child: Node, index?: number): void;
   removeNode(rootId: NodeId, id: NodeId): void;
@@ -460,19 +490,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       // commitTokens reapplies, dropping every binding to the removed token.
       commitTokens(next);
     },
-    bindStyleToken: (rootId, nodeId, styleKey, tokenId) => {
+    linkStyleToken: (rootId, nodeId, styleKey, tokenId) => {
       const token = get().tokens[tokenId];
       if (!token) throw new Error(`Token not found: ${tokenId}`);
       mutateRoot(rootId, (tree) => {
         const node = findNode(tree, nodeId);
         if (!node) throw new Error(`Node not found: ${nodeId}`);
         const withValue = opUpdateStyle(tree, nodeId, { [styleKey]: token.value });
-        const bound = findNode(withValue, nodeId);
-        const tokens = { ...(bound?.design?.tokens ?? {}), [styleKey]: tokenId };
+        const linked = findNode(withValue, nodeId);
+        const tokens = { ...(linked?.design?.tokens ?? {}), [styleKey]: tokenId };
         return opUpdateDesign(withValue, nodeId, { tokens });
       });
     },
-    unbindStyleToken: (rootId, nodeId, styleKey) => {
+    unlinkStyleToken: (rootId, nodeId, styleKey) => {
       mutateRoot(rootId, (tree) => {
         const node = findNode(tree, nodeId);
         const current = node?.design?.tokens;
@@ -483,6 +513,188 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
           tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
         });
       });
+    },
+    promoteStyleToToken: (rootId, nodeId, styleKey, name) => {
+      const tree = get().roots[rootId];
+      if (!tree) throw new Error(`Root not found: ${rootId}`);
+      const node = findNode(tree, nodeId);
+      if (!node) throw new Error(`Node not found: ${nodeId}`);
+      const literal = (node.style as Record<string, unknown>)[styleKey];
+      const category = tokenCategoryForStyleKey(styleKey);
+      if (!category) throw new Error(`Style key ${styleKey} is not tokenizable`);
+      if (literal === undefined || literal === null) {
+        throw new Error(`No literal value at ${styleKey} to promote`);
+      }
+      const id = crypto.randomUUID();
+      const token: DesignToken = {
+        id,
+        name,
+        category,
+        value: literal as DesignToken["value"],
+      };
+      // Compose addToken + linkStyleToken atomically so undo restores both at once.
+      const nextTokens = { ...get().tokens, [id]: token };
+      const tokenErrors = validateTokenRegistry(nextTokens);
+      if (tokenErrors.length > 0) {
+        const first = tokenErrors[0];
+        throw new Error(`Invalid token: ${first.key} ${first.reason}`);
+      }
+      const withValue = opUpdateStyle(tree, nodeId, { [styleKey]: literal as never });
+      const linked = findNode(withValue, nodeId);
+      const tokens = { ...(linked?.design?.tokens ?? {}), [styleKey]: id };
+      const nextRoot = opUpdateDesign(withValue, nodeId, { tokens });
+      const { roots, components, editingComponentId } = get();
+      const reconciledRoots: Roots = {};
+      for (const [rid, root] of Object.entries(roots)) {
+        const seed = rid === rootId ? nextRoot : root;
+        reconciledRoots[rid] = reapplyTokens(seed, nextTokens);
+      }
+      const reconciledComponents: ComponentRegistry = {};
+      for (const [cid, def] of Object.entries(components)) {
+        const template =
+          cid === editingComponentId && reconciledRoots[cid] ? reconciledRoots[cid] : def.template;
+        reconciledComponents[cid] = { ...def, template: reapplyTokens(template, nextTokens) };
+      }
+      commit({ roots: reconciledRoots, components: reconciledComponents, tokens: nextTokens });
+      return id;
+    },
+    reorderToken: (tokenId, beforeId) => {
+      const { tokens } = get();
+      const token = tokens[tokenId];
+      if (!token) throw new Error(`Token not found: ${tokenId}`);
+      if (beforeId !== null) {
+        const target = tokens[beforeId];
+        if (!target) throw new Error(`Token not found: ${beforeId}`);
+        if (target.category !== token.category) {
+          throw new Error("Cannot reorder across categories");
+        }
+        if (beforeId === tokenId) return;
+      }
+      // Rebuild the registry object so iteration order matches the new layout. We
+      // only reshuffle within the same category — other categories keep their order.
+      const ids = Object.keys(tokens);
+      const withoutMoved = ids.filter((id) => id !== tokenId);
+      let insertAt: number;
+      if (beforeId === null) {
+        // Move to the end of this category (= just after the last token of the same
+        // category). Other categories' tokens stay where they were.
+        const lastSameCat = withoutMoved
+          .map((id, i) => (tokens[id].category === token.category ? i : -1))
+          .reduce((max, i) => Math.max(max, i), -1);
+        insertAt = lastSameCat + 1;
+      } else {
+        insertAt = withoutMoved.indexOf(beforeId);
+      }
+      const orderedIds = [
+        ...withoutMoved.slice(0, insertAt),
+        tokenId,
+        ...withoutMoved.slice(insertAt),
+      ];
+      const next: TokenRegistry = {};
+      for (const id of orderedIds) next[id] = tokens[id];
+      // No reapply needed — values are unchanged. Commit directly so undo captures it.
+      commit({ tokens: next });
+    },
+    linkInstanceToken: (rootId, instanceId, propName, tokenId) => {
+      const token = get().tokens[tokenId];
+      if (!token) throw new Error(`Token not found: ${tokenId}`);
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, instanceId);
+        if (!node || node.type !== "ComponentInstance") {
+          throw new Error(`Instance not found: ${instanceId}`);
+        }
+        const nextInstance = {
+          ...node,
+          overrides: { ...node.overrides, [propName]: token.value as OverrideValue },
+          tokens: { ...(node.tokens ?? {}), [propName]: tokenId },
+        };
+        return replaceNode(tree, instanceId, nextInstance);
+      });
+    },
+    unlinkInstanceToken: (rootId, instanceId, propName) => {
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, instanceId);
+        if (!node || node.type !== "ComponentInstance") return tree;
+        const current = node.tokens;
+        if (!current || !(propName in current)) return tree;
+        const tokens = { ...current };
+        delete tokens[propName];
+        const nextInstance = { ...node } as typeof node;
+        if (Object.keys(tokens).length > 0) nextInstance.tokens = tokens;
+        else delete nextInstance.tokens;
+        return replaceNode(tree, instanceId, nextInstance);
+      });
+    },
+    promoteInstanceOverrideToToken: (rootId, instanceId, propName, category, name) => {
+      const tree = get().roots[rootId];
+      if (!tree) throw new Error(`Root not found: ${rootId}`);
+      const node = findNode(tree, instanceId);
+      if (!node || node.type !== "ComponentInstance") {
+        throw new Error(`Instance not found: ${instanceId}`);
+      }
+      const literal = node.overrides[propName];
+      if (literal === undefined || literal === null) {
+        throw new Error(`No override value at ${propName} to promote`);
+      }
+      const id = crypto.randomUUID();
+      const token: DesignToken = { id, name, category, value: literal as DesignToken["value"] };
+      const nextTokens = { ...get().tokens, [id]: token };
+      const tokenErrors = validateTokenRegistry(nextTokens);
+      if (tokenErrors.length > 0) {
+        const first = tokenErrors[0];
+        throw new Error(`Invalid token: ${first.key} ${first.reason}`);
+      }
+      const nextInstance = {
+        ...node,
+        overrides: { ...node.overrides, [propName]: literal },
+        tokens: { ...(node.tokens ?? {}), [propName]: id },
+      };
+      const nextRoot = replaceNode(tree, instanceId, nextInstance);
+      const { roots, components, editingComponentId } = get();
+      const reconciledRoots: Roots = {};
+      for (const [rid, root] of Object.entries(roots)) {
+        const seed = rid === rootId ? nextRoot : root;
+        reconciledRoots[rid] = reapplyTokens(seed, nextTokens);
+      }
+      const reconciledComponents: ComponentRegistry = {};
+      for (const [cid, def] of Object.entries(components)) {
+        const template =
+          cid === editingComponentId && reconciledRoots[cid] ? reconciledRoots[cid] : def.template;
+        reconciledComponents[cid] = { ...def, template: reapplyTokens(template, nextTokens) };
+      }
+      commit({ roots: reconciledRoots, components: reconciledComponents, tokens: nextTokens });
+      return id;
+    },
+    getTokenUsage: (tokenId) => {
+      const out: { rootId: NodeId; nodeId: NodeId; styleKey: string; kind: "style" | "override" }[] = [];
+      const { roots } = get();
+      const walk = (rootId: NodeId, node: Node) => {
+        const styleBindings = node.design?.tokens;
+        if (styleBindings) {
+          for (const [key, id] of Object.entries(styleBindings)) {
+            if (id === tokenId) out.push({ rootId, nodeId: node.id, styleKey: key, kind: "style" });
+          }
+        }
+        if (node.type === "ComponentInstance") {
+          const overrideBindings = node.tokens;
+          if (overrideBindings) {
+            for (const [key, id] of Object.entries(overrideBindings)) {
+              if (id === tokenId) {
+                out.push({ rootId, nodeId: node.id, styleKey: key, kind: "override" });
+              }
+            }
+          }
+          if (node.slots) {
+            for (const kids of Object.values(node.slots)) {
+              for (const kid of kids) walk(rootId, kid);
+            }
+          }
+        } else if (isContainer(node)) {
+          for (const child of node.children) walk(rootId, child);
+        }
+      };
+      for (const [rootId, root] of Object.entries(roots)) walk(rootId, root);
+      return out;
     },
 
     insertChild: (rootId, parentId, child, index) =>

@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 import type { ComponentRegistry, Node, TokenRegistry } from "@rn-canvas/document";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,11 @@ type SidecarRequest = {
 
 type ExternalSourceRequest = {
   sourcePath?: string;
+};
+
+type TokensSaveRequest = {
+  sidecarPath?: string;
+  tokens?: TokenRegistry;
 };
 
 type BrowserCommand = {
@@ -155,16 +160,53 @@ async function runCodegen(
   }
 }
 
-async function parseSidecar(sidecarPath: string) {
+async function fileExists(path: string) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function openDocument(sidecarPath: string) {
+  // The canonical token values live in `theme.ts` beside the sidecar (Phase 2D-2b).
+  // Pass it only when present so pre-2D-2b documents fall back to sidecar tokens.
+  const themePath = join(dirname(sidecarPath), "theme.ts");
+  const args = ["src/cli-open-document.ts", sidecarPath];
+  if (await fileExists(themePath)) args.push(themePath);
   const { stdout } = await execFileAsync("pnpm", [
     "--filter",
     "@rn-canvas/codegen",
     "exec",
     "tsx",
-    "src/cli-parse-sidecar.ts",
-    sidecarPath,
+    ...args,
   ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
-  return JSON.parse(stdout) as { version: 1; screenName: string; root: Node };
+  return JSON.parse(stdout) as {
+    screenName: string;
+    root: Node;
+    components?: ComponentRegistry;
+    tokens: TokenRegistry;
+  };
+}
+
+async function emitThemeCode(tokens: TokenRegistry): Promise<GeneratedTheme> {
+  const dir = await mkdtemp(join(tmpdir(), "rncanvas-theme-"));
+  const inputPath = join(dir, "tokens.json");
+  try {
+    await writeFile(inputPath, JSON.stringify(tokens));
+    const { stdout } = await execFileAsync("pnpm", [
+      "--filter",
+      "@rn-canvas/codegen",
+      "exec",
+      "tsx",
+      "src/cli-emit-theme.ts",
+      inputPath,
+    ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
+    return JSON.parse(stdout) as GeneratedTheme;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function parseExternalSource(sourcePath: string) {
@@ -270,7 +312,7 @@ export function simScreenshotPlugin(): Plugin {
         try {
           const body = await readRequestJson<SidecarRequest>(req);
           const sidecarPath = resolveSidecarPath(body.sidecarPath);
-          const document = await parseSidecar(sidecarPath);
+          const document = await openDocument(sidecarPath);
           sendJson(res, 200, {
             ...document,
             sidecarPath: relative(repoRoot, sidecarPath),
@@ -301,6 +343,30 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "React Native import failed",
+          });
+        }
+      });
+
+      // Single-writer canonical token file (Phase 2D-2b). The studio debounces
+      // this on token-registry edits; it writes `theme.ts` beside the sidecar and
+      // never runs on the canvas interaction path.
+      server.middlewares.use("/api/tokens/save", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<TokensSaveRequest>(req);
+          const sidecarPath = resolveSidecarPath(body.sidecarPath);
+          const tokens = body.tokens ?? {};
+          const theme = await emitThemeCode(tokens);
+          const themePath = join(dirname(sidecarPath), theme.fileName);
+          await mkdir(dirname(themePath), { recursive: true });
+          await writeFile(themePath, `${theme.code}\n`);
+          sendJson(res, 200, { themePath: relative(repoRoot, themePath), wrote: true });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Token save failed",
           });
         }
       });

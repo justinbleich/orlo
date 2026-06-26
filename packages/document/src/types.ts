@@ -145,12 +145,18 @@ export type OverrideValue = string | number | boolean;
  * A placed usage of a `ComponentDefinition`. Its body comes from the definition's
  * template; per-instance values live in `overrides` (scalars) and `slots` (children
  * for `node`-typed props). Not an RN primitive — it expands to one at render/codegen.
+ *
+ * `tokens` links a scalar override to a design token, mirroring `DesignMeta.tokens`
+ * at the override scope: the resolved value still lives in `overrides[propName]`
+ * (so render/codegen are untouched), and a token-value change re-resolves the
+ * override via `reapplyTokens`.
  */
 export interface ComponentInstanceNode extends NodeBase {
   type: "ComponentInstance";
   componentId: string;
   overrides: Record<string, OverrideValue>;
   slots?: Record<string, Node[]>;
+  tokens?: Record<string, string>;
 }
 
 export type Node =

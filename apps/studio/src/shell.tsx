@@ -42,6 +42,7 @@ import { useStudioStore } from "./studio-store";
 import { cn } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
+import { TokensPanel } from "./TokensPanel";
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
@@ -159,7 +160,14 @@ export function ToolRail({
     { icon: Image, label: "Image", onClick: () => arm("Image"), active: armedTool === "Image", disabled: !canAddPrimitive },
   ];
   return (
-    <nav className="studio-chrome flex w-[var(--w-rail)] shrink-0 flex-col items-center gap-xs border-r border-line bg-chrome py-sm">
+    <nav
+      aria-label="Tools"
+      className={cn(
+        "studio-chrome pointer-events-auto absolute bottom-md left-1/2 z-20 flex -translate-x-1/2",
+        "items-center gap-xs rounded-md border border-line bg-chrome/95 px-xs py-xs",
+        "shadow-popover backdrop-blur",
+      )}
+    >
       {tools.map((t) => {
         const Icon = t.icon;
         return (
@@ -177,7 +185,7 @@ export function ToolRail({
           </button>
         );
       })}
-      <div className="my-xs h-px w-5 bg-line" aria-hidden="true" />
+      <div className="mx-xs h-5 w-px bg-line" aria-hidden="true" />
       <InsertMenu armedTool={armedTool} onArm={arm} disabled={!canAddPrimitive} />
     </nav>
   );
@@ -214,7 +222,7 @@ function InsertMenu({
         <Plus size={18} strokeWidth={1.75} aria-hidden="true" />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner side="right" align="start" sideOffset={8} className="z-50">
+        <Menu.Positioner side="top" align="end" sideOffset={8} className="z-50">
           <Menu.Popup className="studio-popup min-w-44 rounded-md border border-line bg-chrome p-control shadow-popover outline-none">
             <div className="eyebrow px-sm py-xs">Insert</div>
             {INSERT_ITEMS.map((item) => {
@@ -338,8 +346,6 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
   const beginComponentEdit = useDocumentStore((state) => state.beginComponentEdit);
   const tokens = useDocumentStore((state) => state.tokens);
   const addToken = useDocumentStore((state) => state.addToken);
-  const updateToken = useDocumentStore((state) => state.updateToken);
-  const removeToken = useDocumentStore((state) => state.removeToken);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
   const setArmedComponent = useStudioStore((state) => state.setArmedComponent);
   const selectedId = selection[0] ?? null;
@@ -621,45 +627,7 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
           </Menu.Root>
         }
       >
-        {tokenList.length === 0 ? (
-          <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
-            Add a token, then bind a style value to it in the Inspector.
-          </p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-            {tokenList.map((token) => (
-              <div key={token.id} style={{ display: "flex", alignItems: "center", gap: space.xs }}>
-                {token.category === "color" ? (
-                  <input
-                    type="color"
-                    value={token.value as string}
-                    onChange={(e) => updateToken(token.id, { value: e.target.value })}
-                    title="Token value"
-                    style={{ width: 22, height: 22, padding: 0, border: `1px solid ${color.line}`, borderRadius: radius.sm, background: "none", cursor: "pointer", flex: "0 0 auto" }}
-                  />
-                ) : (
-                  <input
-                    type="number"
-                    value={token.value as number}
-                    onChange={(e) => updateToken(token.id, { value: Number(e.target.value) })}
-                    title={`${token.category} value`}
-                    style={{ ...panelButton, width: 48, flex: "0 0 auto", textAlign: "right" }}
-                  />
-                )}
-                <input
-                  value={token.name}
-                  onChange={(e) => { try { updateToken(token.id, { name: e.target.value }); } catch { /* keep last valid name */ } }}
-                  spellCheck={false}
-                  title={token.category}
-                  style={{ ...panelButton, flex: 1, minWidth: 0, fontFamily: "var(--font-mono)" }}
-                />
-                <button type="button" onClick={() => removeToken(token.id)} style={panelIconButton} title="Delete token">
-                  <Trash2 size={15} aria-hidden="true" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <TokensPanel onCreate={createToken} />
       </NavigatorSection>
     </aside>
   );

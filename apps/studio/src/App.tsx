@@ -186,7 +186,7 @@ export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
 
-  const [status, setStatus] = useState("Frame: drag · Resize: handles · Add: tool rail");
+  const [status, setStatus] = useState("Frame: drag · Resize: handles · Add: toolbar");
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [screenName, setScreenName] = useState("Screen");
   const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
@@ -221,6 +221,43 @@ export default function App() {
 
   useEffect(() => startMcpBridge(handleMcpCommand), []);
 
+  // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
+  // beside the sidecar whenever the token registry changes. Debounced and
+  // fire-and-forget — token edits are occasional and this never touches the canvas
+  // interaction hot path (it fires only when the `tokens` slice reference changes).
+  const sidecarPathRef = useRef(sidecarPath);
+  sidecarPathRef.current = sidecarPath;
+  // Set just before a `loadRoots` so the writer does NOT echo a freshly *read*
+  // registry back to disk (which would clobber the file we just loaded — e.g. the
+  // empty seed registry overwriting an existing theme.ts on app start).
+  const skipTokenWriteRef = useRef(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastTokens = useDocumentStore.getState().tokens;
+    const unsubscribe = useDocumentStore.subscribe((state) => {
+      if (state.tokens === lastTokens) return;
+      lastTokens = state.tokens;
+      if (skipTokenWriteRef.current) {
+        skipTokenWriteRef.current = false; // this change was a load, not an edit
+        return;
+      }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const path = sidecarPathRef.current;
+        if (!path) return;
+        void fetch("/api/tokens/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sidecarPath: path, tokens: useDocumentStore.getState().tokens }),
+        }).catch(() => {});
+      }, 400);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
+  }, []);
+
   const onMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
     // Dark canvas to match the studio shell (chrome theming, not artboard).
@@ -231,6 +268,7 @@ export default function App() {
       const seed = createScreenFrame([
         createNode("Text", { props: { text: "Hello RN Canvas" } }),
       ]);
+      skipTokenWriteRef.current = true; // seed load — don't write theme.ts
       store.loadRoots({ [seed.id]: seed }, [seed.id]);
     }
     syncShapes(editor);
@@ -546,6 +584,9 @@ export default function App() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       const opened = body as OpenDocumentResult;
+      // The file is the canonical token source: we just read it, so don't echo it
+      // straight back out (the writer fires only on subsequent in-tool edits).
+      skipTokenWriteRef.current = true;
       useDocumentStore.getState().loadRoots(
         { [opened.root.id]: opened.root },
         [opened.root.id],
@@ -579,6 +620,7 @@ export default function App() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       const imported = body as ImportSourceResult;
+      skipTokenWriteRef.current = true; // imported document load — not a token edit
       useDocumentStore.getState().loadRoots(
         { [imported.root.id]: imported.root },
         [imported.root.id],
@@ -686,18 +728,18 @@ export default function App() {
         </div>
       </header>
 
-      {/* WORKBENCH: rail · left panel · canvas · right column */}
+      {/* WORKBENCH: left panel · canvas (with floating bottom toolbar) · right column */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <ToolRail
-          onSelect={selectTool}
-          onAddFrame={addFrame}
-          // A primitive can be armed whenever there's any screen to draw into —
-          // the target frame is resolved from the cursor, not a prior selection.
-          canAddPrimitive={Object.keys(roots).length > 0}
-        />
         <LeftPanel onAddFrame={addFrame} />
 
         <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <ToolRail
+            onSelect={selectTool}
+            onAddFrame={addFrame}
+            // A primitive can be armed whenever there's any screen to draw into —
+            // the target frame is resolved from the cursor, not a prior selection.
+            canAddPrimitive={Object.keys(roots).length > 0}
+          />
           {editingComponentName && (
             <div
               data-testid="component-edit-banner"

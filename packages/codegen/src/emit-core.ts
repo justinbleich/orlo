@@ -66,12 +66,14 @@ export function valueToExpr(v: unknown): t.Expression {
   return t.identifier("undefined");
 }
 
-/** `theme.<category>.<name>` member expression. */
+/** `theme.<category>.<name>` member expression. Falls back to bracket access
+ *  for token names that aren't plain identifiers (dotted names like
+ *  `primary.500` emit as `theme.color["primary.500"]`). */
 function themeMember(ref: ThemeRef): t.MemberExpression {
-  return t.memberExpression(
-    t.memberExpression(t.identifier("theme"), t.identifier(ref.category)),
-    t.identifier(ref.name),
-  );
+  const base = t.memberExpression(t.identifier("theme"), t.identifier(ref.category));
+  return IDENT_RE.test(ref.name)
+    ? t.memberExpression(base, t.identifier(ref.name))
+    : t.memberExpression(base, t.stringLiteral(ref.name), true);
 }
 
 export function styleObjectExpr(
@@ -295,7 +297,15 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
         continue;
       }
       if (node.overrides[prop.name] !== undefined) {
-        attrs.push(exprAttr(prop.name, valueToExpr(node.overrides[prop.name])));
+        const linkedTokenId = node.tokens?.[prop.name];
+        const linkedToken = linkedTokenId ? tokens?.[linkedTokenId] : undefined;
+        if (linkedToken) {
+          attrs.push(
+            exprAttr(prop.name, themeMember({ category: linkedToken.category, name: linkedToken.name })),
+          );
+        } else {
+          attrs.push(exprAttr(prop.name, valueToExpr(node.overrides[prop.name])));
+        }
       }
     }
     return t.jsxElement(t.jsxOpeningElement(t.jsxIdentifier(name), attrs, true), null, [], true);

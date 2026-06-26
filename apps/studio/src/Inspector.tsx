@@ -20,6 +20,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Plus,
   Group as GroupIcon,
   Image as ImageIcon,
   Lock,
@@ -50,6 +51,7 @@ import {
   type ComponentInstanceNode,
   type Node,
   type NodeId,
+  type ComponentProp,
   type OverrideValue,
   type PresetKind,
   type RNPrimitive,
@@ -71,6 +73,7 @@ import {
   groupNodes,
   ungroupNode,
 } from "./document-actions";
+import { Menu } from "@base-ui/react/menu";
 import {
   cn,
   ColorField,
@@ -542,8 +545,8 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           selectedNodeId={!multi && primary && primary.type !== "ComponentInstance" ? primary.id : null}
         />
       )}
-      {editingComponentId === root.id && !multi && (
-        <ExposeControls componentId={root.id} node={primary} />
+      {editingComponentId === root.id && (
+        <PropertiesControls componentId={root.id} node={!multi ? primary : null} />
       )}
 
       {(canArrangeAbsolute || canArrangeFlex) && (
@@ -995,17 +998,17 @@ function InstanceProperties({
     <>
       {properties.length > 0 && (
         <Section title="Variant">
-          <FieldGrid>
+          <div className="flex flex-col gap-control">
             {properties.map((property) => (
-              <Field key={property.name} label={property.name}>
-                <Select
+              <Field key={property.name} label={property.name} stacked>
+                <VariantValueControl
+                  values={property.values}
                   value={instance.variant?.[property.name] ?? property.values[0]}
                   onChange={(v) => setVariant(property.name, v)}
-                  options={property.values.map((value) => ({ value, label: value }))}
                 />
               </Field>
             ))}
-          </FieldGrid>
+          </div>
         </Section>
       )}
       {definition.props.length === 0 ? (
@@ -1216,20 +1219,22 @@ function VariantControls({
                     .join(", ")}.`}
             </p>
             {!isDefault && selectedNodeId && (
-              <label className="flex items-center gap-xs text-xs text-ink">
-                <input
-                  type="checkbox"
-                  checked={hiddenHere}
-                  onChange={(e) =>
+              <div className="flex items-center justify-between gap-xs">
+                <span className="text-xs text-ink">Hide layer in this variant</span>
+                <IconToggle
+                  title={hiddenHere ? "Show layer in this variant" : "Hide layer in this variant"}
+                  pressed={hiddenHere}
+                  onPressedChange={(next) =>
                     run(() =>
                       setVariantOverride(componentId, activeValues, selectedNodeId, {
-                        hidden: e.target.checked ? true : null,
+                        hidden: next ? true : null,
                       }),
                     )
                   }
-                />
-                Hide this layer in this variant
-              </label>
+                >
+                  {hiddenHere ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
+                </IconToggle>
+              </div>
             )}
           </>
         )}
@@ -1336,70 +1341,308 @@ function VariantPicker({
     );
   }
   return (
-    <FieldGrid>
+    <div className="flex flex-col gap-control">
       {properties.map((property) => (
-        <Field key={property.name} label={property.name}>
-          <Select
+        <Field key={property.name} label={property.name} stacked>
+          <VariantValueControl
+            values={property.values}
             value={activeValues[property.name]}
             onChange={(v) => onSelect({ ...activeValues, [property.name]: v })}
-            options={property.values.map((value) => ({ value, label: value }))}
           />
         </Field>
       ))}
-    </FieldGrid>
+    </div>
   );
 }
 
-/** Expose a selected template node's value as a component prop (focus mode). */
-function ExposeControls({ componentId, node }: { componentId: NodeId; node: Node }) {
+/** Pick one value from a small enum. Segmented chip row for ≤4 values
+ *  (matches the design-tool register); falls back to a Select when the value
+ *  list grows long enough that chips would wrap or truncate. */
+function VariantValueControl({
+  values,
+  value,
+  onChange,
+}: {
+  values: string[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  if (values.length <= 4) {
+    return (
+      <SegmentedControl
+        value={value}
+        onChange={onChange}
+        options={values.map((v) => ({ value: v, content: v, title: v }))}
+      />
+    );
+  }
+  return (
+    <Select
+      value={value}
+      onChange={onChange}
+      options={values.map((v) => ({ value: v, label: v }))}
+    />
+  );
+}
+
+/** Component-set Properties editor (focus mode). Lists every exposed prop with
+ *  inline rename + default editor + delete; the "+" menu adds a new prop bound
+ *  to the selected template layer. */
+function PropertiesControls({
+  componentId,
+  node,
+}: {
+  componentId: NodeId;
+  node: Node | null;
+}) {
   const components = useDocumentStore((s) => s.components);
   const updateComponent = useDocumentStore((s) => s.updateComponent);
   const definition = components[componentId];
   if (!definition) return null;
   const props = definition.props;
 
-  const expose = (kind: PresetKind, styleKey?: "color" | "backgroundColor") => {
+  const setProps = (next: ComponentProp[]) =>
+    updateComponent(componentId, { props: next });
+
+  const addPreset = (kind: PresetKind, styleKey?: "color" | "backgroundColor") => {
+    if (!node) return;
     const base =
       kind === "text" ? "text"
       : kind === "color" ? (styleKey === "color" ? "textColor" : "background")
       : kind === "visibility" ? "visible"
       : "slot";
     const name = uniquePropName(base, props.map((p) => p.name));
-    updateComponent(componentId, {
-      props: [...props, presetProp(name, kind, node.id, styleKey)],
-    });
+    setProps([...props, presetProp(name, kind, node.id, styleKey)]);
   };
-  const remove = (name: string) =>
-    updateComponent(componentId, { props: props.filter((p) => p.name !== name) });
 
-  const colorKey = node.type === "Text" ? "color" : "backgroundColor";
+  const colorKey = node?.type === "Text" ? "color" : "backgroundColor";
+  const canExposeText = !!node && node.type === "Text";
+  const canExposeColor = !!node;
+  const canExposeVisibility = !!node;
+  const canExposeSlot = !!node && isContainer(node);
+  const canAddAny = canExposeText || canExposeColor || canExposeVisibility || canExposeSlot;
 
   return (
-    <Section title="Expose as property">
-      <div className="flex flex-wrap gap-xs">
-        {node.type === "Text" && (
-          <ExposeButton label="Text" onClick={() => expose("text")} />
-        )}
-        <ExposeButton label="Color" onClick={() => expose("color", colorKey)} />
-        <ExposeButton label="Visibility" onClick={() => expose("visibility")} />
-        {isContainer(node) && <ExposeButton label="Slot" onClick={() => expose("slot")} />}
-      </div>
-      {props.length > 0 && (
-        <div className="mt-sm flex flex-col gap-2xs">
-          {props.map((prop) => (
-            <div key={prop.name} className="flex items-center justify-between gap-sm text-sm">
-              <span>
-                {prop.name} <span className="text-ink-faint">· {prop.valueType}</span>
-              </span>
-              <IconButton title={`Remove ${prop.name}`} onClick={() => remove(prop.name)}>
-                <Trash2 size={13} aria-hidden="true" />
-              </IconButton>
-            </div>
+    <Section
+      title="Properties"
+      action={
+        <Menu.Root>
+          <Menu.Trigger
+            disabled={!canAddAny}
+            title={canAddAny ? "Add property from selected layer" : "Select a layer to expose a property"}
+            aria-label="Add property"
+            className={cn(
+              "inline-flex size-6 items-center justify-center rounded-xs text-ink-faint",
+              "transition-colors hover:bg-raised hover:text-ink",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+            )}
+          >
+            <Plus size={13} aria-hidden="true" />
+          </Menu.Trigger>
+          <Menu.Portal>
+            <Menu.Positioner side="bottom" align="end" sideOffset={6} className="z-50">
+              <Menu.Popup className="studio-popup min-w-40 rounded-md border border-line bg-chrome p-control shadow-popover outline-none">
+                <div className="eyebrow px-sm py-xs">Expose from layer</div>
+                {canExposeText && (
+                  <PropMenuItem onClick={() => addPreset("text")}>Text</PropMenuItem>
+                )}
+                {canExposeColor && (
+                  <PropMenuItem onClick={() => addPreset("color", colorKey)}>Color</PropMenuItem>
+                )}
+                {canExposeVisibility && (
+                  <PropMenuItem onClick={() => addPreset("visibility")}>Visibility</PropMenuItem>
+                )}
+                {canExposeSlot && (
+                  <PropMenuItem onClick={() => addPreset("slot")}>Slot</PropMenuItem>
+                )}
+              </Menu.Popup>
+            </Menu.Positioner>
+          </Menu.Portal>
+        </Menu.Root>
+      }
+    >
+      {props.length === 0 ? (
+        <p className="m-0 text-sm text-ink-faint">
+          {node
+            ? "No properties yet. Use + to expose a value from this layer."
+            : "Select a template layer, then + to expose a property."}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-control">
+          {props.map((prop, idx) => (
+            <PropertyRow
+              key={prop.name}
+              prop={prop}
+              onRename={(nextName) => {
+                if (nextName === prop.name) return;
+                if (props.some((p) => p.name === nextName)) return;
+                const next = props.slice();
+                next[idx] = { ...prop, name: nextName };
+                setProps(next);
+              }}
+              onDefault={(value) => {
+                const next = props.slice();
+                next[idx] =
+                  value === undefined ? omitDefault(prop) : { ...prop, default: value };
+                setProps(next);
+              }}
+              onRemove={() => setProps(props.filter((_, i) => i !== idx))}
+            />
           ))}
         </div>
       )}
     </Section>
   );
+}
+
+function omitDefault(prop: ComponentProp): ComponentProp {
+  const next = { ...prop };
+  delete next.default;
+  return next;
+}
+
+function PropMenuItem({
+  children,
+  onClick,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <Menu.Item
+      onClick={onClick}
+      className="flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink"
+    >
+      {children}
+    </Menu.Item>
+  );
+}
+
+const VALUE_TYPE_LABEL: Record<string, string> = {
+  string: "Text",
+  number: "Number",
+  boolean: "Boolean",
+  color: "Color",
+  enum: "Enum",
+  node: "Slot",
+};
+
+function PropertyRow({
+  prop,
+  onRename,
+  onDefault,
+  onRemove,
+}: {
+  prop: ComponentProp;
+  onRename: (next: string) => void;
+  onDefault: (value: OverrideValue | undefined) => void;
+  onRemove: () => void;
+}) {
+  const [draft, setDraft] = useState(prop.name);
+  // Keep input in sync when the underlying name changes externally (undo, etc.)
+  // and we're not actively editing.
+  if (draft !== prop.name && document.activeElement?.tagName !== "INPUT") {
+    setDraft(prop.name);
+  }
+  const commit = () => {
+    const next = draft.trim();
+    if (!next || !/^[A-Za-z_$][\w$]*$/.test(next)) {
+      setDraft(prop.name);
+      return;
+    }
+    if (next !== prop.name) onRename(next);
+  };
+  return (
+    <div className="flex flex-col gap-2xs rounded-sm border border-line/40 p-xs">
+      <div className="flex items-center gap-xs">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            else if (e.key === "Escape") {
+              setDraft(prop.name);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          spellCheck={false}
+          title="Property name"
+          className={cn(
+            "h-6 min-w-0 flex-1 rounded-xs border border-transparent bg-transparent px-xs font-mono text-xs text-ink outline-none",
+            "transition-colors hover:bg-chrome-2 focus-visible:border-accent-line focus-visible:bg-chrome-2",
+          )}
+        />
+        <span className="text-2xs uppercase tracking-wide text-ink-faint">
+          {VALUE_TYPE_LABEL[prop.valueType] ?? prop.valueType}
+        </span>
+        <IconButton title={`Delete ${prop.name}`} onClick={onRemove}>
+          <Trash2 size={13} aria-hidden="true" />
+        </IconButton>
+      </div>
+      {prop.valueType !== "node" && (
+        <div className="flex items-center gap-xs">
+          <span className="w-12 shrink-0 text-2xs text-ink-faint">Default</span>
+          <PropertyDefaultEditor prop={prop} onChange={onDefault} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PropertyDefaultEditor({
+  prop,
+  onChange,
+}: {
+  prop: ComponentProp;
+  onChange: (next: OverrideValue | undefined) => void;
+}) {
+  switch (prop.valueType) {
+    case "boolean":
+      return (
+        <SegmentedControl
+          value={prop.default === false ? "off" : prop.default === true ? "on" : undefined}
+          onChange={(v) => onChange(v === "on")}
+          options={[
+            { value: "on", content: "On", title: "Default on" },
+            { value: "off", content: "Off", title: "Default off" },
+          ]}
+        />
+      );
+    case "number":
+      return (
+        <NumberField
+          label=""
+          value={typeof prop.default === "number" ? prop.default : undefined}
+          onChange={(v) => onChange(v)}
+        />
+      );
+    case "color":
+      return (
+        <ColorField
+          value={typeof prop.default === "string" ? prop.default : undefined}
+          onChange={(v) => onChange(v)}
+        />
+      );
+    case "enum":
+      return (
+        <Select
+          value={typeof prop.default === "string" ? prop.default : undefined}
+          onChange={(v) => onChange(v)}
+          options={(prop.enumValues ?? []).map((value) => ({ value, label: value }))}
+          placeholder="—"
+        />
+      );
+    case "string":
+    default:
+      return (
+        <TextField
+          value={typeof prop.default === "string" ? prop.default : ""}
+          onChange={(v) => onChange(v === "" ? undefined : v)}
+          placeholder="—"
+        />
+      );
+  }
 }
 
 const PROMOTE_PREFIX: Record<"color" | "spacing" | "fontSize", string> = {
@@ -1584,14 +1827,3 @@ function NumberTokenSlot({
   );
 }
 
-function ExposeButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
-    >
-      + {label}
-    </button>
-  );
-}

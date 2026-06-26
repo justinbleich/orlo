@@ -20,6 +20,7 @@ import {
 } from "@rn-canvas/document";
 import { RNFrameShapeUtil, type RNFrameShape } from "./shapes/RNFrameShape";
 import { Inspector } from "./Inspector";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { color, layout, radius, space, text } from "./studio-theme";
 import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
@@ -838,7 +839,9 @@ export default function App() {
             </div>
             <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
               {inspectorTab === "Design" ? (
-                <Inspector rootId={focusedRootId} />
+                <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
+                  <Inspector rootId={focusedRootId} />
+                </ErrorBoundary>
               ) : (
                 <div
                   style={{

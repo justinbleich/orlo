@@ -81,18 +81,36 @@ export function emitComponent(
 ): GeneratedComponent {
   const name = toComponentName(definition.name);
   const bindings = buildBindings(definition);
-  const emitter = createEmitter({ components, bindings, tokens });
+  const axes = definition.variants ?? [];
+  const emitter = createEmitter({
+    components,
+    bindings,
+    tokens,
+    variants: axes,
+    combinations: definition.combinations,
+  });
   const body = emitter.build(definition.template);
 
-  // Props interface: each exposed prop typed by its valueType; node/defaulted props optional.
-  const interfaceMembers = definition.props.map((prop) => {
-    const signature = t.tsPropertySignature(
-      t.identifier(prop.name),
-      t.tsTypeAnnotation(propTSType(prop)),
-    );
-    signature.optional = prop.default !== undefined || prop.valueType === "node";
-    return signature;
-  });
+  // Props interface: each exposed prop typed by its valueType (node/defaulted props
+  // optional), then each variant axis as a defaulted string-literal union prop.
+  const interfaceMembers = [
+    ...definition.props.map((prop) => {
+      const signature = t.tsPropertySignature(
+        t.identifier(prop.name),
+        t.tsTypeAnnotation(propTSType(prop)),
+      );
+      signature.optional = prop.default !== undefined || prop.valueType === "node";
+      return signature;
+    }),
+    ...axes.map((axis) => {
+      const signature = t.tsPropertySignature(
+        t.identifier(axis.name),
+        t.tsTypeAnnotation(t.tsUnionType(axis.values.map((v) => t.tsLiteralType(t.stringLiteral(v))))),
+      );
+      signature.optional = true; // always defaulted to the first value
+      return signature;
+    }),
+  ];
   const propsInterface = t.tsInterfaceDeclaration(
     t.identifier(`${name}Props`),
     null,
@@ -100,16 +118,25 @@ export function emitComponent(
     t.tsInterfaceBody(interfaceMembers),
   );
 
-  // Destructured, typed params with defaults from prop.default.
-  const param = t.objectPattern(
-    definition.props.map((prop) => {
+  // Destructured, typed params: exposed-prop defaults, then variant axes defaulting
+  // to their first value.
+  const param = t.objectPattern([
+    ...definition.props.map((prop) => {
       const value =
         prop.default !== undefined
           ? t.assignmentPattern(t.identifier(prop.name), valueToExpr(prop.default))
           : t.identifier(prop.name);
       return t.objectProperty(t.identifier(prop.name), value, false, true);
     }),
-  );
+    ...axes.map((axis) =>
+      t.objectProperty(
+        t.identifier(axis.name),
+        t.assignmentPattern(t.identifier(axis.name), t.stringLiteral(axis.values[0])),
+        false,
+        true,
+      ),
+    ),
+  ]);
   param.typeAnnotation = t.tsTypeAnnotation(t.tsTypeReference(t.identifier(`${name}Props`)));
 
   const fn = t.exportNamedDeclaration(

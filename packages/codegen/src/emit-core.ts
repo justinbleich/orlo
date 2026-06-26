@@ -17,8 +17,16 @@ import {
   type NodeId,
   type RNPrimitive,
   type TokenRegistry,
+  type VariantAxis,
+  type VariantCombination,
 } from "@rn-canvas/document";
 import type { RNStyle } from "@rn-canvas/styles";
+import {
+  hiddenGuardExpr,
+  nodeHiddenCells,
+  planNodeVariantStyle,
+  variantSelectorExpr,
+} from "./variant-emit";
 
 /** Where a token-bound style key resolves in the theme module. */
 export interface ThemeRef {
@@ -125,6 +133,11 @@ export interface EmitterOptions {
   bindings?: Map<NodeId, NodeBindings>;
   /** Design tokens; bound style keys emit `theme.color.<name>` (Phase 2D). */
   tokens?: TokenRegistry;
+  /** Variant axes of the component being emitted; their props switch styling
+   *  (Phase 2D-3). Only set when emitting a component module with variants. */
+  variants?: VariantAxis[];
+  /** Per-combination overrides for the variant axes above. */
+  combinations?: VariantCombination[];
 }
 
 export interface Emitter {
@@ -142,7 +155,8 @@ export function usesTheme(styleEntries: StyleEntry[]): boolean {
 }
 
 export function createEmitter(options: EmitterOptions = {}): Emitter {
-  const { components, bindings, tokens } = options;
+  const { components, bindings, tokens, variants, combinations } = options;
+  const hasVariants = !!variants && variants.length > 0;
   const used = new Set<RNPrimitive>();
   const componentImports = new Set<string>();
   const styleEntries: StyleEntry[] = [];
@@ -171,24 +185,37 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
     return result;
   }
 
-  /** `style={…}` attribute, merging a static StyleSheet ref with prop-bound keys. */
+  /** `style={…}` attribute, merging a static StyleSheet ref with prop-bound keys
+   *  and (for component-sets) per-combination variant selectors. */
   function styleAttr(node: Node, bind: NodeBindings | undefined): t.JSXAttribute | null {
+    const plan = hasVariants
+      ? planNodeVariantStyle(node.id, variants!, combinations ?? [])
+      : { entries: [], selectors: [] };
     const hasStatic = Object.keys(node.style).length > 0;
     const dynamic = bind && bind.styles.size > 0;
-    if (!hasStatic && !dynamic) return null;
-    let staticRef: t.Expression | null = null;
+    const hasVariant = plan.selectors.length > 0;
+    if (!hasStatic && !dynamic && !hasVariant) return null;
+
+    const parts: t.Expression[] = [];
+    // A base style key is needed when the node has its own static style OR variant
+    // entries (which are named `<baseKey>_<suffix>`).
+    const baseKey = hasStatic || hasVariant ? styleKeyFor(node) : null;
     if (hasStatic) {
-      const key = styleKeyFor(node);
-      styleEntries.push([key, node.style, themeBindingsFor(node)]);
-      staticRef = t.memberExpression(t.identifier("styles"), t.identifier(key));
+      styleEntries.push([baseKey!, node.style, themeBindingsFor(node)]);
+      parts.push(t.memberExpression(t.identifier("styles"), t.identifier(baseKey!)));
     }
-    if (!dynamic) return exprAttr("style", staticRef!);
-    const dynObj = t.objectExpression(
-      [...bind!.styles].map(([key, prop]) =>
-        t.objectProperty(keyNode(key), t.identifier(prop)),
-      ),
-    );
-    return exprAttr("style", staticRef ? t.arrayExpression([staticRef, dynObj]) : dynObj);
+    for (const entry of plan.entries) {
+      styleEntries.push([`${baseKey}_${entry.suffix}`, entry.style]);
+    }
+    for (const selector of plan.selectors) parts.push(variantSelectorExpr(baseKey!, selector));
+    if (dynamic) {
+      parts.push(
+        t.objectExpression(
+          [...bind!.styles].map(([key, prop]) => t.objectProperty(keyNode(key), t.identifier(prop))),
+        ),
+      );
+    }
+    return exprAttr("style", parts.length === 1 ? parts[0] : t.arrayExpression(parts));
   }
 
   function propAttrs(node: Node): t.JSXAttribute[] {
@@ -308,6 +335,13 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
         }
       }
     }
+    // Variant selection → axis attrs, omitting any value equal to the axis default.
+    for (const axis of definition?.variants ?? []) {
+      const value = node.variant?.[axis.name];
+      if (value !== undefined && value !== axis.values[0] && axis.values.includes(value)) {
+        attrs.push(t.jsxAttribute(t.jsxIdentifier(axis.name), t.stringLiteral(value)));
+      }
+    }
     return t.jsxElement(t.jsxOpeningElement(t.jsxIdentifier(name), attrs, true), null, [], true);
   }
 
@@ -328,10 +362,16 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
       children,
       selfClosing,
     );
-    if (bind?.visibility) {
-      return t.logicalExpression("&&", t.identifier(bind.visibility), element);
+    let result: t.Expression = element;
+    // Per-combination visibility: hide the node in the cells the variant declares.
+    if (hasVariants) {
+      const guard = hiddenGuardExpr(nodeHiddenCells(node.id, variants!, combinations ?? []), variants!);
+      if (guard) result = t.logicalExpression("&&", guard, result);
     }
-    return element;
+    if (bind?.visibility) {
+      result = t.logicalExpression("&&", t.identifier(bind.visibility), result);
+    }
+    return result;
   }
 
   return { build, used, componentImports, styleEntries };

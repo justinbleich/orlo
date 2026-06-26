@@ -633,3 +633,85 @@ test("openDocument: missing theme falls back to the sidecar tokens", () => {
   assert.equal(opened.tokens.tk1.value, "#123456");
   assert.deepEqual(opened.root.design?.tokens, { backgroundColor: "tk1" });
 });
+
+// --- Phase 2D-3: variant component-sets ---
+
+function buttonSet(): ComponentDefinition {
+  return {
+    id: "btn",
+    name: "Button",
+    template: createNode("Pressable", {
+      id: "root",
+      style: { backgroundColor: "#2222ff", padding: 8 },
+      children: [
+        createNode("Text", { id: "label", props: { text: "Go" }, style: { color: "#ffffff", fontSize: 14 } }),
+        createNode("View", { id: "icon", style: { width: 8, height: 8 } }),
+      ],
+    }),
+    props: [],
+    variants: [
+      { name: "size", values: ["sm", "lg"] },
+      { name: "state", values: ["default", "disabled"] },
+    ],
+    combinations: [
+      { values: { size: "lg", state: "default" }, overrides: [{ nodeId: "root", style: { padding: 16 } }] },
+      { values: { size: "sm", state: "disabled" }, overrides: [{ nodeId: "root", style: { opacity: 0.5 } }, { nodeId: "icon", hidden: true }] },
+      { values: { size: "lg", state: "disabled" }, overrides: [{ nodeId: "root", style: { padding: 16, opacity: 0.5 } }] },
+    ],
+  };
+}
+
+function screenWith(...instances: Node[]): Node {
+  return createNode("View", { id: "screen", children: instances });
+}
+
+test("a variant component emits typed unions, per-axis style lookups, and usages", () => {
+  const screen = screenWith(
+    { id: "b1", type: "ComponentInstance", componentId: "btn", overrides: {}, style: {}, variant: { size: "lg", state: "disabled" } },
+    { id: "b2", type: "ComponentInstance", componentId: "btn", overrides: {}, style: {} },
+  );
+  const gen = generateScreen(screen, { screenName: "Home", components: { btn: buttonSet() } });
+  const mod = gen.components.find((c) => c.name === "Button")!.code;
+
+  // Typed axis props + defaults.
+  assert.match(mod, /size\?: "sm" \| "lg"/);
+  assert.match(mod, /state\?: "default" \| "disabled"/);
+  assert.match(mod, /size = "sm"/);
+  assert.match(mod, /state = "default"/);
+  // root's overrides factor per axis → per-axis computed-key lookups.
+  assert.match(mod, /styles\[`pressable_size_\$\{size\}`\]/);
+  assert.match(mod, /styles\[`pressable_state_\$\{state\}`\]/);
+  assert.match(mod, /pressable_size_lg: \{\s*padding: 16/);
+  // hidden icon → render guard from the variant props.
+  assert.match(mod, /!\(size === "sm" && state === "disabled"\) && <View/);
+  assertParses(mod);
+
+  // Usages: non-default values as attrs; all-default instance omits them.
+  assert.match(gen.code, /<Button size="lg" state="disabled" \/>/);
+  assert.match(gen.code, /<Button \/>/);
+});
+
+test("a node with a non-factoring (cross-axis) override falls back to a combination key", () => {
+  const def = buttonSet();
+  // Make the label diverge: only the (lg, default) cell sets fontSize → cannot be
+  // expressed as a per-axis contribution, so it must be combination-keyed.
+  def.combinations = [
+    { values: { size: "lg", state: "default" }, overrides: [{ nodeId: "label", style: { fontSize: 18 } }] },
+  ];
+  const screen = screenWith({ id: "b1", type: "ComponentInstance", componentId: "btn", overrides: {}, style: {} });
+  const mod = generateScreen(screen, { screenName: "Home", components: { btn: def } }).components[0].code;
+  assert.match(mod, /styles\[`text_v_\$\{size\}_\$\{state\}`\]/);
+  assert.match(mod, /text_v_lg_default: \{\s*fontSize: 18/);
+  assertParses(mod);
+});
+
+test("the sidecar round-trips variant axes, combinations, and instance selection", () => {
+  const screen = screenWith({ id: "b1", type: "ComponentInstance", componentId: "btn", overrides: {}, style: {}, variant: { size: "lg" } });
+  const def = buttonSet();
+  const sidecar = generateScreen(screen, { screenName: "Home", components: { btn: def } }).sidecar;
+  const parsed = parseSidecar(sidecar);
+  assert.deepEqual(parsed.components!.btn.variants, def.variants);
+  assert.deepEqual(parsed.components!.btn.combinations, def.combinations);
+  const inst = (parsed.root as { children: { id: string; variant?: unknown }[] }).children[0];
+  assert.deepEqual(inst.variant, { size: "lg" });
+});

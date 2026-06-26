@@ -301,7 +301,7 @@ export function pruneDefinitionProps(definition: ComponentDefinition): Component
  * all target removed nodes. Override targets are trimmed to existing template nodes.
  */
 export function pruneVariants(definition: ComponentDefinition): ComponentDefinition {
-  const axes = definition.variants ?? [];
+  const axes = (definition.variants ?? []).filter((axis) => axis.values.length > 0);
   const combinations = definition.combinations ?? [];
   if (combinations.length === 0) return definition;
   if (axes.length === 0) return { ...definition, combinations: [] };
@@ -344,7 +344,7 @@ export function upsertVariantOverride(
   nodeId: NodeId,
   patch: { style?: Record<string, unknown>; hidden?: boolean | null },
 ): ComponentDefinition {
-  const axes = definition.variants ?? [];
+  const axes = (definition.variants ?? []).filter((a) => a.values.length > 0);
   const sig = (v: Record<string, string>) => axes.map((a) => v[a.name]).join(" ");
   const target = sig(values);
   const combos = definition.combinations ?? [];
@@ -515,9 +515,11 @@ export function validateComponentRegistry(registry: ComponentRegistry): NodeErro
         errors.push({ nodeId: id, key: akey, reason: "axis name collides with another axis or prop" });
       }
       axisNames.add(axis.name);
-      if (!Array.isArray(axis.values) || axis.values.length === 0) {
-        errors.push({ nodeId: id, key: `${akey}.values`, reason: "axis needs at least one value" });
+      if (!Array.isArray(axis.values)) {
+        errors.push({ nodeId: id, key: `${akey}.values`, reason: "axis values must be an array" });
       } else {
+        // Zero values = a draft axis still being authored: valid, but ignored by
+        // variant resolution, combination keying, and codegen until it has values.
         const valueSet = new Set<string>();
         for (const value of axis.values) {
           if (typeof value !== "string" || value.length === 0) {
@@ -530,22 +532,25 @@ export function validateComponentRegistry(registry: ComponentRegistry): NodeErro
       }
     }
 
-    // Combinations — each must specify every axis once with a valid value, be
-    // unique, and only patch existing template nodes with valid styles.
+    // Combinations — each must specify every *active* axis once with a valid value,
+    // be unique, and only patch existing template nodes with valid styles. Draft
+    // axes (no values) are not part of the combination key.
+    const activeAxes = axes.filter((axis) => axis.values.length > 0);
+    const activeAxisNames = new Set(activeAxes.map((axis) => axis.name));
     const comboSeen = new Set<string>();
     for (const combo of definition.combinations ?? []) {
       const ckey = "combinations";
       const keys = Object.keys(combo.values);
-      if (keys.length !== axes.length || !keys.every((k) => axisNames.has(k))) {
+      if (keys.length !== activeAxes.length || !keys.every((k) => activeAxisNames.has(k))) {
         errors.push({ nodeId: id, key: ckey, reason: "combination must specify every axis exactly once" });
       }
-      for (const axis of axes) {
+      for (const axis of activeAxes) {
         const value = combo.values[axis.name];
         if (value !== undefined && !axis.values.includes(value)) {
           errors.push({ nodeId: id, key: ckey, reason: `invalid value '${value}' for axis ${axis.name}` });
         }
       }
-      const signature = JSON.stringify(axes.map((axis) => combo.values[axis.name]));
+      const signature = JSON.stringify(activeAxes.map((axis) => combo.values[axis.name]));
       if (comboSeen.has(signature)) {
         errors.push({ nodeId: id, key: ckey, reason: "duplicate combination" });
       }

@@ -1105,13 +1105,19 @@ function VariantControls({
       setErr(e instanceof Error ? e.message : String(e));
     }
   };
+  // Only axes with at least one value participate in variant resolution; a
+  // property with no values yet is a draft (shown in the editor above, ignored
+  // by the picker). The picker is useful once some axis can actually switch.
+  const valuedProperties = properties.filter((p) => p.values.length > 0);
+  const hasDraft = valuedProperties.length < properties.length;
+  const canPick = valuedProperties.some((p) => p.values.length >= 2);
   const activeValues: Record<string, string> =
-    properties.length ? resolveVariant(def, activeVariant) : {};
-  const isDefault = properties.every((p) => activeValues[p.name] === p.values[0]);
+    valuedProperties.length ? resolveVariant(def, activeVariant) : {};
+  const isDefault = valuedProperties.every((p) => activeValues[p.name] === p.values[0]);
   const hiddenHere =
     !isDefault && selectedNodeId
       ? !!(def.combinations ?? [])
-          .find((c) => properties.every((p) => c.values[p.name] === activeValues[p.name]))
+          .find((c) => valuedProperties.every((p) => c.values[p.name] === activeValues[p.name]))
           ?.overrides.find((o) => o.nodeId === selectedNodeId)?.hidden
       : false;
 
@@ -1201,20 +1207,28 @@ function VariantControls({
           </button>
         </div>
 
-        {properties.length > 0 && (
+        {properties.length > 0 && !canPick && (
+          <p className="m-0 text-xs text-ink-faint">
+            {hasDraft || valuedProperties.length === 0
+              ? "Add at least two values to a property to author variants."
+              : "Add another value to switch between variants."}
+          </p>
+        )}
+
+        {canPick && (
           <>
             <div className="eyebrow pt-xs">Editing variant</div>
             <VariantPicker
-              properties={properties}
+              properties={valuedProperties}
               activeValues={activeValues}
               onSelect={(values) => {
-                for (const p of properties) setActiveVariant(p.name, values[p.name]);
+                for (const p of valuedProperties) setActiveVariant(p.name, values[p.name]);
               }}
             />
             <p className={cn("m-0 text-xs", isDefault ? "text-ink-faint" : "text-accent")}>
               {isDefault
                 ? "Editing the default variant — pick another cell to author an override."
-                : `Edits apply to ${properties
+                : `Edits apply to ${valuedProperties
                     .map((p) => `${p.name}=${activeValues[p.name]}`)
                     .join(", ")}.`}
             </p>

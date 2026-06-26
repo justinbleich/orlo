@@ -81,7 +81,9 @@ export function emitComponent(
 ): GeneratedComponent {
   const name = toComponentName(definition.name);
   const bindings = buildBindings(definition);
-  const axes = definition.variants ?? [];
+  // Draft axes (no values yet) are skipped entirely: they emit no prop and
+  // contribute no variant styling until the author gives them values.
+  const axes = (definition.variants ?? []).filter((axis) => axis.values.length > 0);
   const emitter = createEmitter({
     components,
     bindings,

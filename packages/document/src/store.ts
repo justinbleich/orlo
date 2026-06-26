@@ -500,7 +500,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       const { components, roots } = get();
       const def = components[componentId];
       if (!def) throw new Error(`Component not found: ${componentId}`);
-      const variants = [...(def.variants ?? []), { name, values: ["default"] }];
+      // Seed with no values — a draft axis. The first value the author adds
+      // becomes the base/default; nothing is emitted until then.
+      const variants = [...(def.variants ?? []), { name, values: [] }];
       commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
     },
     removeVariantAxis: (componentId, name) => {

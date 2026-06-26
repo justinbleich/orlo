@@ -544,11 +544,16 @@ test("variant authoring actions flow through the store and reconcile", () => {
   const tmplRoot = useDocumentStore.getState().components[cid].template.id;
 
   store.addVariantAxis(cid, "tone");
+  // A fresh axis is a draft (no values); the first value added becomes the base.
+  assert.deepEqual(useDocumentStore.getState().components[cid].variants, [
+    { name: "tone", values: [] },
+  ]);
+  store.addVariantValue(cid, "tone", "outline"); // base/default
   store.addVariantValue(cid, "tone", "solid");
-  // override the solid cell's fill
+  // override the solid (non-default) cell's fill
   store.setVariantOverride(cid, { tone: "solid" }, tmplRoot, { style: { backgroundColor: "#ff0000" } });
   let def = useDocumentStore.getState().components[cid];
-  assert.deepEqual(def.variants, [{ name: "tone", values: ["default", "solid"] }]);
+  assert.deepEqual(def.variants, [{ name: "tone", values: ["outline", "solid"] }]);
   assert.equal(def.combinations!.length, 1);
 
   // place an instance and select the solid variant → it expands red

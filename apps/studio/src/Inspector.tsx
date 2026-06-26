@@ -1680,8 +1680,8 @@ function PropertyRow({
         </IconButton>
       </div>
       {prop.valueType !== "node" && (
-        <div className="flex items-center gap-xs">
-          <span className="w-12 shrink-0 text-2xs text-ink-faint">Default</span>
+        <div className="flex flex-col gap-2xs">
+          <span className="text-2xs text-ink-faint">Default value</span>
           <PropertyDefaultEditor prop={prop} onChange={onDefault} />
         </div>
       )}

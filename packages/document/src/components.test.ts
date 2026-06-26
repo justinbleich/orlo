@@ -8,6 +8,8 @@ import {
   findNode,
   ownerInstanceId,
   promoteToComponent,
+  pruneVariants,
+  resolveVariant,
   useDocumentStore,
   validateComponentRegistry,
   validateInstance,
@@ -358,4 +360,159 @@ test("store: definition edits preserve overrides; removing a prop drops them", (
   // Removing the prop reconciles the override away.
   store.updateComponent(cid, { props: [] });
   assert.equal(overrideOf(instId), undefined);
+});
+
+// --- Variants (Phase 2D-3) ---------------------------------------------------
+
+/** A Button with a size axis (sm/lg) and a state axis (default/disabled), with
+ *  per-combination style + visibility overrides (sm/default is the base cell). */
+function buttonDef(): ComponentDefinition {
+  const template = createNode("Pressable", {
+    id: "root",
+    style: { backgroundColor: "#2222ff", padding: 8 },
+    children: [
+      createNode("Text", { id: "label", props: { text: "Go" }, style: { color: "#ffffff", fontSize: 14 } }),
+      createNode("View", { id: "icon", style: { width: 8, height: 8 } }),
+    ],
+  });
+  return {
+    id: "btn",
+    name: "Button",
+    template,
+    props: [],
+    variants: [
+      { name: "size", values: ["sm", "lg"] },
+      { name: "state", values: ["default", "disabled"] },
+    ],
+    combinations: [
+      { values: { size: "lg", state: "default" }, overrides: [
+        { nodeId: "root", style: { padding: 16 } },
+        { nodeId: "label", style: { fontSize: 18 } },
+      ] },
+      { values: { size: "sm", state: "disabled" }, overrides: [
+        { nodeId: "root", style: { opacity: 0.5 } },
+        { nodeId: "icon", hidden: true },
+      ] },
+      // cross-axis cell: depends on BOTH size=lg and state=disabled
+      { values: { size: "lg", state: "disabled" }, overrides: [
+        { nodeId: "root", style: { padding: 16, opacity: 0.5 } },
+      ] },
+    ],
+  };
+}
+
+const btnInstance = (variant?: Record<string, string>): ComponentInstanceNode => ({
+  ...createInstance("btn", { id: "b1" }),
+  ...(variant ? { variant } : {}),
+});
+
+test("resolveVariant defaults each axis to its first value", () => {
+  const def = buttonDef();
+  assert.deepEqual(resolveVariant(def, undefined), { size: "sm", state: "default" });
+  assert.deepEqual(resolveVariant(def, { size: "lg" }), { size: "lg", state: "default" });
+  // unknown axis/value ignored → falls back to default
+  assert.deepEqual(resolveVariant(def, { size: "xl", weight: "bold" }), { size: "sm", state: "default" });
+});
+
+test("applyOverrides merges the active combination over the base", () => {
+  const def = buttonDef();
+  // base cell (sm/default) has no combination → untouched
+  const base = applyOverrides(def, btnInstance());
+  assert.equal((findNode(base, "root") as Node).style.padding, 8);
+
+  // lg/default → root padding 16, label fontSize 18
+  const lg = applyOverrides(def, btnInstance({ size: "lg" }));
+  assert.equal((findNode(lg, "root") as Node).style.padding, 16);
+  assert.equal((findNode(lg, "label") as Node).style.fontSize, 18);
+
+  // sm/disabled → opacity + hidden icon
+  const dis = applyOverrides(def, btnInstance({ state: "disabled" }));
+  assert.equal((findNode(dis, "root") as Node).style.opacity, 0.5);
+  assert.equal((findNode(dis, "icon") as Node).design?.hidden, true);
+});
+
+test("applyOverrides picks the exact cross-axis cell, not a per-axis blend", () => {
+  const def = buttonDef();
+  const both = applyOverrides(def, btnInstance({ size: "lg", state: "disabled" }));
+  const root = findNode(both, "root") as Node;
+  assert.equal(root.style.padding, 16);
+  assert.equal(root.style.opacity, 0.5);
+});
+
+test("expandComponents applies the instance variant through namespaced expansion", () => {
+  const registry = { btn: buttonDef() };
+  const placed = btnInstance({ size: "lg" });
+  const expanded = expandComponents(placed, registry);
+  assert.equal(expanded.id, "b1::root");
+  assert.equal(expanded.style.padding, 16);
+});
+
+test("validateComponentRegistry accepts a well-formed component-set", () => {
+  assert.deepEqual(validateComponentRegistry({ btn: buttonDef() }), []);
+});
+
+test("validateComponentRegistry rejects malformed variants/combinations", () => {
+  const reason = (def: ComponentDefinition) =>
+    validateComponentRegistry({ btn: def }).map((e) => e.reason).join(" | ");
+
+  const dupValue = buttonDef();
+  dupValue.variants![0].values = ["sm", "sm"];
+  assert.match(reason(dupValue), /duplicate value/);
+
+  const badName = buttonDef();
+  badName.variants![0].name = "1size";
+  assert.match(reason(badName), /JS identifier/);
+
+  const missingAxis = buttonDef();
+  missingAxis.combinations = [{ values: { size: "lg" }, overrides: [{ nodeId: "root", style: { padding: 1 } }] }];
+  assert.match(reason(missingAxis), /every axis exactly once/);
+
+  const badValue = buttonDef();
+  badValue.combinations = [{ values: { size: "lg", state: "nope" }, overrides: [{ nodeId: "root", style: { padding: 1 } }] }];
+  assert.match(reason(badValue), /invalid value/);
+
+  const badTarget = buttonDef();
+  badTarget.combinations = [{ values: { size: "lg", state: "default" }, overrides: [{ nodeId: "ghost", style: { padding: 1 } }] }];
+  assert.match(reason(badTarget), /not in template/);
+
+  const badStyle = buttonDef();
+  badStyle.combinations = [{ values: { size: "lg", state: "default" }, overrides: [{ nodeId: "root", style: { padding: "10px" as never } }] }];
+  assert.match(reason(badStyle), /invalid variant style/);
+
+  const axisCollidesProp = buttonDef();
+  axisCollidesProp.props = [{ name: "size", valueType: "string", targets: [{ kind: "prop", nodeId: "label", path: "text" }] }];
+  assert.match(reason(axisCollidesProp), /collides/);
+});
+
+test("pruneVariants drops combinations orphaned by an axis/value edit", () => {
+  // remove the "lg" value → both lg/* combinations become invalid
+  const def = buttonDef();
+  def.variants![0].values = ["sm"];
+  const pruned = pruneVariants(def);
+  assert.equal(pruned.combinations!.length, 1); // only sm/disabled survives
+  assert.deepEqual(pruned.combinations![0].values, { size: "sm", state: "disabled" });
+
+  // removing an axis entirely drops every combination
+  const noAxes = buttonDef();
+  noAxes.variants = [];
+  assert.deepEqual(pruneVariants(noAxes).combinations, []);
+
+  // an override targeting a removed node is trimmed; an emptied combo is dropped
+  const trimmed = buttonDef();
+  trimmed.template = createNode("Pressable", { id: "root", style: { padding: 8 }, children: [] });
+  const t = pruneVariants(trimmed);
+  assert.ok(t.combinations!.every((c) => c.overrides.every((o) => o.nodeId === "root")));
+});
+
+test("reconcileInstance clamps variant selections to valid axes/values", () => {
+  const def = buttonDef();
+  const dirty: ComponentInstanceNode = { ...btnInstance({ size: "lg", weight: "bold" }), variant: { size: "lg", weight: "bold", state: "gone" } };
+  const clean = reconcileInstance(dirty, def);
+  assert.deepEqual(clean.variant, { size: "lg" }); // weight axis + bad state dropped
+});
+
+test("validateInstance flags unknown variant axes/values", () => {
+  const registry = { btn: buttonDef() };
+  const bad: ComponentInstanceNode = { ...btnInstance(), variant: { size: "xl" } };
+  assert.match(validateInstance(bad, registry).map((e) => e.reason).join(" "), /not a value of axis/);
 });

@@ -157,6 +157,9 @@ export interface ComponentInstanceNode extends NodeBase {
   overrides: Record<string, OverrideValue>;
   slots?: Record<string, Node[]>;
   tokens?: Record<string, string>;
+  /** Chosen variant value per axis (axis name → value). Missing axes default to
+   *  the axis's first value. Only meaningful when the definition has `variants`. */
+  variant?: Record<string, string>;
 }
 
 export type Node =
@@ -193,12 +196,39 @@ export interface ComponentProp {
   default?: OverrideValue;
 }
 
-/** A reusable component: a template subtree plus its exposed prop interface. */
+/** A named variant axis (e.g. `size` with values `sm`/`md`/`lg`). The first value
+ *  is the default. Emitted as a typed enum prop (union of values). */
+export interface VariantAxis {
+  name: string;
+  values: string[];
+}
+
+/** A per-node patch a variant combination applies over the base template node.
+ *  `style` merges over `node.style`; `hidden` overrides `design.hidden`. The model
+ *  is shaped so a future structural override (a full subtree) can join this union. */
+export interface VariantNodeOverride {
+  nodeId: NodeId;
+  style?: Partial<RNStyle>;
+  hidden?: boolean;
+}
+
+/** One cell of the variant cartesian: a value per (some) axes plus the node patches
+ *  applied when that combination is active. Combinations are **sparse** — only those
+ *  that actually override are stored; a missing combination resolves to the base. */
+export interface VariantCombination {
+  values: Record<string, string>;
+  overrides: VariantNodeOverride[];
+}
+
+/** A reusable component: a template subtree plus its exposed prop interface, and
+ *  (optionally) a full component-set of variant axes + per-combination overrides. */
 export interface ComponentDefinition {
   id: string;
   name: string;
   template: Node;
   props: ComponentProp[];
+  variants?: VariantAxis[];
+  combinations?: VariantCombination[];
 }
 
 export type ComponentRegistry = Record<string, ComponentDefinition>;

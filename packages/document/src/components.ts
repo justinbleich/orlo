@@ -8,7 +8,7 @@
  * file owns the contract every later slice builds on, so it stays free of React,
  * the store, and codegen.
  */
-import type { RNStyle } from "@rn-canvas/styles";
+import { validateStyle, type RNStyle } from "@rn-canvas/styles";
 import type {
   ComponentDefinition,
   ComponentInstanceNode,
@@ -18,6 +18,7 @@ import type {
   Node,
   NodeId,
   OverrideValue,
+  VariantCombination,
 } from "./types";
 import { childrenOf, isContainer } from "./types";
 import { validateTree, type NodeError } from "./validate";
@@ -111,6 +112,40 @@ export function createInstance(
   };
 }
 
+// --- Variants -----------------------------------------------------------------
+
+/**
+ * The fully-resolved variant selection for an instance: each axis at its chosen
+ * value, defaulting to the axis's first value. `{}` when the definition has no axes.
+ */
+export function resolveVariant(
+  definition: ComponentDefinition,
+  selection: Record<string, string> | undefined,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const axis of definition.variants ?? []) {
+    if (axis.values.length === 0) continue;
+    const chosen = selection?.[axis.name];
+    result[axis.name] =
+      chosen !== undefined && axis.values.includes(chosen) ? chosen : axis.values[0];
+  }
+  return result;
+}
+
+/** Find the stored combination matching a fully-resolved selection (exact on every
+ *  axis). Combinations are sparse, so an un-overridden cell returns undefined. */
+function matchCombination(
+  combinations: VariantCombination[] | undefined,
+  resolved: Record<string, string>,
+): VariantCombination | undefined {
+  const axes = Object.keys(resolved);
+  return combinations?.find(
+    (combo) =>
+      Object.keys(combo.values).length === axes.length &&
+      axes.every((axis) => combo.values[axis] === resolved[axis]),
+  );
+}
+
 // --- Override resolution ------------------------------------------------------
 
 function scalarMatches(prop: ComponentProp, value: OverrideValue): boolean {
@@ -154,6 +189,23 @@ export function applyOverrides(
 ): Node {
   const tree = clone(definition.template);
   const index = indexById(tree);
+
+  // Variant pass: merge the active combination's per-node style/visibility patches
+  // over the base template *before* scalar/slot props, so an explicit instance
+  // override still wins over a variant default.
+  if (definition.variants?.length) {
+    const resolved = resolveVariant(definition, instance.variant);
+    const combo = matchCombination(definition.combinations, resolved);
+    for (const override of combo?.overrides ?? []) {
+      const host = index.get(override.nodeId);
+      if (!host) continue;
+      if (override.style) host.style = { ...host.style, ...override.style };
+      if (override.hidden !== undefined) {
+        host.design = { ...host.design, hidden: override.hidden };
+      }
+    }
+  }
+
   for (const prop of definition.props) {
     if (prop.valueType === "node") {
       const children = instance.slots?.[prop.name];
@@ -242,7 +294,44 @@ export function pruneDefinitionProps(definition: ComponentDefinition): Component
 }
 
 
-/** Drop an instance's overrides/slots whose prop no longer exists on the definition. */
+/**
+ * Drop variant combinations orphaned by an axis/value edit: a combination that no
+ * longer specifies exactly the current axes with valid values, or whose overrides
+ * all target removed nodes. Override targets are trimmed to existing template nodes.
+ */
+export function pruneVariants(definition: ComponentDefinition): ComponentDefinition {
+  const axes = definition.variants ?? [];
+  const combinations = definition.combinations ?? [];
+  if (combinations.length === 0) return definition;
+  if (axes.length === 0) return { ...definition, combinations: [] };
+
+  const ids = collectIds(definition.template);
+  let changed = false;
+  const next = combinations.flatMap((combo) => {
+    const keys = Object.keys(combo.values);
+    const valid =
+      keys.length === axes.length &&
+      axes.every((axis) => axis.values.includes(combo.values[axis.name]));
+    if (!valid) {
+      changed = true;
+      return [];
+    }
+    const overrides = combo.overrides.filter((override) => ids.has(override.nodeId));
+    if (overrides.length === 0) {
+      changed = true;
+      return [];
+    }
+    if (overrides.length !== combo.overrides.length) {
+      changed = true;
+      return [{ ...combo, overrides }];
+    }
+    return [combo];
+  });
+  return changed ? { ...definition, combinations: next } : definition;
+}
+
+/** Drop an instance's overrides/slots whose prop no longer exists on the definition,
+ *  and clamp `variant` selections to the definition's current axes/values. */
 export function reconcileInstance(
   instance: ComponentInstanceNode,
   definition: ComponentDefinition,
@@ -252,15 +341,27 @@ export function reconcileInstance(
   const slotEntries = instance.slots
     ? Object.entries(instance.slots).filter(([name]) => names.has(name))
     : [];
+  // Clamp variant selections to the definition's current axes/values.
+  const axisByName = new Map((definition.variants ?? []).map((axis) => [axis.name, axis]));
+  const variantEntries = instance.variant
+    ? Object.entries(instance.variant).filter(([name, value]) => axisByName.get(name)?.values.includes(value))
+    : [];
   const overridesChanged = overrideEntries.length !== Object.keys(instance.overrides).length;
   const slotsChanged = instance.slots
     ? slotEntries.length !== Object.keys(instance.slots).length
     : false;
-  if (!overridesChanged && !slotsChanged) return instance;
+  const variantChanged = instance.variant
+    ? variantEntries.length !== Object.keys(instance.variant).length
+    : false;
+  if (!overridesChanged && !slotsChanged && !variantChanged) return instance;
   const next: ComponentInstanceNode = { ...instance, overrides: Object.fromEntries(overrideEntries) };
   if (instance.slots) {
     if (slotEntries.length > 0) next.slots = Object.fromEntries(slotEntries);
     else delete next.slots;
+  }
+  if (instance.variant) {
+    if (variantEntries.length > 0) next.variant = Object.fromEntries(variantEntries);
+    else delete next.variant;
   }
   return next;
 }
@@ -356,6 +457,64 @@ export function validateComponentRegistry(registry: ComponentRegistry): NodeErro
         errors.push({ nodeId: id, key: `${key}.default`, reason: `default must be a ${prop.valueType}` });
       }
     }
+
+    // Variant axes — each emitted as a typed enum prop, so the same name rules
+    // apply and an axis must not collide with an exposed prop.
+    const axes = definition.variants ?? [];
+    const axisNames = new Set<string>();
+    for (const axis of axes) {
+      const akey = `variants.${axis.name}`;
+      if (!IDENTIFIER.test(axis.name)) {
+        errors.push({ nodeId: id, key: akey, reason: "axis name must be a JS identifier" });
+      }
+      if (axisNames.has(axis.name) || seen.has(axis.name)) {
+        errors.push({ nodeId: id, key: akey, reason: "axis name collides with another axis or prop" });
+      }
+      axisNames.add(axis.name);
+      if (!Array.isArray(axis.values) || axis.values.length === 0) {
+        errors.push({ nodeId: id, key: `${akey}.values`, reason: "axis needs at least one value" });
+      } else {
+        const valueSet = new Set<string>();
+        for (const value of axis.values) {
+          if (typeof value !== "string" || value.length === 0) {
+            errors.push({ nodeId: id, key: `${akey}.values`, reason: "value must be a non-empty string" });
+          } else if (valueSet.has(value)) {
+            errors.push({ nodeId: id, key: `${akey}.values`, reason: `duplicate value: ${value}` });
+          }
+          if (typeof value === "string") valueSet.add(value);
+        }
+      }
+    }
+
+    // Combinations — each must specify every axis once with a valid value, be
+    // unique, and only patch existing template nodes with valid styles.
+    const comboSeen = new Set<string>();
+    for (const combo of definition.combinations ?? []) {
+      const ckey = "combinations";
+      const keys = Object.keys(combo.values);
+      if (keys.length !== axes.length || !keys.every((k) => axisNames.has(k))) {
+        errors.push({ nodeId: id, key: ckey, reason: "combination must specify every axis exactly once" });
+      }
+      for (const axis of axes) {
+        const value = combo.values[axis.name];
+        if (value !== undefined && !axis.values.includes(value)) {
+          errors.push({ nodeId: id, key: ckey, reason: `invalid value '${value}' for axis ${axis.name}` });
+        }
+      }
+      const signature = JSON.stringify(axes.map((axis) => combo.values[axis.name]));
+      if (comboSeen.has(signature)) {
+        errors.push({ nodeId: id, key: ckey, reason: "duplicate combination" });
+      }
+      comboSeen.add(signature);
+      for (const override of combo.overrides ?? []) {
+        if (!templateIds.has(override.nodeId)) {
+          errors.push({ nodeId: id, key: ckey, reason: `override target not in template: ${override.nodeId}` });
+        }
+        if (override.style && !validateStyle(override.style).ok) {
+          errors.push({ nodeId: id, key: ckey, reason: "invalid variant style override" });
+        }
+      }
+    }
   }
   return errors;
 }
@@ -386,6 +545,15 @@ export function validateInstance(
     const prop = byName.get(name);
     if (!prop || prop.valueType !== "node") {
       errors.push({ nodeId: instance.id, key: `slots.${name}`, reason: "no matching slot prop" });
+    }
+  }
+  const axisByName = new Map((definition.variants ?? []).map((axis) => [axis.name, axis]));
+  for (const [name, value] of Object.entries(instance.variant ?? {})) {
+    const axis = axisByName.get(name);
+    if (!axis) {
+      errors.push({ nodeId: instance.id, key: `variant.${name}`, reason: "no matching variant axis" });
+    } else if (!axis.values.includes(value)) {
+      errors.push({ nodeId: instance.id, key: `variant.${name}`, reason: `not a value of axis ${name}` });
     }
   }
   return errors;

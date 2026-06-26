@@ -35,6 +35,7 @@ import {
   createInstance,
   promoteToComponent as promoteOp,
   pruneDefinitionProps,
+  pruneVariants,
   reconcileOverrides,
   validateComponentRegistry,
   validateInstance,
@@ -214,7 +215,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
    */
   const commitRegistry = (components: ComponentRegistry, roots: Roots) => {
     const pruned: ComponentRegistry = {};
-    for (const [id, def] of Object.entries(components)) pruned[id] = pruneDefinitionProps(def);
+    for (const [id, def] of Object.entries(components)) {
+      pruned[id] = pruneVariants(pruneDefinitionProps(def));
+    }
     const errors = validateComponentRegistry(pruned);
     if (errors.length > 0) {
       const first = errors[0];

@@ -749,3 +749,42 @@ these document-level RN design tokens.
   not a user-path bug — each carried an HMR `?t=` query string and none reproduced on a clean reload).
 - Committed as `360ad45` on `phase2/2d-tokens`. (`generated/theme.ts` left untracked — it carried live
   test values; `generated/Screen.*` restored to HEAD. `AGENTS.md` is unrelated, left untracked.)
+- Follow-up landed: an **Inspector error boundary** (`ErrorBoundary.tsx`, `229afdf`) so a panel render
+  error degrades locally instead of unmounting the app (and tearing down the token writer). Known wart:
+  `generateScreen` only emits `theme.ts` for *bound* tokens, while `/api/tokens/save` writes the full
+  registry — Sync alone could drop unbound tokens from the file. Latent (the debounced writer keeps the
+  file complete); fold a full-registry Sync theme into a later slice.
+
+### Slice 2D-3 (variants — full component-set)
+
+The last genuinely-new 2D model. A `ComponentDefinition` gains **variant axes** + **per-combination
+overrides**; instances pick a combination; codegen emits one RN component switching on typed variant
+props. Three sub-slices, each committed on `phase2/2d-tokens`.
+
+- **2D-3a model (`14c9433`):** `ComponentDefinition.variants` (`VariantAxis` = name + values, first =
+  default) + sparse `combinations` (`VariantCombination` = a value per axis + `VariantNodeOverride[]`
+  = per-node `style` patch / `hidden`). `ComponentInstanceNode.variant` (axis→value). `applyOverrides`
+  merges the matching combination's patches over the base **before** scalar/slot props (an explicit
+  override still wins); combinations are full cells matched exactly, so cross-axis (size×state) cells
+  resolve correctly. validate (axis names = JS idents unique vs axes+props; values non-empty/unique;
+  combos specify every axis once with valid values, unique, patch existing nodes with valid RNStyle),
+  `pruneVariants` + `reconcileInstance` clamp on axis/value edits (run from `commitRegistry`).
+  Scope: structural per-combination divergence beyond show/hide is deferred but the model leaves room.
+- **2D-3b codegen (`fb3c6d7`):** axes → defaulted string-literal-union props. `variant-emit.ts` plans
+  each node's emission: per-axis computed StyleSheet lookups (`styles[`root_size_${size}`]`) when the
+  overrides **factor** per axis (the common case), else a combination-keyed entry
+  (`styles[`root_v_${size}_${state}`]`) — faithful to the sparse-cell model. `hidden` → a render guard
+  (`{!(size === "sm" && state === "disabled") && <Icon/>}`). Instances emit non-default axis values as
+  attrs (`<Button size="lg" state="disabled" />`). Live: real `/api/codegen/preview` emits the module.
+- **2D-3c authoring UI (`aa8254e`):** pure `upsertVariantOverride` + store actions
+  (add/removeVariantAxis, add/removeVariantValue, setVariantOverride, setInstanceVariant) via
+  commitRegistry/mutateRoot. Focus-mode **Variants editor** (axes/values + a combination selector in
+  studio-store `activeVariant`); while a non-base combination is active, the Inspector's appearance
+  `styleVal`/`setStyle` + a hide toggle route into that combination's override. **Instance variant
+  pickers** (Select per axis). Live (preview MCP): promote → Edit → Variants editor renders; add axis +
+  value flow through the store and update the UI; combination selector + base/non-base hint render; a
+  placed instance shows its per-axis picker; zero console errors. (The Base UI Select dropdown can't be
+  driven by synthetic events, so the active-combo switch + routed fill edit are covered by unit tests,
+  not the live click-through.)
+- Totals: document 74 / codegen 40 / studio 25 green; tsc clean across all three. Remaining 2D pillars:
+  **2D-4 variant matrix view** (all combinations on a DS canvas) and **2D-5 library panel**.

@@ -1091,8 +1091,6 @@ function VariantControls({
   const setVariantOverride = useDocumentStore((s) => s.setVariantOverride);
   const activeVariant = useStudioStore((s) => s.activeVariant);
   const setActiveVariant = useStudioStore((s) => s.setActiveVariant);
-  const [propertyDraft, setPropertyDraft] = useState("");
-  const [valueDrafts, setValueDrafts] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
 
   if (!def) return null;
@@ -1105,6 +1103,17 @@ function VariantControls({
       setErr(e instanceof Error ? e.message : String(e));
     }
   };
+  // Unique identifier-safe name against existing properties (presets and custom
+  // both route through here, so adding "Size" twice yields size, size2, …).
+  const uniqueName = (base: string) => {
+    const taken = new Set(properties.map((p) => p.name));
+    if (!taken.has(base)) return base;
+    let i = 2;
+    while (taken.has(`${base}${i}`)) i += 1;
+    return `${base}${i}`;
+  };
+  const addProperty = (name: string, values: string[] = []) =>
+    run(() => addVariantAxis(componentId, uniqueName(name), values));
   // Only axes with at least one value participate in variant resolution; a
   // property with no values yet is a draft (shown in the editor above, ignored
   // by the picker). The picker is useful once some axis can actually switch.
@@ -1121,91 +1130,20 @@ function VariantControls({
           ?.overrides.find((o) => o.nodeId === selectedNodeId)?.hidden
       : false;
 
-  const inputCls =
-    "h-7 min-w-0 flex-1 rounded-sm border border-line bg-chrome-2 px-sm text-xs text-ink placeholder:text-ink-faint outline-none focus-visible:border-accent-line focus-visible:bg-raised";
-
   return (
     <Section title="Variants">
       <div className="flex flex-col gap-control">
         {properties.map((property) => (
-          <div key={property.name} className="flex flex-col gap-2xs rounded-sm border border-line/40 p-xs">
-            <div className="flex items-center gap-xs">
-              <span className="flex-1 font-mono text-xs text-ink">{property.name}</span>
-              <button
-                type="button"
-                title={`Remove property ${property.name}`}
-                onClick={() => run(() => removeVariantAxis(componentId, property.name))}
-                className="text-ink-faint hover:text-ink"
-              >
-                <X size={12} aria-hidden="true" />
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2xs">
-              {property.values.map((value) => (
-                <span
-                  key={value}
-                  className="inline-flex items-center gap-2xs rounded-xs border border-line bg-chrome-2 px-xs py-2xs text-2xs text-ink-dim"
-                >
-                  {value}
-                  {property.values.length > 1 && (
-                    <button
-                      type="button"
-                      title={`Remove ${value}`}
-                      onClick={() => run(() => removeVariantValue(componentId, property.name, value))}
-                      className="text-ink-faint hover:text-ink"
-                    >
-                      <X size={10} aria-hidden="true" />
-                    </button>
-                  )}
-                </span>
-              ))}
-              <input
-                value={valueDrafts[property.name] ?? ""}
-                onChange={(e) => setValueDrafts((d) => ({ ...d, [property.name]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    const v = (valueDrafts[property.name] ?? "").trim();
-                    if (v) {
-                      run(() => addVariantValue(componentId, property.name, v));
-                      setValueDrafts((d) => ({ ...d, [property.name]: "" }));
-                    }
-                  }
-                }}
-                placeholder="+ value"
-                spellCheck={false}
-                className={cn(inputCls, "h-6 w-20 flex-none")}
-              />
-            </div>
-          </div>
+          <PropertyEditor
+            key={property.name}
+            property={property}
+            onAddValue={(value) => run(() => addVariantValue(componentId, property.name, value))}
+            onRemoveValue={(value) => run(() => removeVariantValue(componentId, property.name, value))}
+            onRemove={() => run(() => removeVariantAxis(componentId, property.name))}
+          />
         ))}
 
-        <div className="flex items-center gap-xs">
-          <input
-            value={propertyDraft}
-            onChange={(e) => setPropertyDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && propertyDraft.trim()) {
-                run(() => addVariantAxis(componentId, propertyDraft.trim()));
-                setPropertyDraft("");
-              }
-            }}
-            placeholder="New property (e.g. size)"
-            spellCheck={false}
-            className={inputCls}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              if (propertyDraft.trim()) {
-                run(() => addVariantAxis(componentId, propertyDraft.trim()));
-                setPropertyDraft("");
-              }
-            }}
-            className="rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-xs text-ink hover:bg-raised"
-          >
-            Add property
-          </button>
-        </div>
+        <AddPropertyMenu onAdd={addProperty} />
 
         {properties.length > 0 && !canPick && (
           <p className="m-0 text-xs text-ink-faint">
@@ -1217,7 +1155,7 @@ function VariantControls({
 
         {canPick && (
           <>
-            <div className="eyebrow pt-xs">Editing variant</div>
+            <div className="eyebrow pt-xs">You're editing</div>
             <VariantPicker
               properties={valuedProperties}
               activeValues={activeValues}
@@ -1227,10 +1165,10 @@ function VariantControls({
             />
             <p className={cn("m-0 text-xs", isDefault ? "text-ink-faint" : "text-accent")}>
               {isDefault
-                ? "Editing the default variant — pick another cell to author an override."
-                : `Edits apply to ${valuedProperties
-                    .map((p) => `${p.name}=${activeValues[p.name]}`)
-                    .join(", ")}.`}
+                ? "You're editing the base version — pick another value to customize that variant."
+                : `Style changes now apply to the ${valuedProperties
+                    .map((p) => activeValues[p.name])
+                    .join(" · ")} variant.`}
             </p>
             {!isDefault && selectedNodeId && (
               <div className="flex items-center justify-between gap-xs">
@@ -1255,6 +1193,153 @@ function VariantControls({
         {err && <p className="m-0 text-xs text-live">{err}</p>}
       </div>
     </Section>
+  );
+}
+
+/** Common variant presets, each seeding readable values. Names are the codegen
+ *  prop identifiers; the first value is the base. "Custom" adds an empty draft. */
+const VARIANT_PRESETS: { label: string; name: string; values: string[] }[] = [
+  { label: "Size", name: "size", values: ["Small", "Medium", "Large"] },
+  { label: "State", name: "state", values: ["Default", "Hover", "Pressed", "Disabled"] },
+  { label: "Theme", name: "theme", values: ["Light", "Dark"] },
+  { label: "On / off", name: "on", values: ["On", "Off"] },
+];
+
+/** "Add a variant property" — a preset menu so a designer starts from a named
+ *  property with sensible values rather than a blank field. */
+function AddPropertyMenu({ onAdd }: { onAdd: (name: string, values?: string[]) => void }) {
+  const [customOpen, setCustomOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  if (customOpen) {
+    const commit = () => {
+      const v = draft.trim();
+      if (v) onAdd(v);
+      setDraft("");
+      setCustomOpen(false);
+    };
+    return (
+      <div className="flex items-center gap-xs">
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            else if (e.key === "Escape") {
+              setDraft("");
+              setCustomOpen(false);
+            }
+          }}
+          placeholder="Property name (e.g. size)"
+          spellCheck={false}
+          className="h-7 min-w-0 flex-1 rounded-sm border border-line bg-chrome-2 px-sm text-xs text-ink placeholder:text-ink-faint outline-none focus-visible:border-accent-line focus-visible:bg-raised"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <Menu.Root>
+      <Menu.Trigger className="flex items-center justify-center gap-xs rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-xs text-ink-dim transition-colors hover:bg-raised hover:text-ink">
+        <Plus size={13} aria-hidden="true" /> Add a variant property
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner side="bottom" align="start" sideOffset={6} className="z-50">
+          <Menu.Popup className="studio-popup min-w-44 rounded-md border border-line bg-chrome p-control shadow-popover outline-none">
+            <div className="eyebrow px-sm py-xs">Common</div>
+            {VARIANT_PRESETS.map((preset) => (
+              <Menu.Item
+                key={preset.name}
+                onClick={() => onAdd(preset.name, preset.values)}
+                className="flex cursor-default items-center justify-between gap-sm rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink"
+              >
+                <span>{preset.label}</span>
+                <span className="text-2xs text-ink-faint">{preset.values.join(" · ")}</span>
+              </Menu.Item>
+            ))}
+            <div className="my-2xs h-px bg-line" aria-hidden="true" />
+            <Menu.Item
+              onClick={() => setCustomOpen(true)}
+              className="flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink"
+            >
+              Custom…
+            </Menu.Item>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
+/** One variant property: its values as removable pills plus an inline add-value
+ *  control that commits on Enter *and* blur (no silent loss). */
+function PropertyEditor({
+  property,
+  onAddValue,
+  onRemoveValue,
+  onRemove,
+}: {
+  property: { name: string; values: string[] };
+  onAddValue: (value: string) => void;
+  onRemoveValue: (value: string) => void;
+  onRemove: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const commit = () => {
+    const v = draft.trim();
+    if (v) onAddValue(v);
+    setDraft("");
+  };
+  return (
+    <div className="flex flex-col gap-2xs rounded-sm border border-line/40 p-xs">
+      <div className="flex items-center gap-xs">
+        <span className="flex-1 text-xs font-medium text-ink">{property.name}</span>
+        <IconButton title={`Remove ${property.name}`} onClick={onRemove}>
+          <Trash2 size={13} aria-hidden="true" />
+        </IconButton>
+      </div>
+      <div className="flex flex-wrap items-center gap-2xs">
+        {property.values.map((value, i) => (
+          <span
+            key={value}
+            className={cn(
+              "inline-flex items-center gap-2xs rounded-xs border px-xs py-2xs text-2xs",
+              i === 0
+                ? "border-accent-line/60 bg-accent-soft text-accent"
+                : "border-line bg-chrome-2 text-ink-dim",
+            )}
+          >
+            {value}
+            {i === 0 ? (
+              <span className="text-ink-faint">base</span>
+            ) : (
+              <button
+                type="button"
+                title={`Remove ${value}`}
+                onClick={() => onRemoveValue(value)}
+                className="text-ink-faint hover:text-ink"
+              >
+                <X size={10} aria-hidden="true" />
+              </button>
+            )}
+          </span>
+        ))}
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            else if (e.key === "Escape") setDraft("");
+          }}
+          placeholder="Add value…"
+          spellCheck={false}
+          className="h-6 w-24 flex-none rounded-xs border border-line bg-chrome-2 px-xs text-2xs text-ink placeholder:text-ink-faint outline-none focus-visible:border-accent-line focus-visible:bg-raised"
+        />
+      </div>
+    </div>
   );
 }
 

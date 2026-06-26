@@ -106,7 +106,7 @@ export interface DocumentState {
   endComponentEdit(commit?: boolean): void;
 
   // --- Variants (Phase 2D-3) ---
-  addVariantAxis(componentId: NodeId, name: string): void;
+  addVariantAxis(componentId: NodeId, name: string, values?: string[]): void;
   removeVariantAxis(componentId: NodeId, name: string): void;
   addVariantValue(componentId: NodeId, axisName: string, value: string): void;
   removeVariantValue(componentId: NodeId, axisName: string, value: string): void;
@@ -496,13 +496,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     },
 
     // --- Variants (Phase 2D-3) ---
-    addVariantAxis: (componentId, name) => {
+    addVariantAxis: (componentId, name, values = []) => {
       const { components, roots } = get();
       const def = components[componentId];
       if (!def) throw new Error(`Component not found: ${componentId}`);
-      // Seed with no values — a draft axis. The first value the author adds
-      // becomes the base/default; nothing is emitted until then.
-      const variants = [...(def.variants ?? []), { name, values: [] }];
+      // Seeded values (from a preset) make this a ready axis in one step; an
+      // empty list is a draft — its first added value becomes the base/default.
+      const variants = [...(def.variants ?? []), { name, values }];
       commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
     },
     removeVariantAxis: (componentId, name) => {

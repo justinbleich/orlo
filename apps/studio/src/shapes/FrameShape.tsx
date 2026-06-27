@@ -9,8 +9,17 @@ import {
   type RecordProps,
   type TLBaseShape,
 } from "tldraw";
-import { useCallback, useState } from "react";
-import { findNode, useDocumentStore } from "@rn-canvas/document";
+import { useCallback, useMemo, useState } from "react";
+import {
+  applyOverrides,
+  createInstance,
+  findNode,
+  resolveVariant,
+  useDocumentStore,
+  type ComponentDefinition,
+  type ComponentRegistry,
+  type Node,
+} from "@rn-canvas/document";
 import {
   FrameRenderer,
   type LayoutReadyResult,
@@ -22,6 +31,7 @@ import { useStudioStore } from "../studio-store";
 // proxy instead of running Yoga + react-native-web. (PRD §7.2 LOD / §8: keep only a
 // limited set of frames live; render the rest as lightweight proxies.)
 const LOD_MIN_ONSCREEN_WIDTH = 160;
+const MAX_VARIANT_PREVIEWS = 12;
 
 /** Lightweight stand-in for an off-focus / zoomed-out frame — no Yoga, no rnw. */
 function LODProxy({ w, h, label }: { w: number; h: number; label: string }) {
@@ -40,6 +50,177 @@ function LODProxy({ w, h, label }: { w: number; h: number; label: string }) {
       }}
     >
       {label}
+    </div>
+  );
+}
+
+function variantPreviewCombinations(
+  definition: ComponentDefinition,
+): Record<string, string>[] {
+  const axes = (definition.variants ?? []).filter((axis) => axis.values.length > 0);
+  let combos: Record<string, string>[] = [{}];
+  for (const axis of axes) {
+    combos = combos.flatMap((combo) =>
+      axis.values.map((value) => ({ ...combo, [axis.name]: value })),
+    );
+  }
+  return combos;
+}
+
+function variantPreviewKey(
+  definition: ComponentDefinition,
+  values: Record<string, string>,
+): string {
+  return (definition.variants ?? [])
+    .filter((axis) => axis.values.length > 0)
+    .map((axis) => `${axis.name}:${values[axis.name]}`)
+    .join("|");
+}
+
+function variantPreviewLabel(
+  definition: ComponentDefinition,
+  values: Record<string, string>,
+): string {
+  const axes = (definition.variants ?? []).filter((axis) => axis.values.length > 0);
+  const base = axes.every((axis) => values[axis.name] === axis.values[0]);
+  if (base) return "Base";
+  return axes.map((axis) => values[axis.name]).join(" / ");
+}
+
+function variantPreviewRoot(
+  definition: ComponentDefinition,
+  values: Record<string, string>,
+): Node {
+  const key = variantPreviewKey(definition, values).replace(/[^A-Za-z0-9_-]/g, "_");
+  return applyOverrides(definition, {
+    ...createInstance(definition.id, { id: `${definition.id}-preview-${key}` }),
+    variant: values,
+  });
+}
+
+function ComponentVariantWorkspace({
+  definition,
+  activeVariant,
+  components,
+  activeWidth,
+  activeHeight,
+}: {
+  definition: ComponentDefinition;
+  activeVariant: Record<string, string> | undefined;
+  components: ComponentRegistry;
+  activeWidth: number;
+  activeHeight: number;
+}) {
+  const setActiveVariant = useStudioStore((state) => state.setActiveVariant);
+  const axes = (definition.variants ?? []).filter((axis) => axis.values.length > 0);
+  const combos = useMemo(() => variantPreviewCombinations(definition), [definition]);
+  if (axes.length === 0 || combos.length <= 1) return null;
+
+  const resolved = resolveVariant(definition, activeVariant);
+  const activeKey = variantPreviewKey(definition, resolved);
+  const previewCombos = combos.slice(0, MAX_VARIANT_PREVIEWS);
+  const hiddenCount = Math.max(0, combos.length - previewCombos.length);
+  const baseStyle: React.CSSProperties = {
+    position: "absolute",
+    left: activeWidth + 32,
+    top: 0,
+    width: Math.max(260, Math.min(520, activeWidth * 1.6)),
+    maxHeight: Math.max(320, activeHeight),
+    overflow: "auto",
+    padding: 12,
+    borderRadius: 8,
+    border: "1px solid rgba(148, 163, 184, 0.24)",
+    background: "rgba(19, 23, 32, 0.96)",
+    boxShadow: "0 18px 40px rgba(0, 0, 0, 0.28)",
+    color: "#cbd5e1",
+    fontFamily: "Inter, sans-serif",
+    pointerEvents: "auto",
+  };
+
+  return (
+    <div style={baseStyle}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <div style={{ color: "#f8fafc", fontSize: 12, fontWeight: 600 }}>
+          {definition.name} variants
+        </div>
+        <div style={{ marginLeft: "auto", color: "#94a3b8", fontSize: 10 }}>
+          {combos.length} states
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {previewCombos.map((values) => {
+          const key = variantPreviewKey(definition, values);
+          const active = key === activeKey;
+          const previewRoot = variantPreviewRoot(definition, values);
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                for (const axis of axes) setActiveVariant(axis.name, values[axis.name]);
+              }}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                minWidth: 0,
+                padding: 8,
+                borderRadius: 6,
+                border: `1px solid ${active ? "#7c83ff" : "rgba(148, 163, 184, 0.24)"}`,
+                background: active ? "rgba(124, 131, 255, 0.16)" : "rgba(255, 255, 255, 0.03)",
+                color: active ? "#aeb4ff" : "#cbd5e1",
+                textAlign: "left",
+              }}
+            >
+              <span
+                style={{
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
+              >
+                {variantPreviewLabel(definition, values)}
+              </span>
+              <span
+                style={{
+                  display: "block",
+                  height: 84,
+                  overflow: "hidden",
+                  borderRadius: 4,
+                  background: "#ffffff",
+                  pointerEvents: "none",
+                }}
+              >
+                <span
+                  style={{
+                    display: "block",
+                    transform: "scale(0.5)",
+                    transformOrigin: "top left",
+                    width: "200%",
+                    height: "200%",
+                  }}
+                >
+                  <FrameRenderer root={previewRoot} components={components} />
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {hiddenCount > 0 && (
+        <div style={{ marginTop: 10, color: "#94a3b8", fontSize: 10 }}>
+          {hiddenCount} more states hidden for performance
+        </div>
+      )}
     </div>
   );
 }
@@ -161,7 +342,10 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     const editingComponentId = useDocumentStore((s) => s.editingComponentId);
     // The component registry expands any instances in this frame to primitives.
     const components = useDocumentStore((s) => s.components);
+    const activeVariant = useStudioStore((state) => state.activeVariant);
     const outOfFocus = !!editingComponentId && shape.props.rootId !== editingComponentId;
+    const editingDefinition =
+      editingComponentId === shape.props.rootId ? components[shape.props.rootId] : undefined;
     // A frame is "live" (full render) when selected or large enough on screen;
     // otherwise it falls back to the proxy. Reactive to zoom + selection.
     const selected = useValue(
@@ -184,7 +368,7 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
         style={{
           width: shape.props.w,
           height: shape.props.h,
-          overflow: "hidden",
+          overflow: editingDefinition ? "visible" : "hidden",
           backgroundColor: "#ffffff",
           opacity: outOfFocus ? 0 : 1,
           // Let tldraw handle selection/drag; inner RN content is preview-only.
@@ -208,6 +392,15 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
         )}
         {root && live && layoutResult && (
           <LayerOverlay root={root} result={layoutResult} active={interactive} />
+        )}
+        {editingDefinition && !outOfFocus && live && (
+          <ComponentVariantWorkspace
+            definition={editingDefinition}
+            activeVariant={activeVariant}
+            components={components}
+            activeWidth={shape.props.w}
+            activeHeight={shape.props.h}
+          />
         )}
       </HTMLContainer>
     );

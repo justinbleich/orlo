@@ -115,7 +115,7 @@ type GitFileStatus = {
 
 type GitStatus =
   | { status: "loading" }
-  | { status: "ready"; branch: string; clean: boolean; files: GitFileStatus[] }
+  | { status: "ready"; repoPath: string; branch: string; clean: boolean; files: GitFileStatus[] }
   | { status: "error"; message: string };
 
 type OpenDocumentResult = {
@@ -124,6 +124,7 @@ type OpenDocumentResult = {
   root: Node;
   components?: import("@rn-canvas/document").ComponentRegistry;
   tokens?: import("@rn-canvas/document").TokenRegistry;
+  repoPath?: string;
   targetPath: string;
   sidecarPath: string;
 };
@@ -131,6 +132,7 @@ type OpenDocumentResult = {
 type ImportSourceResult = {
   screenName: string;
   root: Node;
+  repoPath?: string;
   sourcePath: string;
   sidecarPath: string;
 };
@@ -295,6 +297,10 @@ export default function App() {
   const [codegenBusy, setCodegenBusy] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle" });
   const [gitStatus, setGitStatus] = useState<GitStatus>({ status: "loading" });
+  const [repoPath, setRepoPath] = useState("");
+  const [repoDraft, setRepoDraft] = useState("");
+  const [repoError, setRepoError] = useState<string | null>(null);
+  const [repoBusy, setRepoBusy] = useState(false);
   const [canvasCanUndo, setCanvasCanUndo] = useState(false);
   const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
@@ -343,8 +349,13 @@ export default function App() {
       const res = await fetch("/api/git/status");
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      if (body.repoPath) {
+        setRepoPath(body.repoPath);
+        setRepoDraft((draft) => draft || body.repoPath);
+      }
       setGitStatus({
         status: "ready",
+        repoPath: body.repoPath ?? repoPath,
         branch: body.branch ?? "unknown",
         clean: !!body.clean,
         files: Array.isArray(body.files) ? body.files : [],
@@ -355,13 +366,62 @@ export default function App() {
         message: error instanceof Error ? error.message : "Git status failed",
       });
     }
+  }, [repoPath]);
+
+  const loadRepo = useCallback(async () => {
+    try {
+      const res = await fetch("/api/repo");
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      setRepoPath(body.repoPath ?? "");
+      setRepoDraft(body.repoPath ?? "");
+    } catch (error) {
+      setRepoError(error instanceof Error ? error.message : "Repository load failed");
+    }
   }, []);
 
+  const connectRepo = useCallback(async () => {
+    setRepoBusy(true);
+    setRepoError(null);
+    try {
+      const res = await fetch("/api/repo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repoPath: repoDraft }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      const nextPath = body.repoPath ?? repoDraft;
+      setRepoPath(nextPath);
+      setRepoDraft(nextPath);
+      if (body.git) {
+        setGitStatus({
+          status: "ready",
+          repoPath: body.git.repoPath ?? nextPath,
+          branch: body.git.branch ?? "unknown",
+          clean: !!body.git.clean,
+          files: Array.isArray(body.git.files) ? body.git.files : [],
+        });
+      } else {
+        await refreshGitStatus();
+      }
+      skipNextPathSyncRef.current = true;
+      setStatus(`Connected ${nextPath}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Repository connection failed";
+      setRepoError(message);
+      setStatus(message);
+    } finally {
+      setRepoBusy(false);
+    }
+  }, [refreshGitStatus, repoDraft]);
+
   useEffect(() => {
+    void loadRepo();
     void refreshGitStatus();
     const timer = setInterval(() => void refreshGitStatus(), 5_000);
     return () => clearInterval(timer);
-  }, [refreshGitStatus]);
+  }, [loadRepo, refreshGitStatus]);
 
   // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
   // beside the sidecar whenever the token registry changes. Debounced and
@@ -810,6 +870,10 @@ export default function App() {
       );
       resetCanvasHistory();
       setScreenName(opened.screenName);
+      if (opened.repoPath) {
+        setRepoPath(opened.repoPath);
+        setRepoDraft(opened.repoPath);
+      }
       setTargetPath(opened.targetPath);
       setSidecarPath(opened.sidecarPath);
       setCodegenResult(null);
@@ -845,6 +909,10 @@ export default function App() {
       );
       resetCanvasHistory();
       setScreenName(imported.screenName);
+      if (imported.repoPath) {
+        setRepoPath(imported.repoPath);
+        setRepoDraft(imported.repoPath);
+      }
       setTargetPath(imported.sourcePath);
       setSidecarPath(imported.sidecarPath);
       setCodegenResult(null);
@@ -1181,6 +1249,47 @@ export default function App() {
                   <Eyebrow>Code</Eyebrow>
                   <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
                     <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                      <span style={{ color: color.inkDim, fontSize: text.xs }}>
+                        Connected repo
+                      </span>
+                      <input
+                        value={repoDraft}
+                        onChange={(e) => setRepoDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void connectRepo();
+                          else if (e.key === "Escape") setRepoDraft(repoPath);
+                        }}
+                        placeholder="/path/to/app"
+                        spellCheck={false}
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <div style={{ display: "flex", gap: space.xs }}>
+                      <button
+                        type="button"
+                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                        disabled={repoBusy || !repoDraft.trim()}
+                        onClick={() => void connectRepo()}
+                      >
+                        <FolderOpen size={14} aria-hidden="true" /> Connect
+                      </button>
+                      <button
+                        type="button"
+                        title="Refresh Git status"
+                        style={iconBtn}
+                        onClick={() => void refreshGitStatus()}
+                      >
+                        <RefreshCw size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                    {repoError && (
+                      <p style={{ color: color.amber, fontSize: text.xs, margin: 0 }}>
+                        {repoError}
+                      </p>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
                       <span style={{ color: color.inkDim, fontSize: text.xs }}>Document</span>
                       <input
                         value={sidecarPath}
@@ -1266,6 +1375,20 @@ export default function App() {
                         <div style={{ color: color.inkFaint, fontSize: text.xs }}>
                           {gitLabel}
                         </div>
+                        {repoPath && (
+                          <div
+                            title={repoPath}
+                            style={{
+                              color: color.inkFaint,
+                              fontSize: text.xs,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {repoPath}
+                          </div>
+                        )}
                       </div>
                       <button
                         type="button"

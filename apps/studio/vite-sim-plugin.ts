@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const pluginDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(pluginDir, "../..");
-const defaultExportDir = join(repoRoot, "generated");
+let activeRepoRoot = repoRoot;
 
 type CodegenRequest = {
   root?: Node;
@@ -39,6 +39,10 @@ type ExternalSourceRequest = {
 type TokensSaveRequest = {
   sidecarPath?: string;
   tokens?: TokenRegistry;
+};
+
+type RepoRequest = {
+  repoPath?: string;
 };
 
 type GitFileStatus = {
@@ -101,18 +105,35 @@ function safeComponentName(input = "Screen") {
   return /^[A-Z][A-Za-z0-9_$]*$/.test(name) ? name : "Screen";
 }
 
+function pathInRoot(root: string, path: string) {
+  const rel = relative(root, path);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+async function resolveRepoRoot(input?: string) {
+  if (!input?.trim()) throw new Error("Enter a repository path");
+  const root = resolve(isAbsolute(input) ? input : join(repoRoot, input));
+  await access(root);
+  const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: root,
+    maxBuffer: 1024 * 1024,
+  });
+  return stdout.trim();
+}
+
 function resolveTargetPath(screenName: string, targetPath?: string) {
+  const root = activeRepoRoot;
   const base = targetPath?.trim()
     ? isAbsolute(targetPath)
       ? targetPath
-      : join(repoRoot, targetPath)
-    : join(defaultExportDir, `${screenName}.tsx`);
+      : join(root, targetPath)
+    : join(root, "generated", `${screenName}.tsx`);
   const tsxPath = resolve(base);
-  if (relative(repoRoot, tsxPath).startsWith("..")) {
-    throw new Error("Sync path must stay inside the workspace");
+  if (!pathInRoot(root, tsxPath)) {
+    throw new Error("Sync path must stay inside the connected repository");
   }
   if (extname(tsxPath) !== ".tsx") {
-    throw new Error("Export path must end in .tsx");
+    throw new Error("Code path must end in .tsx");
   }
   const sidecarPath = tsxPath.replace(/\.tsx$/, ".rncanvas.json");
   return { tsxPath, sidecarPath };
@@ -120,9 +141,10 @@ function resolveTargetPath(screenName: string, targetPath?: string) {
 
 function resolveSidecarPath(input?: string) {
   if (!input?.trim()) throw new Error("Enter a sidecar path");
-  const sidecarPath = resolve(isAbsolute(input) ? input : join(repoRoot, input));
-  if (relative(repoRoot, sidecarPath).startsWith("..")) {
-    throw new Error("Sidecar path must stay inside the workspace");
+  const root = activeRepoRoot;
+  const sidecarPath = resolve(isAbsolute(input) ? input : join(root, input));
+  if (!pathInRoot(root, sidecarPath)) {
+    throw new Error("Sidecar path must stay inside the connected repository");
   }
   if (!sidecarPath.endsWith(".rncanvas.json")) {
     throw new Error("Sidecar path must end in .rncanvas.json");
@@ -132,9 +154,10 @@ function resolveSidecarPath(input?: string) {
 
 function resolveExternalSourcePath(input?: string) {
   if (!input?.trim()) throw new Error("Enter a React Native source path");
-  const sourcePath = resolve(isAbsolute(input) ? input : join(repoRoot, input));
-  if (relative(repoRoot, sourcePath).startsWith("..")) {
-    throw new Error("Source path must stay inside the workspace");
+  const root = activeRepoRoot;
+  const sourcePath = resolve(isAbsolute(input) ? input : join(root, input));
+  if (!pathInRoot(root, sourcePath)) {
+    throw new Error("Source path must stay inside the connected repository");
   }
   if (![".tsx", ".jsx"].includes(extname(sourcePath))) {
     throw new Error("Source path must end in .tsx or .jsx");
@@ -228,8 +251,9 @@ async function parseExternalSource(sourcePath: string) {
 }
 
 async function readGitStatus() {
-  const { stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "-b"], {
-    cwd: repoRoot,
+  const root = activeRepoRoot;
+  const { stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "-b", "-uall"], {
+    cwd: root,
     maxBuffer: 1024 * 1024,
   });
   const lines = stdout.split("\n").filter(Boolean);
@@ -244,6 +268,7 @@ async function readGitStatus() {
     files.push({ path, index, workingTree });
   }
   return {
+    repoPath: root,
     branch: branchLine.replace(/^##\s*/, ""),
     clean: files.length === 0,
     files,
@@ -275,8 +300,9 @@ export function simScreenshotPlugin(): Plugin {
           const paths = resolveTargetPath(screenName, body.targetPath);
           sendJson(res, 200, {
             ...generated,
-            targetPath: relative(repoRoot, paths.tsxPath),
-            sidecarPath: relative(repoRoot, paths.sidecarPath),
+            repoPath: activeRepoRoot,
+            targetPath: relative(activeRepoRoot, paths.tsxPath),
+            sidecarPath: relative(activeRepoRoot, paths.sidecarPath),
           });
         } catch (error) {
           sendJson(res, 400, {
@@ -308,7 +334,7 @@ export function simScreenshotPlugin(): Plugin {
             for (const component of generated.components) {
               const filePath = join(componentsDir, component.fileName);
               await writeFile(filePath, `${component.code}\n`);
-              componentPaths.push(relative(repoRoot, filePath));
+              componentPaths.push(relative(activeRepoRoot, filePath));
             }
           }
           // Write the shared theme module at the export root (next to the screen).
@@ -316,12 +342,13 @@ export function simScreenshotPlugin(): Plugin {
           if (generated.theme) {
             const filePath = join(exportDir, generated.theme.fileName);
             await writeFile(filePath, `${generated.theme.code}\n`);
-            themePath = relative(repoRoot, filePath);
+            themePath = relative(activeRepoRoot, filePath);
           }
           sendJson(res, 200, {
             ...generated,
-            targetPath: relative(repoRoot, paths.tsxPath),
-            sidecarPath: relative(repoRoot, paths.sidecarPath),
+            repoPath: activeRepoRoot,
+            targetPath: relative(activeRepoRoot, paths.tsxPath),
+            sidecarPath: relative(activeRepoRoot, paths.sidecarPath),
             componentPaths,
             themePath,
             wrote: true,
@@ -344,8 +371,9 @@ export function simScreenshotPlugin(): Plugin {
           const document = await openDocument(sidecarPath);
           sendJson(res, 200, {
             ...document,
-            sidecarPath: relative(repoRoot, sidecarPath),
-            targetPath: relative(repoRoot, sidecarPath).replace(/\.rncanvas\.json$/, ".tsx"),
+            repoPath: activeRepoRoot,
+            sidecarPath: relative(activeRepoRoot, sidecarPath),
+            targetPath: relative(activeRepoRoot, sidecarPath).replace(/\.rncanvas\.json$/, ".tsx"),
           });
         } catch (error) {
           sendJson(res, 400, {
@@ -363,9 +391,10 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<ExternalSourceRequest>(req);
           const sourcePath = resolveExternalSourcePath(body.sourcePath);
           const document = await parseExternalSource(sourcePath);
-          const relativeSourcePath = relative(repoRoot, sourcePath);
+          const relativeSourcePath = relative(activeRepoRoot, sourcePath);
           sendJson(res, 200, {
             ...document,
+            repoPath: activeRepoRoot,
             sourcePath: relativeSourcePath,
             sidecarPath: relativeSourcePath.replace(/\.(tsx|jsx)$/, ".rncanvas.json"),
           });
@@ -392,10 +421,34 @@ export function simScreenshotPlugin(): Plugin {
           const themePath = join(dirname(sidecarPath), theme.fileName);
           await mkdir(dirname(themePath), { recursive: true });
           await writeFile(themePath, `${theme.code}\n`);
-          sendJson(res, 200, { themePath: relative(repoRoot, themePath), wrote: true });
+          sendJson(res, 200, { themePath: relative(activeRepoRoot, themePath), wrote: true });
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Token save failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/repo", async (req, res) => {
+        try {
+          if (req.method === "GET") {
+            sendJson(res, 200, { repoPath: activeRepoRoot, defaultRepoPath: repoRoot });
+            return;
+          }
+          if (req.method !== "POST") {
+            sendJson(res, 405, { error: "GET or POST required" });
+            return;
+          }
+          const body = await readRequestJson<RepoRequest>(req);
+          activeRepoRoot = await resolveRepoRoot(body.repoPath);
+          sendJson(res, 200, {
+            repoPath: activeRepoRoot,
+            defaultRepoPath: repoRoot,
+            git: await readGitStatus(),
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Repository connection failed",
           });
         }
       });

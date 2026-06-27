@@ -61,6 +61,7 @@ export const space = {
 } as const;
 
 export const radius = {
+  xs: 'var(--radius-xs)',
   sm: 'var(--radius-sm)',
   base: 'var(--radius)',
   lg: 'var(--radius-lg)',
@@ -71,7 +72,7 @@ export const radius = {
 export const layout = {
   topbar: 50,
   rail: 52,
-  leftPanel: 246,
+  leftPanel: 286,
   rightColumn: 336,
   groundTruth: 300,
   workspaceMin: 960,

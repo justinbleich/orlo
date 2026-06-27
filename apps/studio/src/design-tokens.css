@@ -25,33 +25,35 @@
 }
 
 :root {
-  /* --- Chrome surfaces (dark) ------------------------------------------------
-     Layered from deepest (canvas backdrop) to raised (active controls).        */
-  --canvas:    #14161B;   /* infinite-canvas backdrop, deepest layer            */
-  --chrome:    #1B1E25;   /* bars + panels                                       */
-  --chrome-2:  #21252E;   /* controls, inputs, segmented backgrounds             */
-  --raised:    #272C36;   /* raised / active control state                       */
-  --line:      #2E333E;   /* borders + dividers                                  */
-  --line-soft: #262B34;   /* subtle internal dividers                            */
+  color-scheme: light;
+
+  /* --- Chrome surfaces (light) ----------------------------------------------
+     Layered from the project shell to quiet controls. Artboards stay separate. */
+  --canvas:    #F6F7FB;   /* infinite-canvas backdrop, deepest layer            */
+  --chrome:    #FFFFFF;   /* bars + panels                                       */
+  --chrome-2:  #F8F9FC;   /* controls, inputs, segmented backgrounds             */
+  --raised:    #F1F3F8;   /* raised / active control state                       */
+  --line:      #E4E7EF;   /* borders + dividers                                  */
+  --line-soft: #EEF1F6;   /* subtle internal dividers                            */
 
   /* --- Ink (text) ----------------------------------------------------------- */
-  --ink:       #F1F3F7;   /* primary text                                        */
-  --ink-dim:   #B4BCCB;   /* secondary text, inactive controls                   */
-  --ink-faint: #858F9F;   /* tertiary text, micro-labels                         */
+  --ink:       #172033;   /* primary text                                        */
+  --ink-dim:   #5E697E;   /* secondary text, inactive controls                   */
+  --ink-faint: #98A2B3;   /* tertiary text, micro-labels                         */
 
   /* --- Accents — each color has ONE job. Do not repurpose. ------------------
      ACCENT (indigo) = selection, primary action, interactive, agent presence.
      LIVE  (green)   = RESERVED for live / ground-truth / simulator / Fast
                        Refresh signals ONLY. Never use it as a generic accent.
      AMBER           = caution / diff / disabled-warning, used sparingly.        */
-  --accent:      #6E7CFF;
-  --accent-soft: rgba(110,124,255,.15);   /* accent fills/backgrounds           */
-  --accent-line: rgba(110,124,255,.50);   /* accent borders/outlines            */
+  --accent:      #5B4DFF;
+  --accent-soft: rgba(91,77,255,.10);     /* accent fills/backgrounds           */
+  --accent-line: rgba(91,77,255,.34);     /* accent borders/outlines            */
 
-  --live:        #41D08B;
-  --live-soft:   rgba(65,208,139,.14);
+  --live:        #16A66A;
+  --live-soft:   rgba(22,166,106,.12);
 
-  --amber:       #E7A94B;
+  --amber:       #B7791F;
 
   /* --- Artboard scaffolding (light) ----------------------------------------
      For the FRAME's own neutral chrome only (status bar, default bg, hairlines).
@@ -101,19 +103,19 @@
   /* --- Region dimensions (see STUDIO-UI.md) --------------------------------- */
   --h-topbar:       50px;
   --w-rail:         52px;
-  --w-left-panel:   246px;
+  --w-left-panel:   286px;
   --w-right-column: 336px;
   --h-ground-truth: 300px;
   --w-workspace-min:  960px;
 
   /* --- Compact chrome details --------------------------------------------- */
   --size-swatch: 18px;
-  --checker-color: #888888;
+  --checker-color: #C8CED8;
   --checker-size: 8px;
   --canvas-grid-line: 1px;
   --canvas-grid-step: 8px;
-  --shadow-control: 0 1px 2px rgba(0,0,0,.25);
-  --shadow-popover: 0 8px 24px rgba(0,0,0,.40);
+  --shadow-control: 0 1px 2px rgba(17,24,39,.08);
+  --shadow-popover: 0 18px 44px rgba(17,24,39,.14);
 }
 
 /* Micro-label convention: the "pro tool" register used for panel headers. */

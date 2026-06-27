@@ -319,7 +319,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           instance={primary}
           definition={componentRegistry[primary.componentId]}
         />
-        {error && <p className="px-md text-sm text-live">{error}</p>}
+        {error && <p className="px-md text-sm text-amber">{error}</p>}
       </Shell>
     );
   }
@@ -1068,7 +1068,7 @@ function InstanceProperties({
           </FieldGrid>
         </Section>
       )}
-      {error && <p className="px-md text-sm text-live">{error}</p>}
+      {error && <p className="px-md text-sm text-amber">{error}</p>}
     </>
   );
 }
@@ -1220,7 +1220,7 @@ function VariantControls({
             )}
           </div>
         )}
-        {err && <p className="m-0 text-xs text-live">{err}</p>}
+        {err && <p className="m-0 text-xs text-amber">{err}</p>}
       </div>
     </Section>
   );

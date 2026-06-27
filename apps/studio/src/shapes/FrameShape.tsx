@@ -26,6 +26,7 @@ import {
 } from "@rn-canvas/render-web";
 import { LayerOverlay } from "../LayerOverlay";
 import { useStudioStore } from "../studio-store";
+import { color, font, radius, space, text } from "../studio-theme";
 
 // Below this on-screen width the rnw detail isn't legible, so we render a cheap
 // proxy instead of running Yoga + react-native-web. (PRD §7.2 LOD / §8: keep only a
@@ -43,9 +44,9 @@ function LODProxy({ w, h, label }: { w: number; h: number; label: string }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f1f3f5",
-        color: "#8b93a1",
-        fontFamily: "sans-serif",
+        background: color.art2,
+        color: color.artDim,
+        fontFamily: font.sans,
         fontSize: Math.max(12, Math.min(w, h) * 0.12),
       }}
     >
@@ -127,23 +128,23 @@ function ComponentVariantWorkspace({
     width: Math.max(260, Math.min(520, activeWidth * 1.6)),
     maxHeight: Math.max(320, activeHeight),
     overflow: "auto",
-    padding: 12,
-    borderRadius: 8,
-    border: "1px solid rgba(148, 163, 184, 0.24)",
-    background: "rgba(19, 23, 32, 0.96)",
-    boxShadow: "0 18px 40px rgba(0, 0, 0, 0.28)",
-    color: "#cbd5e1",
-    fontFamily: "Inter, sans-serif",
+    padding: space.md,
+    borderRadius: radius.base,
+    border: `1px solid ${color.line}`,
+    background: color.chrome,
+    boxShadow: "var(--shadow-popover)",
+    color: color.inkDim,
+    fontFamily: font.sans,
     pointerEvents: "auto",
   };
 
   return (
     <div style={baseStyle}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <div style={{ color: "#f8fafc", fontSize: 12, fontWeight: 600 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: space.sm, marginBottom: space.sm }}>
+        <div style={{ color: color.ink, fontSize: text.sm, fontWeight: 600 }}>
           {definition.name} variants
         </div>
-        <div style={{ marginLeft: "auto", color: "#94a3b8", fontSize: 10 }}>
+        <div style={{ marginLeft: "auto", color: color.inkFaint, fontSize: text["2xs"] }}>
           {combos.length} states
         </div>
       </div>
@@ -151,7 +152,7 @@ function ComponentVariantWorkspace({
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-          gap: 10,
+          gap: space.sm,
         }}
       >
         {previewCombos.map((values) => {
@@ -168,13 +169,13 @@ function ComponentVariantWorkspace({
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 8,
+                gap: space.sm,
                 minWidth: 0,
-                padding: 8,
-                borderRadius: 6,
-                border: `1px solid ${active ? "#7c83ff" : "rgba(148, 163, 184, 0.24)"}`,
-                background: active ? "rgba(124, 131, 255, 0.16)" : "rgba(255, 255, 255, 0.03)",
-                color: active ? "#aeb4ff" : "#cbd5e1",
+                padding: space.sm,
+                borderRadius: radius.sm,
+                border: `1px solid ${active ? color.accentLine : color.line}`,
+                background: active ? color.accentSoft : color.chrome2,
+                color: active ? color.accent : color.inkDim,
                 textAlign: "left",
               }}
             >
@@ -184,7 +185,7 @@ function ComponentVariantWorkspace({
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
-                  fontSize: 10,
+                  fontSize: text["2xs"],
                   fontWeight: 600,
                 }}
               >
@@ -195,8 +196,8 @@ function ComponentVariantWorkspace({
                   display: "block",
                   height: 84,
                   overflow: "hidden",
-                  borderRadius: 4,
-                  background: "#ffffff",
+                  borderRadius: radius.xs,
+                  background: color.art,
                   pointerEvents: "none",
                 }}
               >
@@ -217,7 +218,7 @@ function ComponentVariantWorkspace({
         })}
       </div>
       {hiddenCount > 0 && (
-        <div style={{ marginTop: 10, color: "#94a3b8", fontSize: 10 }}>
+        <div style={{ marginTop: space.sm, color: color.inkFaint, fontSize: text["2xs"] }}>
           {hiddenCount} more states hidden for performance
         </div>
       )}

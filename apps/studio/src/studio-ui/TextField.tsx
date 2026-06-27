@@ -12,13 +12,18 @@ export function TextField({
   onEditStart,
   onEditEnd,
   onEditCancel,
+  className,
+  onFocus,
+  onBlur,
+  onKeyDown,
+  ...props
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
   id?: string;
-} & EditLifecycle) {
+} & EditLifecycle & Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange" | "value">) {
   return (
     <input
       id={id}
@@ -26,16 +31,24 @@ export function TextField({
       value={value}
       placeholder={placeholder}
       disabled={disabled}
-      onFocus={onEditStart}
-      onBlur={onEditEnd}
+      {...props}
+      onFocus={(event) => {
+        onEditStart?.();
+        onFocus?.(event);
+      }}
+      onBlur={(event) => {
+        onEditEnd?.();
+        onBlur?.(event);
+      }}
       onChange={(e) => {
         onEditStart?.();
         onChange(e.target.value);
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape") onEditCancel?.();
+        onKeyDown?.(event);
       }}
-      className={cn(controlClass, "placeholder:text-ink-faint")}
+      className={cn(controlClass, "placeholder:text-ink-faint", className)}
     />
   );
 }

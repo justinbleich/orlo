@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Bell,
   FileCode2,
   FileJson2,
   FolderOpen,
+  GitPullRequest,
+  HelpCircle,
+  Play,
   RefreshCw,
   Redo2,
   Save,
+  Share2,
+  Smartphone,
   Undo2,
 } from "lucide-react";
 import {
@@ -22,6 +28,7 @@ import {
   findRootContaining,
   getParent,
   useDocumentStore,
+  type DesignToken,
   type Node,
   type NodeId,
   type RNPrimitive,
@@ -31,6 +38,7 @@ import { Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { color, layout, radius, space, text } from "./studio-theme";
 import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
+import { Button, Field, IconButton, Section, StatusPill, TextField, cn } from "./studio-ui";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
@@ -117,6 +125,8 @@ type GitStatus =
   | { status: "loading" }
   | { status: "ready"; repoPath: string; branch: string; clean: boolean; files: GitFileStatus[] }
   | { status: "error"; message: string };
+
+type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
 
 type OpenDocumentResult = {
   version: 1;
@@ -276,6 +286,128 @@ function stepCanvasHistory(editor: Editor, direction: "undo" | "redo") {
   }
 }
 
+function FlowWorkspace({ roots }: { roots: Node[] }) {
+  const screens = roots.filter((root) => !useDocumentStore.getState().editingComponentId || root.id !== useDocumentStore.getState().editingComponentId);
+  return (
+    <div className="studio-chrome flex h-full flex-col bg-canvas">
+      <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
+        <div className="flex flex-col">
+          <span className="text-sm font-semibold text-ink">Onboarding Flow</span>
+          <span className="text-xs text-ink-faint">User signs up and lands in the feed.</span>
+        </div>
+        <div className="ml-auto flex items-center gap-xs">
+          <Button>Fit</Button>
+          <Button>Routes</Button>
+          <IconButton title="Add screen">
+            <PlusIcon />
+          </IconButton>
+        </div>
+      </div>
+      <div className="relative flex-1 overflow-auto p-2xl">
+        <div className="flex min-w-max items-start gap-2xl">
+          {screens.map((root, index) => {
+            const { w, h } = rootSize(root);
+            return (
+              <div key={root.id} className="relative flex flex-col items-center gap-sm">
+                {index > 0 && (
+                  <div className="absolute -left-2xl top-28 h-px w-2xl bg-accent-line" aria-hidden="true" />
+                )}
+                <div className="text-xs font-medium text-ink-dim">
+                  {root.design?.name ?? `Screen ${index + 1}`}
+                </div>
+                <div className="flex h-64 w-36 items-center justify-center rounded-sm border border-line bg-chrome shadow-control">
+                  <div className="flex flex-col items-center gap-xs text-center">
+                    <Smartphone size={20} className="text-accent" aria-hidden="true" />
+                    <span className="text-xs text-ink">{w} x {h}</span>
+                    <span className="text-2xs text-ink-faint">{root.type}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {screens.length === 0 && (
+            <div className="rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
+              Add a screen to start mapping the flow.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DesignSystemWorkspace({ tokens }: { tokens: DesignToken[] }) {
+  const grouped = {
+    color: tokens.filter((token) => token.category === "color"),
+    spacing: tokens.filter((token) => token.category === "spacing"),
+    fontSize: tokens.filter((token) => token.category === "fontSize"),
+  };
+  return (
+    <div className="studio-chrome flex h-full flex-col bg-canvas">
+      <div className="flex items-center gap-md border-b border-line bg-chrome px-lg py-sm">
+        <div className="flex flex-col">
+          <span className="text-sm font-semibold text-ink">Tokens</span>
+          <span className="text-xs text-ink-faint">Define reusable color, spacing, and type values.</span>
+        </div>
+        <div className="ml-auto flex items-center gap-xs">
+          {["All", "Colors", "Typography", "Spacing", "Radius"].map((tab, index) => (
+            <button
+              key={tab}
+              type="button"
+              className={cn(
+                "h-7 rounded-sm px-sm text-xs transition-colors",
+                index === 0 ? "bg-accent-soft text-accent" : "text-ink-dim hover:bg-raised hover:text-ink",
+              )}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto p-xl">
+        <div className="mx-auto flex max-w-4xl flex-col gap-lg">
+          <TokenTable title="Colors" tokens={grouped.color} />
+          <TokenTable title="Spacing Scale" tokens={grouped.spacing} />
+          <TokenTable title="Type Scale" tokens={grouped.fontSize} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TokenTable({ title, tokens }: { title: string; tokens: DesignToken[] }) {
+  return (
+    <section className="rounded-sm border border-line bg-chrome shadow-control">
+      <div className="flex items-center border-b border-line-soft px-md py-sm">
+        <span className="text-sm font-semibold text-ink">{title}</span>
+        <span className="ml-auto text-xs text-ink-faint">{tokens.length} tokens</span>
+      </div>
+      <div className="divide-y divide-line-soft">
+        {tokens.length === 0 ? (
+          <div className="px-md py-lg text-sm text-ink-faint">No tokens yet.</div>
+        ) : (
+          tokens.map((token) => (
+            <div key={token.id} className="grid grid-cols-[minmax(0,1fr)_96px_1fr] items-center gap-md px-md py-sm text-sm">
+              <span className="min-w-0 truncate font-mono text-xs text-ink">{token.name}</span>
+              <span className="text-xs text-ink-dim">{String(token.value)}</span>
+              <span className="h-2 rounded-pill bg-accent-soft">
+                <span
+                  className="block h-full rounded-pill bg-accent/35"
+                  style={{ width: token.category === "color" ? "32%" : `${Math.min(100, Number(token.value) || 16)}%` }}
+                />
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function PlusIcon() {
+  return <span className="text-base leading-none">+</span>;
+}
+
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
@@ -286,7 +418,8 @@ export default function App() {
   const syncRootIdRef = useRef<NodeId | null>(null);
 
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
-  const [inspectorTab, setInspectorTab] = useState("Design");
+  const [inspectorTab, setInspectorTab] = useState("Inspect");
+  const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
   const [screenName, setScreenName] = useState("Screen");
   const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
   const [sidecarPath, setSidecarPath] = useState("generated/Screen.rncanvas.json");
@@ -310,6 +443,7 @@ export default function App() {
   const selection = useDocumentStore((s) => s.selection);
   const editingComponentId = useDocumentStore((s) => s.editingComponentId);
   const componentRegistry = useDocumentStore((s) => s.components);
+  const tokens = useDocumentStore((s) => s.tokens);
   const editingComponentName = editingComponentId
     ? componentRegistry[editingComponentId]?.name ?? "Component"
     : null;
@@ -1002,34 +1136,6 @@ export default function App() {
     scheduleAutoSync();
   }, [screenName, targetPath, scheduleAutoSync]);
 
-  const btn: React.CSSProperties = {
-    background: color.chrome2,
-    color: color.ink,
-    border: `1px solid ${color.line}`,
-    borderRadius: radius.base,
-    padding: `${space.xs} ${space.md}`,
-    fontSize: text.sm,
-  };
-  const iconBtn: React.CSSProperties = {
-    ...btn,
-    width: 28,
-    height: 28,
-    padding: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  };
-  // Top-bar placeholders (structure only; controls fill in across phases).
-  const crumbStyle: React.CSSProperties = { color: color.inkDim, fontSize: text.base };
-  const fieldStyle: React.CSSProperties = {
-    background: color.chrome2,
-    color: color.ink,
-    border: `1px solid ${color.line}`,
-    borderRadius: radius.base,
-    padding: `${space.xs} ${space.sm}`,
-    fontSize: text.sm,
-    width: "100%",
-  };
   const syncLabel =
     syncState.status === "scheduled"
       ? "Sync pending"
@@ -1041,6 +1147,10 @@ export default function App() {
             ? "Sync failed"
             : "Ready";
   const gitLabel = gitSummary(gitStatus);
+  const gitTone =
+    gitStatus.status === "error" ? "amber" : gitStatus.status === "ready" && !gitStatus.clean ? "accent" : "neutral";
+  const syncTone =
+    syncState.status === "error" ? "amber" : syncState.status === "syncing" || syncState.status === "scheduled" ? "accent" : "neutral";
 
   return (
     <div
@@ -1054,170 +1164,150 @@ export default function App() {
     >
       {/* TOP BAR */}
       <header
-        className="studio-chrome"
+        className="studio-chrome flex items-center gap-lg border-b border-line bg-chrome px-xl"
         style={{
-          flex: `0 0 ${layout.topbar}px`,
-          height: layout.topbar,
-          padding: `0 ${space.lg}`,
-          background: color.chrome,
-          borderBottom: `1px solid ${color.line}`,
-          display: "flex",
-          alignItems: "center",
-          gap: space.md,
+          flex: "0 0 64px",
+          height: 64,
         }}
       >
-        <strong style={{ color: color.ink, fontSize: text.lg }}>RN Canvas</strong>
-        <span style={crumbStyle}>Untitled</span>
-        <div style={{ display: "flex", gap: space.xs }}>
-          <button
-            type="button"
-            style={iconBtn}
+        <div className="flex min-w-0 flex-col">
+          <div className="flex min-w-0 items-baseline gap-xs">
+            <strong className="text-xl font-semibold text-ink">{workspace} Workspace</strong>
+            <span className="truncate text-lg text-ink-dim">
+              {workspace === "Screen"
+                ? "Design a screen"
+                : workspace === "Component"
+                  ? "Build reusable components"
+                  : workspace === "Flow"
+                    ? "Design navigation and journeys"
+                    : "Define the visual language"}
+            </span>
+          </div>
+          <span className="truncate text-xs text-ink-faint">
+            Runcaster / feature/new-onboarding
+          </span>
+        </div>
+        <div className="ml-auto flex min-w-0 items-center gap-sm">
+          <Button className="min-w-32 justify-between" title="Device preset">
+            <Smartphone size={14} aria-hidden="true" />
+            iPhone 15 Pro
+          </Button>
+          <IconButton title="Preview">
+            <Play size={15} aria-hidden="true" />
+          </IconButton>
+          <Button title="Share">
+            <Share2 size={14} aria-hidden="true" /> Share
+          </Button>
+          <Button
+            variant="primary"
+            disabled={codegenBusy || !focusedRoot}
+            title="Sync files and prepare implementation changes"
+            onClick={() => void requestCodegen("sync")}
+          >
+            <GitPullRequest size={14} aria-hidden="true" /> Create PR
+          </Button>
+          <IconButton title="Notifications">
+            <Bell size={15} aria-hidden="true" />
+          </IconButton>
+          <IconButton title="Help">
+            <HelpCircle size={15} aria-hidden="true" />
+          </IconButton>
+        </div>
+        <div className="flex items-center gap-xs border-l border-line-soft pl-md">
+          <IconButton
             disabled={!undoAvailable}
             onClick={undoLatest}
             title="Undo"
           >
             <Undo2 size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            style={iconBtn}
+          </IconButton>
+          <IconButton
             disabled={!redoAvailable}
             onClick={redoLatest}
             title="Redo"
           >
             <Redo2 size={16} aria-hidden="true" />
-          </button>
+          </IconButton>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: space.sm }}>
-          <span
+        <div className="flex min-w-0 items-center gap-sm">
+          <StatusPill
+            tone={gitTone}
             title={gitStatus.status === "error" ? gitStatus.message : gitLabel}
-            style={{
-              color:
-                gitStatus.status === "ready" && !gitStatus.clean
-                  ? color.ink
-                  : gitStatus.status === "error"
-                    ? color.amber
-                    : color.inkFaint,
-              fontSize: text.xs,
-              maxWidth: 180,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
           >
             {gitLabel}
-          </span>
-          <span
+          </StatusPill>
+          <StatusPill
+            tone={syncTone}
             title={syncState.status === "error" ? syncState.message : syncLabel}
-            style={{
-              color: syncState.status === "error" ? color.amber : color.inkFaint,
-              fontSize: text.xs,
-              maxWidth: 220,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
           >
             {syncLabel}
-          </span>
-          <button
-            type="button"
-            style={btn}
-            disabled={codegenBusy || !focusedRoot}
-            title="Sync the canvas document with React Native files"
-            onClick={() => void requestCodegen("sync")}
-          >
-            Sync now
-          </button>
+          </StatusPill>
         </div>
       </header>
 
       {/* WORKBENCH: left panel · canvas (with floating bottom toolbar) · right column */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <LeftPanel onAddFrame={addFrame} />
+        <LeftPanel
+          workspace={workspace}
+          onWorkspaceChange={setWorkspace}
+          onAddFrame={addFrame}
+        />
 
-        <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <ToolRail
-            onSelect={selectTool}
-            onAddFrame={addFrame}
-            // A primitive can be armed whenever there's any screen to draw into —
-            // the target frame is resolved from the cursor, not a prior selection.
-            canAddPrimitive={Object.keys(roots).length > 0}
-          />
-          {editingComponentName && (
-            <div
-              data-testid="component-edit-banner"
-              className="studio-chrome"
-              style={{
-                position: "absolute",
-                top: space.md,
-                left: "50%",
-                transform: "translateX(-50%)",
-                zIndex: 10,
-                display: "flex",
-                alignItems: "center",
-                gap: space.md,
-                padding: `${space.xs} ${space.md}`,
-                borderRadius: radius.pill,
-                border: `1px solid ${color.accentLine}`,
-                background: color.raised,
-                color: color.ink,
-                fontSize: text.sm,
-                boxShadow: "var(--shadow-popover)",
-              }}
-            >
-              <span>
-                Component / <strong>{editingComponentName}</strong>
-              </span>
-              <span style={{ color: color.inkFaint }}>Focused definition</span>
-              <button
-                type="button"
-                onClick={() => useDocumentStore.getState().endComponentEdit(false)}
-                style={{ border: 0, background: "transparent", color: color.inkDim, fontSize: text.sm, cursor: "pointer" }}
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          {workspace === "Flow" ? (
+            <FlowWorkspace roots={Object.values(roots)} />
+          ) : workspace === "Design System" ? (
+            <DesignSystemWorkspace tokens={Object.values(tokens)} />
+          ) : (
+            <>
+              <ToolRail
+                onSelect={selectTool}
+                onAddFrame={addFrame}
+                // A primitive can be armed whenever there's any screen to draw into —
+                // the target frame is resolved from the cursor, not a prior selection.
+                canAddPrimitive={Object.keys(roots).length > 0}
+              />
+              {editingComponentName && (
+                <div
+                  data-testid="component-edit-banner"
+                  className="studio-chrome absolute left-1/2 top-md z-10 flex -translate-x-1/2 items-center gap-md rounded-pill border border-accent-line bg-chrome px-md py-xs text-sm text-ink shadow-popover"
+                >
+                  <span>
+                    Component / <strong>{editingComponentName}</strong>
+                  </span>
+                  <span className="text-ink-faint">Focused definition</span>
+                  <Button
+                    variant="ghost"
+                    onClick={() => useDocumentStore.getState().endComponentEdit(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => useDocumentStore.getState().endComponentEdit(true)}
+                  >
+                    Done
+                  </Button>
+                </div>
+              )}
+              <div
+                data-testid="rn-canvas-surface"
+                className="relative min-h-0 flex-1"
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => useDocumentStore.getState().endComponentEdit(true)}
-                style={{
-                  border: `1px solid ${color.accent}`,
-                  background: color.accent,
-                  color: color.chrome,
-                  borderRadius: radius.sm,
-                  padding: `${space.xs} ${space.sm}`,
-                  fontSize: text.sm,
-                  cursor: "pointer",
-                }}
-              >
-                Done
-              </button>
-            </div>
+                <Tldraw
+                  onMount={onMount}
+                  shapeUtils={shapeUtils}
+                  components={components}
+                  overrides={overrides}
+                />
+              </div>
+              <div className="studio-chrome flex flex-none items-center gap-md border-t border-line bg-chrome px-md py-xs text-sm">
+                <span className="eyebrow">AI Implementation Simulator</span>
+                <div className="h-px flex-1 bg-line-soft" aria-hidden="true" />
+                <span className="truncate text-ink-dim">{status}</span>
+              </div>
+            </>
           )}
-          <div
-            data-testid="rn-canvas-surface"
-            style={{ position: "relative", flex: 1, minHeight: 0 }}
-          >
-            <Tldraw
-              onMount={onMount}
-              shapeUtils={shapeUtils}
-              components={components}
-              overrides={overrides}
-            />
-          </div>
-          <div
-            className="studio-chrome"
-            style={{
-              flex: "0 0 auto",
-              padding: `${space.xs} ${space.md}`,
-              borderTop: `1px solid ${color.line}`,
-              background: color.chrome,
-              color: color.inkDim,
-              fontSize: text.sm,
-            }}
-          >
-            {status}
-          </div>
         </div>
 
         {/* RIGHT COLUMN: canvas/code inspector. Optional native preview is on demand. */}
@@ -1236,17 +1326,17 @@ export default function App() {
             <div style={{ padding: space.md, paddingBottom: 0 }}>
               {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
               <Tabs
-                tabs={["Design", "Code"]}
+                tabs={["Inspect", "Props", "Code", "History"]}
                 active={inspectorTab}
                 onSelect={setInspectorTab}
               />
             </div>
             <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-              {inspectorTab === "Design" ? (
+              {inspectorTab === "Inspect" || inspectorTab === "Props" ? (
                 <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
                   <Inspector rootId={focusedRootId} />
                 </ErrorBoundary>
-              ) : (
+              ) : inspectorTab === "Code" ? (
                 <div
                   style={{
                     padding: space.md,
@@ -1258,188 +1348,134 @@ export default function App() {
                   }}
                 >
                   <Eyebrow>Code</Eyebrow>
-                  <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
-                    <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                      <span style={{ color: color.inkDim, fontSize: text.xs }}>
-                        Connected repo
-                      </span>
-                      <input
+                  <Section title="Repository">
+                    <Field label="Connected repo" stacked>
+                      <TextField
                         value={repoDraft}
-                        onChange={(e) => setRepoDraft(e.target.value)}
+                        onChange={setRepoDraft}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") void connectRepo();
                           else if (e.key === "Escape") setRepoDraft(repoPath);
                         }}
                         placeholder="/path/to/app"
                         spellCheck={false}
-                        style={fieldStyle}
                       />
-                    </label>
-                    <div style={{ display: "flex", gap: space.xs }}>
-                      <button
-                        type="button"
-                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                    </Field>
+                    <div className="flex gap-xs">
+                      <Button
+                        className="flex-1"
                         disabled={repoBusy || codegenBusy || !repoDraft.trim()}
                         onClick={() => void connectRepo()}
                       >
                         <FolderOpen size={14} aria-hidden="true" /> Connect
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <IconButton
                         title="Refresh Git status"
-                        style={iconBtn}
                         onClick={() => void refreshGitStatus()}
                       >
                         <RefreshCw size={14} aria-hidden="true" />
-                      </button>
+                      </IconButton>
                     </div>
                     {repoError && (
-                      <p style={{ color: color.amber, fontSize: text.xs, margin: 0 }}>
+                      <p className="m-0 text-xs text-amber">
                         {repoError}
                       </p>
                     )}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
-                    <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                      <span style={{ color: color.inkDim, fontSize: text.xs }}>Document</span>
-                      <input
+                  </Section>
+                  <Section title="Document">
+                    <Field label="Sidecar" stacked>
+                      <TextField
                         value={sidecarPath}
-                        onChange={(e) => setSidecarPath(e.target.value)}
-                        style={fieldStyle}
+                        onChange={setSidecarPath}
                       />
-                    </label>
-                    <div style={{ display: "flex", gap: space.xs }}>
-                      <button
-                        type="button"
-                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                    </Field>
+                    <div className="flex gap-xs">
+                      <Button
+                        className="flex-1"
                         disabled={codegenBusy}
                         onClick={() => void openSidecar()}
                       >
                         <FolderOpen size={14} aria-hidden="true" /> Open
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                      </Button>
+                      <Button
+                        className="flex-1"
                         disabled={codegenBusy}
                         onClick={() => void importSource()}
                       >
                         <RefreshCw size={14} aria-hidden="true" /> Import
-                      </button>
+                      </Button>
                     </div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
-                    <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                      <span style={{ color: color.inkDim, fontSize: text.xs }}>Screen</span>
-                      <input
+                  </Section>
+                  <Section title="Output">
+                    <Field label="Screen" stacked>
+                      <TextField
                         value={screenName}
-                        onChange={(e) => setScreenName(e.target.value)}
+                        onChange={setScreenName}
                         onBlur={() => void requestCodegen("preview")}
-                        style={fieldStyle}
                       />
-                    </label>
-                    <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                      <span style={{ color: color.inkDim, fontSize: text.xs }}>Code path</span>
-                      <input
+                    </Field>
+                    <Field label="Code path" stacked>
+                      <TextField
                         value={targetPath}
-                        onChange={(e) => setTargetPath(e.target.value)}
-                        style={fieldStyle}
+                        onChange={setTargetPath}
                       />
-                    </label>
-                    <div style={{ display: "flex", gap: space.xs }}>
-                      <button
-                        type="button"
-                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                    </Field>
+                    <div className="flex gap-xs">
+                      <Button
+                        className="flex-1"
                         disabled={codegenBusy || !focusedRoot}
                         onClick={() => void requestCodegen("preview")}
                       >
                         <FileCode2 size={14} aria-hidden="true" /> Preview
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        className="flex-1"
                         disabled={codegenBusy || !focusedRoot}
                         onClick={() => void requestCodegen("sync")}
                       >
                         <Save size={14} aria-hidden="true" /> Sync
-                      </button>
+                      </Button>
                     </div>
-                  </div>
+                  </Section>
                   {codegenError && (
-                    <p style={{ color: color.amber, fontSize: text.sm, margin: 0 }}>
+                    <p className="m-0 rounded-sm border border-amber/40 bg-amber/10 px-sm py-xs text-xs text-amber">
                       {codegenError}
                     </p>
                   )}
-                  <div
-                    style={{
-                      border: `1px solid ${color.line}`,
-                      borderRadius: radius.base,
-                      background: color.chrome2,
-                      padding: space.sm,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: space.xs,
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: space.sm }}>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ color: color.ink, fontSize: text.sm }}>Repository</div>
-                        <div style={{ color: color.inkFaint, fontSize: text.xs }}>
-                          {gitLabel}
-                        </div>
+                  <div className="flex flex-col gap-xs rounded-sm border border-line bg-chrome-2 p-sm">
+                    <div className="flex items-center gap-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-ink">Repository</div>
+                        <div className="text-xs text-ink-faint">{gitLabel}</div>
                         {repoPath && (
                           <div
                             title={repoPath}
-                            style={{
-                              color: color.inkFaint,
-                              fontSize: text.xs,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
+                            className="truncate text-xs text-ink-faint"
                           >
                             {repoPath}
                           </div>
                         )}
                       </div>
-                      <button
-                        type="button"
+                      <IconButton
                         title="Refresh Git status"
-                        style={iconBtn}
                         onClick={() => void refreshGitStatus()}
                       >
                         <RefreshCw size={14} aria-hidden="true" />
-                      </button>
+                      </IconButton>
                     </div>
                     {gitStatus.status === "ready" && !gitStatus.clean && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                      <div className="flex flex-col gap-xs">
                         {gitStatus.files.slice(0, 8).map((file) => (
                           <div
                             key={`${file.index}${file.workingTree}-${file.path}`}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: space.xs,
-                              color: color.inkDim,
-                              fontSize: text.xs,
-                            }}
+                            className="flex items-center gap-xs text-xs text-ink-dim"
                           >
-                            <span
-                              style={{
-                                flex: "0 0 auto",
-                                color: color.inkFaint,
-                                textTransform: "uppercase",
-                              }}
-                            >
+                            <span className="shrink-0 uppercase text-ink-faint">
                               {gitFileStatusLabel(file)}
                             </span>
                             <span
-                              style={{
-                                minWidth: 0,
-                                flex: 1,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
+                              className="min-w-0 flex-1 truncate"
                               title={file.path}
                             >
                               {file.path}
@@ -1447,25 +1483,25 @@ export default function App() {
                           </div>
                         ))}
                         {gitStatus.files.length > 8 && (
-                          <div style={{ color: color.inkFaint, fontSize: text.xs }}>
+                          <div className="text-xs text-ink-faint">
                             +{gitStatus.files.length - 8} more
                           </div>
                         )}
                       </div>
                     )}
                     {gitStatus.status === "error" && (
-                      <p style={{ margin: 0, color: color.amber, fontSize: text.xs }}>
+                      <p className="m-0 text-xs text-amber">
                         {gitStatus.message}
                       </p>
                     )}
                   </div>
                   {codegenResult ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: space.sm, minHeight: 0 }}>
-                      <p style={{ color: color.inkFaint, fontSize: text.xs, margin: 0 }}>
+                    <div className="flex min-h-0 flex-col gap-sm">
+                      <p className="m-0 text-xs text-ink-faint">
                         {codegenResult.wrote ? "Synced" : "Previewing"} {artifacts.length}{" "}
                         {artifacts.length === 1 ? "file" : "files"}.
                       </p>
-                      <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                      <div className="flex flex-col gap-xs">
                         {artifacts.map((artifact) => {
                           const active = artifact.id === activeArtifact?.id;
                           const Icon = artifact.kind === "json" ? FileJson2 : FileCode2;
@@ -1474,22 +1510,15 @@ export default function App() {
                               key={artifact.id}
                               type="button"
                               onClick={() => setActiveArtifactId(artifact.id)}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: space.xs,
-                                width: "100%",
-                                border: `1px solid ${active ? color.accentLine : color.line}`,
-                                borderRadius: radius.base,
-                                background: active ? color.accentSoft : color.chrome2,
-                                color: active ? color.accent : color.inkDim,
-                                padding: `${space.xs} ${space.sm}`,
-                                textAlign: "left",
-                                fontSize: text.xs,
-                              }}
+                              className={cn(
+                                "flex h-7 w-full items-center gap-xs rounded-sm border px-sm text-left text-xs transition-colors",
+                                active
+                                  ? "border-accent-line bg-accent-soft text-accent"
+                                  : "border-line bg-chrome-2 text-ink-dim hover:bg-raised hover:text-ink",
+                              )}
                             >
                               <Icon size={14} aria-hidden="true" />
-                              <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              <span className="min-w-0 flex-1 truncate">
                                 {artifact.label}
                               </span>
                             </button>
@@ -1497,63 +1526,33 @@ export default function App() {
                         })}
                       </div>
                       {activeArtifact && (
-                        <div style={{ display: "flex", flexDirection: "column", minHeight: 260, flex: 1 }}>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: space.xs,
-                              border: `1px solid ${color.line}`,
-                              borderBottom: 0,
-                              borderRadius: `${radius.base} ${radius.base} 0 0`,
-                              background: color.chrome2,
-                              color: color.ink,
-                              padding: `${space.xs} ${space.sm}`,
-                              fontSize: text.xs,
-                            }}
-                          >
-                            <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <div className="flex min-h-[260px] flex-1 flex-col">
+                          <div className="flex items-center gap-xs rounded-t-sm border border-line border-b-0 bg-chrome-2 px-sm py-xs text-xs text-ink">
+                            <span className="min-w-0 flex-1 truncate">
                               {activeArtifact.path}
                             </span>
-                            <span style={{ color: color.inkFaint, textTransform: "uppercase" }}>
+                            <span className="uppercase text-ink-faint">
                               {activeArtifact.kind}
                             </span>
                           </div>
-                          <pre
-                            style={{
-                              margin: 0,
-                              flex: 1,
-                              minHeight: 0,
-                              padding: space.md,
-                              background: color.canvas,
-                              border: `1px solid ${color.line}`,
-                              borderRadius: `0 0 ${radius.base} ${radius.base}`,
-                              color: color.inkDim,
-                              fontSize: text.xs,
-                              lineHeight: 1.55,
-                              overflow: "auto",
-                              whiteSpace: "pre-wrap",
-                            }}
-                          >
+                          <pre className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-b-sm border border-line bg-canvas p-md text-xs leading-[1.55] text-ink-dim">
                             {activeArtifact.code}
                           </pre>
                         </div>
                       )}
                     </div>
                   ) : (
-                    <div
-                      style={{
-                        border: `1px solid ${color.line}`,
-                        borderRadius: radius.base,
-                        background: color.chrome2,
-                        color: color.inkFaint,
-                        fontSize: text.sm,
-                        padding: space.md,
-                      }}
-                    >
+                    <div className="rounded-sm border border-line bg-chrome-2 p-md text-sm text-ink-faint">
                       Preview or sync to inspect code-linked files.
                     </div>
                   )}
+                </div>
+              ) : (
+                <div className="flex flex-1 flex-col gap-sm p-md text-sm text-ink-faint">
+                  <Eyebrow>History</Eyebrow>
+                  <div className="rounded-sm border border-line bg-chrome-2 p-md">
+                    Changes, AI activity, and PR readiness will appear here as the implementation workflow lands.
+                  </div>
                 </div>
               )}
             </div>

@@ -14,6 +14,7 @@ export { TokenColorField, type ColorTokenOption } from "./TokenColorField";
 export { TokenNumberField, type NumberTokenOption } from "./TokenNumberField";
 export { TokenPickerPopover, type TokenPickerOption } from "./TokenPickerPopover";
 export { IconButton, IconToggle } from "./IconButton";
+export { Button, StatusPill } from "./Button";
 export { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 export { Select, type SelectOption } from "./Select";
 export type { EditLifecycle } from "./controls";

@@ -3,14 +3,11 @@
  * only; each region's functional UI fills in as its phase lands. Chrome only:
  * everything here is theme-token-styled and never touches RN artboard content.
  */
-import { useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  ChevronDown,
-  ChevronRight,
   Component,
   Frame,
   Image,
@@ -44,6 +41,8 @@ import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
 import { TokensPanel } from "./TokensPanel";
 
+type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
+
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
 }
@@ -72,15 +71,7 @@ export function Tabs({
   onSelect: (t: string) => void;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: space.xs,
-        padding: space.xs,
-        background: color.chrome2,
-        borderRadius: radius.base,
-      }}
-    >
+    <div className="flex gap-xs rounded-sm border border-line/60 bg-chrome-2 p-2xs">
       {tabs.map((t) => {
         const on = t === active;
         return (
@@ -88,16 +79,11 @@ export function Tabs({
             key={t}
             type="button"
             onClick={() => onSelect(t)}
-            style={{
-              flex: 1,
-              padding: `${space.xs} ${space.sm}`,
-              border: "none",
-              borderRadius: radius.sm,
-              background: on ? color.raised : "transparent",
-              color: on ? color.ink : color.inkDim,
-              fontSize: text.xs,
-              fontWeight: 600,
-            }}
+            className={cn(
+              "h-6 flex-1 rounded-xs px-sm text-xs font-semibold transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+              on ? "bg-raised text-ink shadow-control" : "text-ink-dim hover:text-ink",
+            )}
           >
             {t}
           </button>
@@ -286,55 +272,16 @@ const panelIconButton: React.CSSProperties = {
   flex: "0 0 auto",
 };
 
-function NavigatorSection({
-  label,
-  open,
-  onToggle,
-  action,
-  children,
+/** Project navigation: real document objects organized in designer language. */
+export function LeftPanel({
+  workspace,
+  onWorkspaceChange,
+  onAddFrame,
 }: {
-  label: string;
-  open: boolean;
-  onToggle: () => void;
-  action?: React.ReactNode;
-  children: React.ReactNode;
+  workspace: WorkspaceMode;
+  onWorkspaceChange: (workspace: WorkspaceMode) => void;
+  onAddFrame: () => void;
 }) {
-  const Chevron = open ? ChevronDown : ChevronRight;
-  return (
-    <section style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-      <div style={{ display: "flex", alignItems: "center", gap: space.xs }}>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          style={{
-            border: 0,
-            padding: 0,
-            background: "transparent",
-            color: color.inkFaint,
-            display: "flex",
-            alignItems: "center",
-            gap: space.xs,
-            flex: 1,
-            textAlign: "left",
-          }}
-        >
-          <Chevron size={13} aria-hidden="true" />
-          <Eyebrow>{label}</Eyebrow>
-        </button>
-        {action}
-      </div>
-      {open && children}
-    </section>
-  );
-}
-
-/** Document navigation. Screens and the focused root's Layers stay visible together. */
-export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
-  const [screensOpen, setScreensOpen] = useState(true);
-  const [layersOpen, setLayersOpen] = useState(true);
-  const [componentsOpen, setComponentsOpen] = useState(true);
-  const [tokensOpen, setTokensOpen] = useState(true);
   const roots = useDocumentStore((state) => state.roots);
   const selection = useDocumentStore((state) => state.selection);
   const setSelection = useDocumentStore((state) => state.setSelection);
@@ -418,84 +365,146 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
     deleteNodes(focusedRoot.id, [selectedId]);
   }
 
+  const sidebarItem =
+    "flex h-7 min-w-0 items-center gap-xs rounded-sm px-sm text-left text-sm transition-colors";
+  const activeItem = "bg-accent-soft text-accent";
+  const inactiveItem = "text-ink-dim hover:bg-raised hover:text-ink";
+
   return (
     <aside
-      className="studio-chrome"
+      className="studio-chrome flex border-r border-line bg-chrome"
       style={{
         flex: `0 0 ${layout.leftPanel}px`,
         width: layout.leftPanel,
-        background: color.chrome,
-        borderRight: `1px solid ${color.line}`,
-        display: "flex",
-        flexDirection: "column",
-        gap: space.md,
-        padding: space.md,
-        overflowY: "auto",
       }}
     >
-      <NavigatorSection
-        label="Screens"
-        open={screensOpen}
-        onToggle={() => setScreensOpen((open) => !open)}
-        action={
-          <button type="button" style={panelIconButton} onClick={onAddFrame} title="Add screen">
-            <Plus size={16} aria-hidden="true" />
-          </button>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+      <div className="flex w-14 shrink-0 flex-col items-center gap-sm border-r border-line-soft py-md">
+        <div className="flex size-8 items-center justify-center rounded-sm bg-accent text-chrome text-sm font-semibold">
+          RN
+        </div>
+        <button
+          type="button"
+          title="Project"
+          className={cn("flex size-8 items-center justify-center rounded-sm", activeItem)}
+        >
+          <Frame size={15} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          title="Simulator"
+          className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
+        >
+          <MousePointerClick size={15} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          title="Changes"
+          onClick={() => onWorkspaceChange("Flow")}
+          className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
+        >
+          <MoveVertical size={15} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          title="Assets"
+          onClick={() => onWorkspaceChange("Design System")}
+          className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
+        >
+          <Image size={15} aria-hidden="true" />
+        </button>
+        <div className="flex-1" />
+        <button
+          type="button"
+          title="Settings"
+          className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
+        >
+          <Square size={15} aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="flex min-w-0 flex-1 flex-col gap-md overflow-y-auto p-md">
+        <div className="flex min-w-0 flex-col">
+          <div className="text-sm font-semibold text-ink">Runcaster</div>
+          <div className="truncate text-2xs text-accent">feature/new-onboarding</div>
+        </div>
+
+        <section className="flex flex-col gap-xs">
+          <div className="flex items-center gap-xs">
+            <Eyebrow>Flows</Eyebrow>
+            <div className="flex-1" />
+            <Plus size={12} className="text-ink-faint" aria-hidden="true" />
+          </div>
+          {["Onboarding Flow", "Main App Flow", "Auth Flow"].map((flow, index) => (
+            <button
+              key={flow}
+              type="button"
+              onClick={() => onWorkspaceChange("Flow")}
+              className={cn(sidebarItem, workspace === "Flow" && index === 0 ? activeItem : inactiveItem)}
+            >
+              <List size={13} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{flow}</span>
+            </button>
+          ))}
+        </section>
+
+        <section className="flex flex-col gap-xs">
+          <div className="flex items-center gap-xs">
+            <Eyebrow>Screens</Eyebrow>
+            <div className="flex-1" />
+            <button type="button" style={panelIconButton} onClick={onAddFrame} title="Add screen">
+              <Plus size={16} aria-hidden="true" />
+            </button>
+          </div>
           {rootList
             .filter((root) => root.id !== editingComponentId)
             .map((root, index) => {
-            const active = root.id === focusedRoot?.id;
-            const locked = !!root.design?.locked;
-            return (
-              <div key={root.id} style={{ display: "flex", gap: space.xs }}>
-                <button
-                  type="button"
-                  disabled={locked}
-                  onClick={() => setSelection([root.id])}
-                  style={{
-                    ...panelButton,
-                    flex: 1,
-                    textAlign: "left",
-                    background: active ? color.accent : color.chrome2,
-                    color: root.design?.hidden ? color.inkFaint : color.ink,
-                  }}
-                >
-                  {root.design?.name ?? `Screen ${index + 1}`}
-                </button>
-                <button
-                  type="button"
-                  disabled={locked}
-                  onClick={() => deleteScreen(root.id)}
-                  style={panelIconButton}
-                  title="Delete screen"
-                >
-                  <Trash2 size={15} aria-hidden="true" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </NavigatorSection>
-      <hr className="m-0 border-0 border-t border-line-soft" aria-hidden="true" />
-      <NavigatorSection
-        label="Layers"
-        open={layersOpen}
-        onToggle={() => setLayersOpen((open) => !open)}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
+              const active = root.id === focusedRoot?.id && workspace === "Screen";
+              const locked = !!root.design?.locked;
+              return (
+                <div key={root.id} className="flex gap-xs">
+                  <button
+                    type="button"
+                    disabled={locked}
+                    onClick={() => {
+                      setSelection([root.id]);
+                      onWorkspaceChange("Screen");
+                    }}
+                    className={cn(sidebarItem, "flex-1", active ? activeItem : inactiveItem, locked && "cursor-not-allowed opacity-50")}
+                  >
+                    <Square size={13} aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {root.design?.name ?? `Screen ${index + 1}`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={locked}
+                    onClick={() => deleteScreen(root.id)}
+                    style={panelIconButton}
+                    title="Delete screen"
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                  </button>
+                </div>
+              );
+            })}
+        </section>
+
+        <section className="flex flex-col gap-xs">
+          <div className="flex items-center gap-xs">
+            <Eyebrow>Layers</Eyebrow>
+            <div className="flex-1" />
+          </div>
           {focusedRoot ? (
             <>
-              <div style={{ background: color.chrome2, borderRadius: radius.base, padding: space.xs }}>
+              <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
                 <DocumentTree
                   node={focusedRoot}
                   rootId={focusedRoot.id}
                   selectedIds={selection}
                 />
               </div>
-              <div style={{ display: "flex", gap: space.xs }}>
+              <div className="flex gap-xs">
                 <button
                   type="button"
                   style={panelIconButton}
@@ -503,11 +512,7 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                   disabled={reverse ? !canMoveAfter : !canMoveBefore}
                   title={horizontal ? "Move left" : "Move up"}
                 >
-                  {horizontal ? (
-                    <ArrowLeft size={16} aria-hidden="true" />
-                  ) : (
-                    <ArrowUp size={16} aria-hidden="true" />
-                  )}
+                  {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
                 </button>
                 <button
                   type="button"
@@ -516,11 +521,7 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                   disabled={reverse ? !canMoveBefore : !canMoveAfter}
                   title={horizontal ? "Move right" : "Move down"}
                 >
-                  {horizontal ? (
-                    <ArrowRight size={16} aria-hidden="true" />
-                  ) : (
-                    <ArrowDown size={16} aria-hidden="true" />
-                  )}
+                  {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
                 </button>
                 <button
                   type="button"
@@ -543,49 +544,39 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
               </div>
             </>
           ) : (
-            <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
-              Select a screen to inspect its layers.
-            </p>
+            <p className="m-0 text-sm text-ink-faint">Select a screen to inspect its layers.</p>
           )}
-        </div>
-      </NavigatorSection>
-      <hr className="m-0 border-0 border-t border-line-soft" aria-hidden="true" />
-      <NavigatorSection
-        label="Components"
-        open={componentsOpen}
-        onToggle={() => setComponentsOpen((open) => !open)}
-      >
-        {componentList.length === 0 ? (
-          <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
-            Select a layer and “Create component” to add one.
-          </p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-            {componentList.map((comp) => {
+        </section>
+
+        <section className="flex flex-col gap-xs">
+          <div className="flex items-center gap-xs">
+            <Eyebrow>Components</Eyebrow>
+          </div>
+          {componentList.length === 0 ? (
+            <p className="m-0 text-sm text-ink-faint">Select a layer and “Create component” to add one.</p>
+          ) : (
+            componentList.map((comp) => {
               const armed = armedComponentId === comp.id;
               return (
-                <div key={comp.id} style={{ display: "flex", gap: space.xs }}>
+                <div key={comp.id} className="flex gap-xs">
                   <button
                     type="button"
-                    onClick={() => setArmedComponent(armed ? null : comp.id)}
-                    title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
-                    style={{
-                      ...panelButton,
-                      flex: 1,
-                      textAlign: "left",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: space.xs,
-                      background: armed ? color.accent : color.chrome2,
-                      color: color.ink,
+                    onClick={() => {
+                      setArmedComponent(armed ? null : comp.id);
+                      onWorkspaceChange("Component");
                     }}
+                    title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
+                    className={cn(sidebarItem, "flex-1", workspace === "Component" || armed ? activeItem : inactiveItem)}
                   >
-                    <Component size={14} aria-hidden="true" />
-                    {comp.name}
+                    <Component size={13} aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">{comp.name}</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => beginComponentEdit(comp.id)}
+                    onClick={() => {
+                      beginComponentEdit(comp.id);
+                      onWorkspaceChange("Component");
+                    }}
                     style={panelIconButton}
                     title="Edit component"
                   >
@@ -601,34 +592,67 @@ export function LeftPanel({ onAddFrame }: { onAddFrame: () => void }) {
                   </button>
                 </div>
               );
-            })}
-          </div>
+            })
+          )}
+        </section>
+
+        <section className="flex flex-col gap-xs">
+          <Eyebrow>Design System</Eyebrow>
+          {["Tokens", "Typography", "Colors", "Spacing", "Radius"].map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => onWorkspaceChange("Design System")}
+              className={cn(sidebarItem, workspace === "Design System" && item === "Tokens" ? activeItem : inactiveItem)}
+            >
+              <Type size={13} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{item}</span>
+            </button>
+          ))}
+        </section>
+
+        <section className="flex flex-col gap-xs">
+          <Eyebrow>Assets</Eyebrow>
+          {["Images", "Icons", "Illustrations"].map((item) => (
+            <button key={item} type="button" className={cn(sidebarItem, inactiveItem)}>
+              <Image size={13} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{item}</span>
+            </button>
+          ))}
+        </section>
+
+        <section className="flex flex-col gap-xs">
+          <Eyebrow>Changes</Eyebrow>
+          <button type="button" onClick={() => onWorkspaceChange("Flow")} className={cn(sidebarItem, inactiveItem)}>
+            <MoveVertical size={13} aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">Activity and PR readiness</span>
+          </button>
+        </section>
+
+        {workspace === "Design System" && (
+          <section className="flex flex-col gap-sm border-t border-line-soft pt-md">
+            <div className="flex items-center gap-xs">
+              <Eyebrow>Token Quick Edit</Eyebrow>
+              <div className="flex-1" />
+              <Menu.Root>
+                <Menu.Trigger style={panelIconButton} title="Add token">
+                  <Plus size={16} aria-hidden="true" />
+                </Menu.Trigger>
+                <Menu.Portal>
+                  <Menu.Positioner side="bottom" align="end" sideOffset={6} className="z-50">
+                    <Menu.Popup className="studio-popup min-w-36 rounded-md border border-line bg-chrome p-control shadow-popover outline-none">
+                      <Menu.Item onClick={() => createToken("color")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Color</Menu.Item>
+                      <Menu.Item onClick={() => createToken("spacing")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Spacing</Menu.Item>
+                      <Menu.Item onClick={() => createToken("fontSize")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Font size</Menu.Item>
+                    </Menu.Popup>
+                  </Menu.Positioner>
+                </Menu.Portal>
+              </Menu.Root>
+            </div>
+            <TokensPanel onCreate={createToken} />
+          </section>
         )}
-      </NavigatorSection>
-      <hr className="m-0 border-0 border-t border-line-soft" aria-hidden="true" />
-      <NavigatorSection
-        label="Tokens"
-        open={tokensOpen}
-        onToggle={() => setTokensOpen((open) => !open)}
-        action={
-          <Menu.Root>
-            <Menu.Trigger style={panelIconButton} title="Add token">
-              <Plus size={16} aria-hidden="true" />
-            </Menu.Trigger>
-            <Menu.Portal>
-              <Menu.Positioner side="bottom" align="end" sideOffset={6} className="z-50">
-                <Menu.Popup className="studio-popup min-w-36 rounded-md border border-line bg-chrome p-control shadow-popover outline-none">
-                  <Menu.Item onClick={() => createToken("color")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Color</Menu.Item>
-                  <Menu.Item onClick={() => createToken("spacing")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Spacing</Menu.Item>
-                  <Menu.Item onClick={() => createToken("fontSize")} className="cursor-default rounded-sm px-sm py-menu-y text-sm text-ink-dim outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink">Font size</Menu.Item>
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
-          </Menu.Root>
-        }
-      >
-        <TokensPanel onCreate={createToken} />
-      </NavigatorSection>
+      </div>
     </aside>
   );
 }

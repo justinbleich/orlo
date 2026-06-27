@@ -1192,6 +1192,14 @@ function VariantControls({
                 for (const p of valuedProperties) setActiveVariant(p.name, values[p.name]);
               }}
             />
+            <VariantMatrix
+              definition={def}
+              properties={valuedProperties}
+              activeValues={activeValues}
+              onSelect={(values) => {
+                for (const p of valuedProperties) setActiveVariant(p.name, values[p.name]);
+              }}
+            />
             {!isDefault && selectedNodeId && (
               <div className="flex items-center justify-between gap-xs">
                 <span className="text-xs text-ink">Hide layer in this variant</span>
@@ -1360,6 +1368,97 @@ function PropertyEditor({
           spellCheck={false}
           className="h-6 w-24 flex-none rounded-xs border border-line bg-chrome-2 px-xs text-2xs text-ink placeholder:text-ink-faint outline-none focus-visible:border-accent-line focus-visible:bg-raised"
         />
+      </div>
+    </div>
+  );
+}
+
+function variantCombinations(
+  properties: { name: string; values: string[] }[],
+): Record<string, string>[] {
+  let combos: Record<string, string>[] = [{}];
+  for (const property of properties) {
+    combos = combos.flatMap((combo) =>
+      property.values.map((value) => ({ ...combo, [property.name]: value })),
+    );
+  }
+  return combos;
+}
+
+function variantKey(values: Record<string, string>, properties: { name: string }[]): string {
+  return properties.map((property) => `${property.name}:${values[property.name]}`).join("|");
+}
+
+function variantCellLabel(values: Record<string, string>, properties: { name: string }[]): string {
+  return properties.map((property) => values[property.name]).join(" / ");
+}
+
+function VariantMatrix({
+  definition,
+  properties,
+  activeValues,
+  onSelect,
+}: {
+  definition: ComponentDefinition;
+  properties: { name: string; values: string[] }[];
+  activeValues: Record<string, string>;
+  onSelect: (values: Record<string, string>) => void;
+}) {
+  const combos = variantCombinations(properties);
+  const overrideByKey = new Map(
+    (definition.combinations ?? []).map((combo) => [
+      variantKey(combo.values, properties),
+      combo.overrides.length,
+    ]),
+  );
+  const baseKey = variantKey(
+    Object.fromEntries(properties.map((property) => [property.name, property.values[0]])),
+    properties,
+  );
+  const activeKey = variantKey(activeValues, properties);
+
+  return (
+    <div className="flex flex-col gap-2xs">
+      <div className="flex items-center justify-between gap-xs">
+        <div className="eyebrow">Matrix</div>
+        <span className="text-2xs text-ink-faint">
+          {combos.length} {combos.length === 1 ? "state" : "states"}
+        </span>
+      </div>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2xs">
+        {combos.map((values) => {
+          const key = variantKey(values, properties);
+          const active = key === activeKey;
+          const base = key === baseKey;
+          const overrideCount = overrideByKey.get(key) ?? 0;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onSelect(values)}
+              className={cn(
+                "flex min-h-14 flex-col justify-between rounded-sm border p-xs text-left transition-colors",
+                active
+                  ? "border-accent-line bg-accent-soft text-accent"
+                  : overrideCount > 0
+                    ? "border-line bg-raised text-ink"
+                    : "border-line/70 bg-chrome-2 text-ink-dim hover:bg-raised hover:text-ink",
+              )}
+            >
+              <span className="min-w-0 truncate text-xs font-medium">
+                {base ? "Base" : variantCellLabel(values, properties)}
+              </span>
+              <span className="mt-xs flex items-center justify-between gap-xs text-2xs">
+                <span className={active ? "text-accent" : "text-ink-faint"}>
+                  {overrideCount > 0
+                    ? `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"}`
+                    : "No overrides"}
+                </span>
+                {active && <Check size={12} aria-hidden="true" />}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

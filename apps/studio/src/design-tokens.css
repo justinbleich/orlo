@@ -35,9 +35,9 @@
   --line-soft: #262B34;   /* subtle internal dividers                            */
 
   /* --- Ink (text) ----------------------------------------------------------- */
-  --ink:       #E7EAF0;   /* primary text                                        */
-  --ink-dim:   #98A1B1;   /* secondary text, inactive controls                   */
-  --ink-faint: #616B7B;   /* tertiary text, micro-labels                         */
+  --ink:       #F1F3F7;   /* primary text                                        */
+  --ink-dim:   #B4BCCB;   /* secondary text, inactive controls                   */
+  --ink-faint: #858F9F;   /* tertiary text, micro-labels                         */
 
   /* --- Accents — each color has ONE job. Do not repurpose. ------------------
      ACCENT (indigo) = selection, primary action, interactive, agent presence.
@@ -68,11 +68,16 @@
 
   /* Type scale (chrome). Artboard text uses its own sizes via RNStyle.         */
   --text-micro: 10px;   /* uppercase panel labels, tracking +0.10em             */
+  --text-2xs:   10px;   /* compact chips, metadata, and dense table values      */
   --text-xs:    11px;
   --text-sm:    12px;
   --text-base:  13px;
   --text-lg:    15px;
   --text-xl:    17px;
+
+  --leading-2xs: 12px;
+  --leading-xs:  14px;
+  --leading-sm:  16px;
 
   /* --- Spacing (4px base) --------------------------------------------------- */
   --space-xs:  4px;

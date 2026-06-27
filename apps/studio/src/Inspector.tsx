@@ -17,6 +17,7 @@ import {
   ArrowRight,
   ArrowUp,
   Boxes,
+  Check,
   Copy,
   Eye,
   EyeOff,
@@ -1129,21 +1130,27 @@ function VariantControls({
           .find((c) => valuedProperties.every((p) => c.values[p.name] === activeValues[p.name]))
           ?.overrides.find((o) => o.nodeId === selectedNodeId)?.hidden
       : false;
+  const activeVariantLabel = valuedProperties
+    .map((p) => `${p.name}: ${activeValues[p.name]}`)
+    .join(" / ");
 
   return (
     <Section title="Variants">
       <div className="flex flex-col gap-control">
-        {properties.map((property) => (
-          <PropertyEditor
-            key={property.name}
-            property={property}
-            onAddValue={(value) => run(() => addVariantValue(componentId, property.name, value))}
-            onRemoveValue={(value) => run(() => removeVariantValue(componentId, property.name, value))}
-            onRemove={() => run(() => removeVariantAxis(componentId, property.name))}
-          />
-        ))}
+        <div className="flex flex-col gap-2xs">
+          <div className="eyebrow">Define</div>
+          {properties.map((property) => (
+            <PropertyEditor
+              key={property.name}
+              property={property}
+              onAddValue={(value) => run(() => addVariantValue(componentId, property.name, value))}
+              onRemoveValue={(value) => run(() => removeVariantValue(componentId, property.name, value))}
+              onRemove={() => run(() => removeVariantAxis(componentId, property.name))}
+            />
+          ))}
 
-        <AddPropertyMenu onAdd={addProperty} />
+          <AddPropertyMenu onAdd={addProperty} />
+        </div>
 
         {properties.length > 0 && !canPick && (
           <p className="m-0 text-xs text-ink-faint">
@@ -1154,8 +1161,30 @@ function VariantControls({
         )}
 
         {canPick && (
-          <>
-            <div className="eyebrow pt-xs">You're editing</div>
+          <div className="flex flex-col gap-control border-t border-line/60 pt-sm">
+            <div className="flex items-center justify-between gap-xs">
+              <div className="eyebrow">Edit</div>
+              <span
+                className={cn(
+                  "rounded-xs border px-xs py-2xs text-2xs uppercase tracking-wide",
+                  isDefault
+                    ? "border-line bg-chrome-2 text-ink-dim"
+                    : "border-accent-line bg-accent-soft text-accent",
+                )}
+              >
+                {isDefault ? "Base" : "Override"}
+              </span>
+            </div>
+            <div className="rounded-sm border border-line bg-chrome-2 p-xs">
+              <div className="text-xs font-medium text-ink">
+                {isDefault ? "Base version" : activeVariantLabel}
+              </div>
+              <p className={cn("m-0 mt-2xs text-xs", isDefault ? "text-ink-faint" : "text-accent")}>
+                {isDefault
+                  ? "Base values define the component default."
+                  : "Style changes now apply only to this variant."}
+              </p>
+            </div>
             <VariantPicker
               properties={valuedProperties}
               activeValues={activeValues}
@@ -1163,13 +1192,6 @@ function VariantControls({
                 for (const p of valuedProperties) setActiveVariant(p.name, values[p.name]);
               }}
             />
-            <p className={cn("m-0 text-xs", isDefault ? "text-ink-faint" : "text-accent")}>
-              {isDefault
-                ? "You're editing the base version — pick another value to customize that variant."
-                : `Style changes now apply to the ${valuedProperties
-                    .map((p) => activeValues[p.name])
-                    .join(" · ")} variant.`}
-            </p>
             {!isDefault && selectedNodeId && (
               <div className="flex items-center justify-between gap-xs">
                 <span className="text-xs text-ink">Hide layer in this variant</span>
@@ -1188,7 +1210,7 @@ function VariantControls({
                 </IconToggle>
               </div>
             )}
-          </>
+          </div>
         )}
         {err && <p className="m-0 text-xs text-live">{err}</p>}
       </div>
@@ -1423,12 +1445,14 @@ function VariantPicker({
                           })
                         }
                         className={cn(
-                          "h-6 w-6 rounded-xs border transition-colors",
+                          "flex h-6 w-6 items-center justify-center rounded-xs border transition-colors",
                           active
-                            ? "border-accent-line bg-accent-soft"
+                            ? "border-accent-line bg-accent-soft text-accent"
                             : "border-line bg-chrome-2 hover:bg-raised",
                         )}
-                      />
+                      >
+                        {active && <Check size={12} aria-hidden="true" />}
+                      </button>
                     </td>
                   );
                 })}
@@ -1572,6 +1596,7 @@ function PropertiesControls({
             <PropertyRow
               key={prop.name}
               prop={prop}
+              template={definition.template}
               onRename={(nextName) => {
                 if (nextName === prop.name) return;
                 if (props.some((p) => p.name === nextName)) return;
@@ -1626,13 +1651,48 @@ const VALUE_TYPE_LABEL: Record<string, string> = {
   node: "Slot",
 };
 
+const TARGET_STYLE_LABEL: Record<string, string> = {
+  backgroundColor: "Fill",
+  borderColor: "Border",
+  color: "Text color",
+  fontSize: "Font size",
+  fontWeight: "Weight",
+  gap: "Gap",
+  height: "Height",
+  margin: "Margin",
+  opacity: "Opacity",
+  padding: "Padding",
+  borderRadius: "Radius",
+  width: "Width",
+};
+
+function layerLabel(template: Node, nodeId: NodeId): string {
+  const node = findNode(template, nodeId);
+  return node?.design?.name ?? node?.type ?? "Layer";
+}
+
+function propertyTargetLabel(
+  target: ComponentProp["targets"][number],
+  template: Node,
+): string {
+  const label = layerLabel(template, target.nodeId);
+  if (target.kind === "prop") return `${label}.${target.path}`;
+  if (target.kind === "style") {
+    return `${label}.${TARGET_STYLE_LABEL[target.styleKey] ?? target.styleKey}`;
+  }
+  if (target.kind === "visibility") return `${label}.Visible`;
+  return `${label}.Children`;
+}
+
 function PropertyRow({
   prop,
+  template,
   onRename,
   onDefault,
   onRemove,
 }: {
   prop: ComponentProp;
+  template: Node;
   onRename: (next: string) => void;
   onDefault: (value: OverrideValue | undefined) => void;
   onRemove: () => void;
@@ -1651,6 +1711,7 @@ function PropertyRow({
     }
     if (next !== prop.name) onRename(next);
   };
+  const targetLabels = prop.targets.map((target) => propertyTargetLabel(target, template));
   return (
     <div className="flex flex-col gap-2xs rounded-sm border border-line/40 p-xs">
       <div className="flex items-center gap-xs">
@@ -1668,16 +1729,32 @@ function PropertyRow({
           spellCheck={false}
           title="Property name"
           className={cn(
-            "h-6 min-w-0 flex-1 rounded-xs border border-transparent bg-transparent px-xs font-mono text-xs text-ink outline-none",
+            "h-6 min-w-0 flex-1 rounded-xs border border-transparent bg-transparent px-xs text-xs font-medium text-ink outline-none",
             "transition-colors hover:bg-chrome-2 focus-visible:border-accent-line focus-visible:bg-chrome-2",
           )}
         />
-        <span className="text-2xs uppercase tracking-wide text-ink-faint">
+        <span className="rounded-xs border border-line bg-chrome-2 px-xs py-2xs text-2xs uppercase tracking-wide text-ink-dim">
           {VALUE_TYPE_LABEL[prop.valueType] ?? prop.valueType}
         </span>
         <IconButton title={`Delete ${prop.name}`} onClick={onRemove}>
           <Trash2 size={13} aria-hidden="true" />
         </IconButton>
+      </div>
+      <div className="flex flex-wrap items-center gap-2xs">
+        <span className="text-2xs uppercase tracking-wide text-ink-faint">Bound to</span>
+        {targetLabels.length ? (
+          targetLabels.map((target) => (
+            <span
+              key={target}
+              title={target}
+              className="max-w-full truncate rounded-xs border border-line bg-chrome-2 px-xs py-2xs text-2xs text-ink-dim"
+            >
+              {target}
+            </span>
+          ))
+        ) : (
+          <span className="text-2xs text-ink-faint">No targets</span>
+        )}
       </div>
       {prop.valueType !== "node" && (
         <div className="flex flex-col gap-2xs">
@@ -1925,4 +2002,3 @@ function NumberTokenSlot({
     />
   );
 }
-

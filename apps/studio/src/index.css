@@ -17,7 +17,9 @@ body {
 }
 
 button {
-  font: inherit;
+  font-family: inherit;
+  font-feature-settings: inherit;
+  font-variation-settings: inherit;
   cursor: pointer;
 }
 

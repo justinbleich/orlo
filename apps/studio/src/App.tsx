@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Redo2, Undo2 } from "lucide-react";
+import {
+  FileCode2,
+  FileJson2,
+  FolderOpen,
+  RefreshCw,
+  Redo2,
+  Save,
+  Undo2,
+} from "lucide-react";
 import {
   Tldraw,
   createShapeId,
@@ -84,6 +92,21 @@ type CodegenResult = {
   wrote?: boolean;
 };
 
+type CodeArtifact = {
+  id: string;
+  label: string;
+  path: string;
+  kind: "tsx" | "json" | "theme";
+  code: string;
+};
+
+type SyncState =
+  | { status: "idle" }
+  | { status: "scheduled" }
+  | { status: "syncing" }
+  | { status: "synced"; path: string }
+  | { status: "error"; message: string };
+
 type OpenDocumentResult = {
   version: 1;
   screenName: string;
@@ -126,6 +149,45 @@ function createScreenFrame(children: Node[] = []): Node {
     },
     children,
   });
+}
+
+function codeArtifacts(result: CodegenResult | null): CodeArtifact[] {
+  if (!result) return [];
+  const artifacts: CodeArtifact[] = [
+    {
+      id: "screen",
+      label: result.targetPath.split("/").pop() ?? result.targetPath,
+      path: result.targetPath,
+      kind: "tsx",
+      code: result.code,
+    },
+    {
+      id: "document",
+      label: result.sidecarPath.split("/").pop() ?? result.sidecarPath,
+      path: result.sidecarPath,
+      kind: "json",
+      code: result.sidecar,
+    },
+  ];
+  if (result.theme) {
+    artifacts.push({
+      id: "theme",
+      label: result.theme.fileName,
+      path: result.themePath ?? result.theme.fileName,
+      kind: "theme",
+      code: result.theme.code,
+    });
+  }
+  result.components?.forEach((component, index) => {
+    artifacts.push({
+      id: `component-${index}-${component.name}`,
+      label: component.fileName,
+      path: result.componentPaths?.[index] ?? `components/${component.fileName}`,
+      kind: "tsx",
+      code: component.code,
+    });
+  });
+  return artifacts;
 }
 
 /** Create a tldraw shape for any document root that doesn't have one yet. */
@@ -187,6 +249,12 @@ function stepCanvasHistory(editor: Editor, direction: "undo" | "redo") {
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
+  const codegenBusyRef = useRef(false);
+  const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipCodeSyncRef = useRef(false);
+  const skipNextPathSyncRef = useRef(false);
+  const pathSyncReadyRef = useRef(false);
+  const syncRootIdRef = useRef<NodeId | null>(null);
 
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
   const [inspectorTab, setInspectorTab] = useState("Design");
@@ -194,8 +262,10 @@ export default function App() {
   const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
   const [sidecarPath, setSidecarPath] = useState("generated/Screen.rncanvas.json");
   const [codegenResult, setCodegenResult] = useState<CodegenResult | null>(null);
+  const [activeArtifactId, setActiveArtifactId] = useState("screen");
   const [codegenError, setCodegenError] = useState<string | null>(null);
   const [codegenBusy, setCodegenBusy] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>({ status: "idle" });
   const [canvasCanUndo, setCanvasCanUndo] = useState(false);
   const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
@@ -214,6 +284,16 @@ export default function App() {
     [roots, selection],
   );
   const focusedRootId = focusedRoot?.id ?? null;
+  const artifacts = useMemo(() => codeArtifacts(codegenResult), [codegenResult]);
+  const activeArtifact =
+    artifacts.find((artifact) => artifact.id === activeArtifactId) ?? artifacts[0] ?? null;
+  if (focusedRootId && focusedRootId !== editingComponentId) {
+    syncRootIdRef.current = focusedRootId;
+  }
+  const screenNameRef = useRef(screenName);
+  const targetPathRef = useRef(targetPath);
+  screenNameRef.current = screenName;
+  targetPathRef.current = targetPath;
 
   const canUndo = useDocumentStore((s) => s.past.length > 0);
   const canRedo = useDocumentStore((s) => s.future.length > 0);
@@ -222,6 +302,12 @@ export default function App() {
   const redo = useDocumentStore((s) => s.redo);
 
   useEffect(() => startMcpBridge(handleMcpCommand), []);
+
+  useEffect(() => {
+    if (artifacts.length && !artifacts.some((artifact) => artifact.id === activeArtifactId)) {
+      setActiveArtifactId(artifacts[0].id);
+    }
+  }, [activeArtifactId, artifacts]);
 
   // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
   // beside the sidecar whenever the token registry changes. Debounced and
@@ -271,6 +357,7 @@ export default function App() {
         createNode("Text", { props: { text: "Hello RN Canvas" } }),
       ]);
       skipTokenWriteRef.current = true; // seed load — don't write theme.ts
+      skipCodeSyncRef.current = true; // seed load — don't write generated files
       store.loadRoots({ [seed.id]: seed }, [seed.id]);
     }
     syncShapes(editor);
@@ -583,45 +670,64 @@ export default function App() {
     setStatus("Select tool active");
   }, []);
 
+  const syncRoot = useCallback(() => {
+    const state = useDocumentStore.getState();
+    const rememberedRoot = syncRootIdRef.current ? state.roots[syncRootIdRef.current] : null;
+    if (rememberedRoot && rememberedRoot.id !== state.editingComponentId) return rememberedRoot;
+    return Object.values(state.roots).find((root) => root.id !== state.editingComponentId) ?? null;
+  }, []);
+
   const requestCodegen = useCallback(
-    async (mode: "preview" | "sync") => {
-      if (!focusedRoot) {
-        setCodegenError("Select a frame before exporting.");
+    async (mode: "preview" | "sync", source: "manual" | "auto" = "manual") => {
+      const root = syncRoot();
+      if (!root) {
+        const message = "Select a screen before syncing.";
+        setCodegenError(message);
+        if (mode === "sync") setSyncState({ status: "error", message });
+        setStatus(message);
         return null;
       }
+      if (codegenBusyRef.current) return null;
+      codegenBusyRef.current = true;
       setCodegenBusy(true);
       setCodegenError(null);
+      if (mode === "sync") setSyncState({ status: "syncing" });
       try {
+        const state = useDocumentStore.getState();
         const res = await fetch(`/api/codegen/${mode}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            root: focusedRoot,
-            screenName,
-            targetPath,
-            components: componentRegistry,
-            tokens: useDocumentStore.getState().tokens,
+            root,
+            screenName: screenNameRef.current,
+            targetPath: targetPathRef.current,
+            components: state.components,
+            tokens: state.tokens,
           }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
         setCodegenResult(body);
+        if (source === "manual") setActiveArtifactId("screen");
+        if (mode === "sync") setSyncState({ status: "synced", path: body.targetPath });
         setStatus(
           mode === "sync"
-            ? `Exported ${body.targetPath} + ${body.sidecarPath}`
-            : `Previewed export for ${body.targetPath}`,
+            ? `${source === "auto" ? "Autosynced" : "Synced"} ${body.targetPath} + ${body.sidecarPath}`
+            : `Previewed sync for ${body.targetPath}`,
         );
         return body as CodegenResult;
       } catch (e) {
-        const message = e instanceof Error ? e.message : "Export failed";
+        const message = e instanceof Error ? e.message : "Sync failed";
         setCodegenError(message);
+        if (mode === "sync") setSyncState({ status: "error", message });
         setStatus(message);
         return null;
       } finally {
+        codegenBusyRef.current = false;
         setCodegenBusy(false);
       }
     },
-    [focusedRoot, screenName, targetPath, componentRegistry],
+    [syncRoot],
   );
 
   const openSidecar = useCallback(async () => {
@@ -639,6 +745,8 @@ export default function App() {
       // The file is the canonical token source: we just read it, so don't echo it
       // straight back out (the writer fires only on subsequent in-tool edits).
       skipTokenWriteRef.current = true;
+      skipCodeSyncRef.current = true;
+      skipNextPathSyncRef.current = true;
       useDocumentStore.getState().loadRoots(
         { [opened.root.id]: opened.root },
         [opened.root.id],
@@ -650,6 +758,7 @@ export default function App() {
       setTargetPath(opened.targetPath);
       setSidecarPath(opened.sidecarPath);
       setCodegenResult(null);
+      setActiveArtifactId("screen");
       setStatus(`Opened ${opened.sidecarPath}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Document load failed";
@@ -673,6 +782,8 @@ export default function App() {
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       const imported = body as ImportSourceResult;
       skipTokenWriteRef.current = true; // imported document load — not a token edit
+      skipCodeSyncRef.current = true; // imported document load — not a canvas edit
+      skipNextPathSyncRef.current = true;
       useDocumentStore.getState().loadRoots(
         { [imported.root.id]: imported.root },
         [imported.root.id],
@@ -682,6 +793,7 @@ export default function App() {
       setTargetPath(imported.sourcePath);
       setSidecarPath(imported.sidecarPath);
       setCodegenResult(null);
+      setActiveArtifactId("screen");
       setStatus(`Imported ${imported.sourcePath}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Code import failed";
@@ -691,6 +803,70 @@ export default function App() {
       setCodegenBusy(false);
     }
   }, [resetCanvasHistory, targetPath]);
+
+  const scheduleAutoSync = useCallback(() => {
+    if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
+    setSyncState({ status: "scheduled" });
+    autoSyncTimerRef.current = setTimeout(() => {
+      autoSyncTimerRef.current = null;
+      if (codegenBusyRef.current) {
+        scheduleAutoSync();
+        return;
+      }
+      void requestCodegen("sync", "auto");
+    }, 900);
+  }, [requestCodegen]);
+
+  useEffect(() => {
+    let lastRoots = useDocumentStore.getState().roots;
+    let lastComponents = useDocumentStore.getState().components;
+    let lastTokens = useDocumentStore.getState().tokens;
+    let lastInteraction = useDocumentStore.getState().interaction;
+    let dirtyDuringInteraction = false;
+    const unsubscribe = useDocumentStore.subscribe((state) => {
+      const documentChanged =
+        state.roots !== lastRoots ||
+        state.components !== lastComponents ||
+        state.tokens !== lastTokens;
+      const interactionJustEnded = !!lastInteraction && !state.interaction;
+      lastRoots = state.roots;
+      lastComponents = state.components;
+      lastTokens = state.tokens;
+      lastInteraction = state.interaction;
+      if (interactionJustEnded && dirtyDuringInteraction) {
+        dirtyDuringInteraction = false;
+        scheduleAutoSync();
+        return;
+      }
+      if (!documentChanged) return;
+      if (skipCodeSyncRef.current) {
+        skipCodeSyncRef.current = false;
+        return;
+      }
+      if (state.interaction) {
+        dirtyDuringInteraction = true;
+        return;
+      }
+      scheduleAutoSync();
+    });
+    return () => {
+      if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
+      unsubscribe();
+    };
+  }, [scheduleAutoSync]);
+
+  useEffect(() => {
+    if (!pathSyncReadyRef.current) {
+      pathSyncReadyRef.current = true;
+      return;
+    }
+    if (skipNextPathSyncRef.current) {
+      skipNextPathSyncRef.current = false;
+      return;
+    }
+    if (!Object.keys(useDocumentStore.getState().roots).length) return;
+    scheduleAutoSync();
+  }, [screenName, targetPath, scheduleAutoSync]);
 
   const btn: React.CSSProperties = {
     background: color.chrome2,
@@ -720,6 +896,16 @@ export default function App() {
     fontSize: text.sm,
     width: "100%",
   };
+  const syncLabel =
+    syncState.status === "scheduled"
+      ? "Sync pending"
+      : syncState.status === "syncing"
+        ? "Syncing"
+        : syncState.status === "synced"
+          ? `Synced ${syncState.path}`
+          : syncState.status === "error"
+            ? "Sync failed"
+            : "Ready";
 
   return (
     <div
@@ -768,14 +954,27 @@ export default function App() {
           </button>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: space.sm }}>
+          <span
+            title={syncState.status === "error" ? syncState.message : syncLabel}
+            style={{
+              color: syncState.status === "error" ? color.amber : color.inkFaint,
+              fontSize: text.xs,
+              maxWidth: 220,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {syncLabel}
+          </span>
           <button
             type="button"
             style={btn}
             disabled={codegenBusy || !focusedRoot}
-            title="Write React Native code + document file to the workspace"
+            title="Sync the canvas document with React Native files"
             onClick={() => void requestCodegen("sync")}
           >
-            Export
+            Sync now
           </button>
         </div>
       </header>
@@ -815,8 +1014,9 @@ export default function App() {
               }}
             >
               <span>
-                Editing <strong>{editingComponentName}</strong>
+                Component / <strong>{editingComponentName}</strong>
               </span>
+              <span style={{ color: color.inkFaint }}>Focused definition</span>
               <button
                 type="button"
                 onClick={() => useDocumentStore.getState().endComponentEdit(false)}
@@ -905,109 +1105,145 @@ export default function App() {
                   }}
                 >
                   <Eyebrow>Code</Eyebrow>
-                  <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                    <span style={{ color: color.inkDim, fontSize: text.xs }}>
-                      Document file (.rncanvas.json)
-                    </span>
-                    <input
-                      value={sidecarPath}
-                      onChange={(e) => setSidecarPath(e.target.value)}
-                      style={fieldStyle}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    style={btn}
-                    disabled={codegenBusy}
-                    onClick={() => void openSidecar()}
-                  >
-                    Open Document
-                  </button>
-                  <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                    <span style={{ color: color.inkDim, fontSize: text.xs }}>Screen name</span>
-                    <input
-                      value={screenName}
-                      onChange={(e) => setScreenName(e.target.value)}
-                      onBlur={() => void requestCodegen("preview")}
-                      style={fieldStyle}
-                    />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                    <span style={{ color: color.inkDim, fontSize: text.xs }}>
-                      Repo path (.tsx)
-                    </span>
-                    <input
-                      value={targetPath}
-                      onChange={(e) => setTargetPath(e.target.value)}
-                      style={fieldStyle}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    style={btn}
-                    disabled={codegenBusy}
-                    onClick={() => void importSource()}
-                  >
-                    Import from Code
-                  </button>
-                  <div style={{ display: "flex", gap: space.sm }}>
-                    <button
-                      type="button"
-                      style={btn}
-                      disabled={codegenBusy || !focusedRoot}
-                      onClick={() => void requestCodegen("preview")}
-                    >
-                      Preview Export
-                    </button>
-                    <button
-                      type="button"
-                      style={btn}
-                      disabled={codegenBusy || !focusedRoot}
-                      onClick={() => void requestCodegen("sync")}
-                    >
-                      Export
-                    </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                      <span style={{ color: color.inkDim, fontSize: text.xs }}>Document</span>
+                      <input
+                        value={sidecarPath}
+                        onChange={(e) => setSidecarPath(e.target.value)}
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <div style={{ display: "flex", gap: space.xs }}>
+                      <button
+                        type="button"
+                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                        disabled={codegenBusy}
+                        onClick={() => void openSidecar()}
+                      >
+                        <FolderOpen size={14} aria-hidden="true" /> Open
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                        disabled={codegenBusy}
+                        onClick={() => void importSource()}
+                      >
+                        <RefreshCw size={14} aria-hidden="true" /> Import
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                      <span style={{ color: color.inkDim, fontSize: text.xs }}>Screen</span>
+                      <input
+                        value={screenName}
+                        onChange={(e) => setScreenName(e.target.value)}
+                        onBlur={() => void requestCodegen("preview")}
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                      <span style={{ color: color.inkDim, fontSize: text.xs }}>Code path</span>
+                      <input
+                        value={targetPath}
+                        onChange={(e) => setTargetPath(e.target.value)}
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <div style={{ display: "flex", gap: space.xs }}>
+                      <button
+                        type="button"
+                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                        disabled={codegenBusy || !focusedRoot}
+                        onClick={() => void requestCodegen("preview")}
+                      >
+                        <FileCode2 size={14} aria-hidden="true" /> Preview
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
+                        disabled={codegenBusy || !focusedRoot}
+                        onClick={() => void requestCodegen("sync")}
+                      >
+                        <Save size={14} aria-hidden="true" /> Sync
+                      </button>
+                    </div>
                   </div>
                   {codegenError && (
                     <p style={{ color: color.amber, fontSize: text.sm, margin: 0 }}>
                       {codegenError}
                     </p>
                   )}
-                  {codegenResult && (
-                    <>
-                      <p style={{ color: color.inkFaint, fontSize: text.sm, margin: 0 }}>
-                        {codegenResult.wrote ? "Wrote" : "Previewing"}{" "}
-                        {codegenResult.targetPath} + {codegenResult.sidecarPath}. Git is
-                        explicit: review and commit these files yourself.
+                  {codegenResult ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: space.sm, minHeight: 0 }}>
+                      <p style={{ color: color.inkFaint, fontSize: text.xs, margin: 0 }}>
+                        {codegenResult.wrote ? "Synced" : "Previewing"} {artifacts.length}{" "}
+                        {artifacts.length === 1 ? "file" : "files"}.
                       </p>
-                      <pre
-                        style={{
-                          margin: 0,
-                          padding: space.md,
-                          background: color.canvas,
-                          border: `1px solid ${color.line}`,
-                          borderRadius: radius.base,
-                          color: color.inkDim,
-                          fontSize: text.xs,
-                          lineHeight: 1.55,
-                          overflow: "auto",
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {codegenResult.code}
-                      </pre>
-                      {codegenResult.theme && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                          <p style={{ margin: 0, color: color.inkDim, fontSize: text.sm }}>
-                            {codegenResult.theme.fileName}
-                          </p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                        {artifacts.map((artifact) => {
+                          const active = artifact.id === activeArtifact?.id;
+                          const Icon = artifact.kind === "json" ? FileJson2 : FileCode2;
+                          return (
+                            <button
+                              key={artifact.id}
+                              type="button"
+                              onClick={() => setActiveArtifactId(artifact.id)}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: space.xs,
+                                width: "100%",
+                                border: `1px solid ${active ? color.accentLine : color.line}`,
+                                borderRadius: radius.base,
+                                background: active ? color.accentSoft : color.chrome2,
+                                color: active ? color.accent : color.inkDim,
+                                padding: `${space.xs} ${space.sm}`,
+                                textAlign: "left",
+                                fontSize: text.xs,
+                              }}
+                            >
+                              <Icon size={14} aria-hidden="true" />
+                              <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {artifact.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {activeArtifact && (
+                        <div style={{ display: "flex", flexDirection: "column", minHeight: 260, flex: 1 }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: space.xs,
+                              border: `1px solid ${color.line}`,
+                              borderBottom: 0,
+                              borderRadius: `${radius.base} ${radius.base} 0 0`,
+                              background: color.chrome2,
+                              color: color.ink,
+                              padding: `${space.xs} ${space.sm}`,
+                              fontSize: text.xs,
+                            }}
+                          >
+                            <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {activeArtifact.path}
+                            </span>
+                            <span style={{ color: color.inkFaint, textTransform: "uppercase" }}>
+                              {activeArtifact.kind}
+                            </span>
+                          </div>
                           <pre
                             style={{
                               margin: 0,
+                              flex: 1,
+                              minHeight: 0,
                               padding: space.md,
                               background: color.canvas,
                               border: `1px solid ${color.line}`,
-                              borderRadius: radius.base,
+                              borderRadius: `0 0 ${radius.base} ${radius.base}`,
                               color: color.inkDim,
                               fontSize: text.xs,
                               lineHeight: 1.55,
@@ -1015,34 +1251,24 @@ export default function App() {
                               whiteSpace: "pre-wrap",
                             }}
                           >
-                            {codegenResult.theme.code}
+                            {activeArtifact.code}
                           </pre>
                         </div>
                       )}
-                      {codegenResult.components?.map((component) => (
-                        <div key={component.fileName} style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
-                          <p style={{ margin: 0, color: color.inkDim, fontSize: text.sm }}>
-                            components/{component.fileName}
-                          </p>
-                          <pre
-                            style={{
-                              margin: 0,
-                              padding: space.md,
-                              background: color.canvas,
-                              border: `1px solid ${color.line}`,
-                              borderRadius: radius.base,
-                              color: color.inkDim,
-                              fontSize: text.xs,
-                              lineHeight: 1.55,
-                              overflow: "auto",
-                              whiteSpace: "pre-wrap",
-                            }}
-                          >
-                            {component.code}
-                          </pre>
-                        </div>
-                      ))}
-                    </>
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        border: `1px solid ${color.line}`,
+                        borderRadius: radius.base,
+                        background: color.chrome2,
+                        color: color.inkFaint,
+                        fontSize: text.sm,
+                        padding: space.md,
+                      }}
+                    >
+                      Preview or sync to inspect code-linked files.
+                    </div>
                   )}
                 </div>
               )}

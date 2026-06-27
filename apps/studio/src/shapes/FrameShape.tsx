@@ -158,8 +158,10 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     }, [setStudioLayout, shape.props.rootId]);
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
+    const editingComponentId = useDocumentStore((s) => s.editingComponentId);
     // The component registry expands any instances in this frame to primitives.
     const components = useDocumentStore((s) => s.components);
+    const outOfFocus = !!editingComponentId && shape.props.rootId !== editingComponentId;
     // A frame is "live" (full render) when selected or large enough on screen;
     // otherwise it falls back to the proxy. Reactive to zoom + selection.
     const selected = useValue(
@@ -175,7 +177,7 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     const live = selected || largeEnough;
     // The overlay owns pointer input when its frame is selected, or for any frame
     // while a tool is armed (so you can draw into an unselected screen directly).
-    const interactive = selected || armed;
+    const interactive = !outOfFocus && (selected || armed);
     return (
       <HTMLContainer
         data-rn-root-id={shape.props.rootId}
@@ -184,6 +186,7 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
           height: shape.props.h,
           overflow: "hidden",
           backgroundColor: "#ffffff",
+          opacity: outOfFocus ? 0 : 1,
           // Let tldraw handle selection/drag; inner RN content is preview-only.
           pointerEvents: interactive ? "auto" : "none",
         }}

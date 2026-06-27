@@ -27,7 +27,9 @@
   }
 
   :is(.studio-chrome, .studio-popup) :is(button, input, optgroup, select, textarea) {
-    font: inherit;
+    font-family: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
     color: inherit;
     margin: 0;
     padding: 0;
@@ -82,8 +84,12 @@
   --font-mono: var(--font-mono);
 
   --text-micro: var(--text-micro);
+  --text-2xs: var(--text-2xs);
+  --text-2xs--line-height: var(--leading-2xs);
   --text-xs: var(--text-xs);
+  --text-xs--line-height: var(--leading-xs);
   --text-sm: var(--text-sm);
+  --text-sm--line-height: var(--leading-sm);
   --text-base: var(--text-base);
   --text-lg: var(--text-lg);
   --text-xl: var(--text-xl);

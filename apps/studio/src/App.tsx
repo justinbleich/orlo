@@ -107,6 +107,17 @@ type SyncState =
   | { status: "synced"; path: string }
   | { status: "error"; message: string };
 
+type GitFileStatus = {
+  path: string;
+  index: string;
+  workingTree: string;
+};
+
+type GitStatus =
+  | { status: "loading" }
+  | { status: "ready"; branch: string; clean: boolean; files: GitFileStatus[] }
+  | { status: "error"; message: string };
+
 type OpenDocumentResult = {
   version: 1;
   screenName: string;
@@ -190,6 +201,23 @@ function codeArtifacts(result: CodegenResult | null): CodeArtifact[] {
   return artifacts;
 }
 
+function gitFileStatusLabel(file: GitFileStatus): string {
+  const code = `${file.index}${file.workingTree}`;
+  if (code === "??") return "Untracked";
+  if (file.workingTree === "M" || file.index === "M") return "Modified";
+  if (file.workingTree === "D" || file.index === "D") return "Deleted";
+  if (file.workingTree === "A" || file.index === "A") return "Added";
+  if (file.workingTree === "R" || file.index === "R") return "Renamed";
+  return code.trim() || "Changed";
+}
+
+function gitSummary(status: GitStatus): string {
+  if (status.status === "loading") return "Git loading";
+  if (status.status === "error") return "Git unavailable";
+  if (status.clean) return `${status.branch} clean`;
+  return `${status.branch} ${status.files.length} changed`;
+}
+
 /** Create a tldraw shape for any document root that doesn't have one yet. */
 function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   const existing = new Set(
@@ -266,6 +294,7 @@ export default function App() {
   const [codegenError, setCodegenError] = useState<string | null>(null);
   const [codegenBusy, setCodegenBusy] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle" });
+  const [gitStatus, setGitStatus] = useState<GitStatus>({ status: "loading" });
   const [canvasCanUndo, setCanvasCanUndo] = useState(false);
   const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
@@ -308,6 +337,31 @@ export default function App() {
       setActiveArtifactId(artifacts[0].id);
     }
   }, [activeArtifactId, artifacts]);
+
+  const refreshGitStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/git/status");
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      setGitStatus({
+        status: "ready",
+        branch: body.branch ?? "unknown",
+        clean: !!body.clean,
+        files: Array.isArray(body.files) ? body.files : [],
+      });
+    } catch (error) {
+      setGitStatus({
+        status: "error",
+        message: error instanceof Error ? error.message : "Git status failed",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshGitStatus();
+    const timer = setInterval(() => void refreshGitStatus(), 5_000);
+    return () => clearInterval(timer);
+  }, [refreshGitStatus]);
 
   // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
   // beside the sidecar whenever the token registry changes. Debounced and
@@ -710,6 +764,7 @@ export default function App() {
         setCodegenResult(body);
         if (source === "manual") setActiveArtifactId("screen");
         if (mode === "sync") setSyncState({ status: "synced", path: body.targetPath });
+        if (mode === "sync") void refreshGitStatus();
         setStatus(
           mode === "sync"
             ? `${source === "auto" ? "Autosynced" : "Synced"} ${body.targetPath} + ${body.sidecarPath}`
@@ -727,7 +782,7 @@ export default function App() {
         setCodegenBusy(false);
       }
     },
-    [syncRoot],
+    [refreshGitStatus, syncRoot],
   );
 
   const openSidecar = useCallback(async () => {
@@ -906,6 +961,7 @@ export default function App() {
           : syncState.status === "error"
             ? "Sync failed"
             : "Ready";
+  const gitLabel = gitSummary(gitStatus);
 
   return (
     <div
@@ -954,6 +1010,24 @@ export default function App() {
           </button>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: space.sm }}>
+          <span
+            title={gitStatus.status === "error" ? gitStatus.message : gitLabel}
+            style={{
+              color:
+                gitStatus.status === "ready" && !gitStatus.clean
+                  ? color.ink
+                  : gitStatus.status === "error"
+                    ? color.amber
+                    : color.inkFaint,
+              fontSize: text.xs,
+              maxWidth: 180,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {gitLabel}
+          </span>
           <span
             title={syncState.status === "error" ? syncState.message : syncLabel}
             style={{
@@ -1175,6 +1249,82 @@ export default function App() {
                       {codegenError}
                     </p>
                   )}
+                  <div
+                    style={{
+                      border: `1px solid ${color.line}`,
+                      borderRadius: radius.base,
+                      background: color.chrome2,
+                      padding: space.sm,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: space.xs,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: space.sm }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ color: color.ink, fontSize: text.sm }}>Repository</div>
+                        <div style={{ color: color.inkFaint, fontSize: text.xs }}>
+                          {gitLabel}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        title="Refresh Git status"
+                        style={iconBtn}
+                        onClick={() => void refreshGitStatus()}
+                      >
+                        <RefreshCw size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                    {gitStatus.status === "ready" && !gitStatus.clean && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
+                        {gitStatus.files.slice(0, 8).map((file) => (
+                          <div
+                            key={`${file.index}${file.workingTree}-${file.path}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: space.xs,
+                              color: color.inkDim,
+                              fontSize: text.xs,
+                            }}
+                          >
+                            <span
+                              style={{
+                                flex: "0 0 auto",
+                                color: color.inkFaint,
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              {gitFileStatusLabel(file)}
+                            </span>
+                            <span
+                              style={{
+                                minWidth: 0,
+                                flex: 1,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                              title={file.path}
+                            >
+                              {file.path}
+                            </span>
+                          </div>
+                        ))}
+                        {gitStatus.files.length > 8 && (
+                          <div style={{ color: color.inkFaint, fontSize: text.xs }}>
+                            +{gitStatus.files.length - 8} more
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {gitStatus.status === "error" && (
+                      <p style={{ margin: 0, color: color.amber, fontSize: text.xs }}>
+                        {gitStatus.message}
+                      </p>
+                    )}
+                  </div>
                   {codegenResult ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: space.sm, minHeight: 0 }}>
                       <p style={{ color: color.inkFaint, fontSize: text.xs, margin: 0 }}>

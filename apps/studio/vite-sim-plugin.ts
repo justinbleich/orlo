@@ -41,6 +41,12 @@ type TokensSaveRequest = {
   tokens?: TokenRegistry;
 };
 
+type GitFileStatus = {
+  path: string;
+  index: string;
+  workingTree: string;
+};
+
 type BrowserCommand = {
   id: string;
   type: string;
@@ -221,6 +227,29 @@ async function parseExternalSource(sourcePath: string) {
   return JSON.parse(stdout) as { screenName: string; root: Node };
 }
 
+async function readGitStatus() {
+  const { stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "-b"], {
+    cwd: repoRoot,
+    maxBuffer: 1024 * 1024,
+  });
+  const lines = stdout.split("\n").filter(Boolean);
+  const branchLine = lines.find((line) => line.startsWith("## ")) ?? "##";
+  const files: GitFileStatus[] = [];
+  for (const line of lines) {
+    if (line.startsWith("## ")) continue;
+    const index = line[0] ?? " ";
+    const workingTree = line[1] ?? " ";
+    const rawPath = line.slice(3);
+    const path = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop() ?? rawPath : rawPath;
+    files.push({ path, index, workingTree });
+  }
+  return {
+    branch: branchLine.replace(/^##\s*/, ""),
+    clean: files.length === 0,
+    files,
+  };
+}
+
 export function simScreenshotPlugin(): Plugin {
   const commandQueue: BrowserCommand[] = [];
   const pending = new Map<
@@ -367,6 +396,20 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Token save failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/git/status", async (req, res) => {
+        if (req.method !== "GET") {
+          sendJson(res, 405, { error: "GET required" });
+          return;
+        }
+        try {
+          sendJson(res, 200, await readGitStatus());
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Git status failed",
           });
         }
       });

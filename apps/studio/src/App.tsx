@@ -283,7 +283,6 @@ export default function App() {
   const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipCodeSyncRef = useRef(false);
   const skipNextPathSyncRef = useRef(false);
-  const pathSyncReadyRef = useRef(false);
   const syncRootIdRef = useRef<NodeId | null>(null);
 
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
@@ -327,6 +326,7 @@ export default function App() {
   }
   const screenNameRef = useRef(screenName);
   const targetPathRef = useRef(targetPath);
+  const pathSyncSignatureRef = useRef(`${screenName}|${targetPath}`);
   screenNameRef.current = screenName;
   targetPathRef.current = targetPath;
 
@@ -381,6 +381,18 @@ export default function App() {
   }, []);
 
   const connectRepo = useCallback(async () => {
+    if (codegenBusyRef.current) {
+      const message = "Wait for the current sync to finish before changing repositories.";
+      setRepoError(message);
+      setStatus(message);
+      return;
+    }
+    if (autoSyncTimerRef.current) {
+      clearTimeout(autoSyncTimerRef.current);
+      autoSyncTimerRef.current = null;
+    }
+    skipNextPathSyncRef.current = true;
+    setSyncState({ status: "idle" });
     setRepoBusy(true);
     setRepoError(null);
     try {
@@ -979,10 +991,9 @@ export default function App() {
   }, [scheduleAutoSync]);
 
   useEffect(() => {
-    if (!pathSyncReadyRef.current) {
-      pathSyncReadyRef.current = true;
-      return;
-    }
+    const signature = `${screenName}|${targetPath}`;
+    if (signature === pathSyncSignatureRef.current) return;
+    pathSyncSignatureRef.current = signature;
     if (skipNextPathSyncRef.current) {
       skipNextPathSyncRef.current = false;
       return;
@@ -1268,7 +1279,7 @@ export default function App() {
                       <button
                         type="button"
                         style={{ ...btn, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: space.xs }}
-                        disabled={repoBusy || !repoDraft.trim()}
+                        disabled={repoBusy || codegenBusy || !repoDraft.trim()}
                         onClick={() => void connectRepo()}
                       >
                         <FolderOpen size={14} aria-hidden="true" /> Connect

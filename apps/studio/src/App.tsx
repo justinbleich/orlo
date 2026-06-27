@@ -1251,6 +1251,9 @@ export default function App() {
           workspace={workspace}
           onWorkspaceChange={setWorkspace}
           onAddFrame={addFrame}
+          gitStatus={gitStatus}
+          targetPath={targetPath}
+          sidecarPath={sidecarPath}
         />
 
         <div className="relative flex min-w-0 flex-1 flex-col">

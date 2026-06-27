@@ -11,6 +11,7 @@ import {
 import { ChevronDown, ChevronRight, Component, EyeOff, LockOpen } from "lucide-react";
 import { color, radius, space, text } from "./studio-theme";
 import { normalizeNodeSelection, selectionRange } from "./selection";
+import { cn } from "./studio-ui";
 
 // One drag at a time; module-scoped so every recursive row shares it.
 let draggedNodeId: NodeId | null = null;
@@ -57,11 +58,13 @@ export function DocumentTree({
   node,
   rootId,
   selectedIds,
+  gitBadge,
   depth = 0,
 }: {
   node: Node;
   rootId: NodeId;
   selectedIds: readonly NodeId[];
+  gitBadge?: React.ReactNode;
   depth?: number;
 }) {
   const setSelection = useDocumentStore((state) => state.setSelection);
@@ -191,9 +194,10 @@ export function DocumentTree({
         {isInstance && (
           <Component size={13} aria-hidden="true" style={{ color: color.accent, flexShrink: 0 }} />
         )}
-        <span>
+        <span className={cn("min-w-0 flex-1 truncate")}>
           {label} <span style={{ color: color.inkFaint }}>· {typeHint}</span>
         </span>
+        {gitBadge}
       </div>
       {expanded && children.map((child) => (
         <DocumentTree
@@ -201,6 +205,7 @@ export function DocumentTree({
           node={child}
           rootId={rootId}
           selectedIds={selectedIds}
+          gitBadge={gitBadge}
           depth={depth + 1}
         />
       ))}

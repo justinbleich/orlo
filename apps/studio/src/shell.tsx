@@ -42,6 +42,11 @@ import { deleteNodes, reorderNode } from "./document-actions";
 import { TokensPanel } from "./TokensPanel";
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
+type GitFileStatus = { path: string; index: string; workingTree: string };
+type PanelGitStatus =
+  | { status: "loading" }
+  | { status: "ready"; files: GitFileStatus[]; clean: boolean }
+  | { status: "error"; message: string };
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
@@ -58,6 +63,55 @@ function pascalCase(input: string): string {
     .join("");
   if (!pascal) return "Component";
   return /^[A-Z]/.test(pascal) ? pascal : `C${pascal}`;
+}
+
+function gitStatusCode(file: GitFileStatus): string {
+  const code = `${file.index}${file.workingTree}`;
+  if (code === "??") return "U";
+  if (file.workingTree === "M" || file.index === "M") return "M";
+  if (file.workingTree === "D" || file.index === "D") return "D";
+  if (file.workingTree === "A" || file.index === "A") return "A";
+  if (file.workingTree === "R" || file.index === "R") return "R";
+  return code.trim() || "";
+}
+
+function gitStatusTone(code: string): "neutral" | "accent" | "amber" {
+  if (code === "U" || code === "A") return "accent";
+  if (code === "D") return "amber";
+  return code ? "neutral" : "neutral";
+}
+
+function GitBadge({ code, title }: { code?: string; title?: string }) {
+  if (!code) return <span className="w-4 shrink-0" aria-hidden="true" />;
+  const tone = gitStatusTone(code);
+  return (
+    <span
+      title={title}
+      className={cn(
+        "flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border text-[9px] font-semibold leading-none",
+        tone === "accent" && "border-accent-line bg-accent-soft text-accent",
+        tone === "amber" && "border-amber/40 bg-amber/10 text-amber",
+        tone === "neutral" && "border-line bg-chrome text-ink-faint",
+      )}
+    >
+      {code}
+    </span>
+  );
+}
+
+function gitFileForPath(gitStatus: PanelGitStatus, path: string): GitFileStatus | undefined {
+  if (gitStatus.status !== "ready") return undefined;
+  return gitStatus.files.find((file) => file.path === path || file.path.endsWith(`/${path}`));
+}
+
+function gitCodeForPath(gitStatus: PanelGitStatus, path: string): string | undefined {
+  const file = gitFileForPath(gitStatus, path);
+  return file ? gitStatusCode(file) : undefined;
+}
+
+function firstGitCode(gitStatus: PanelGitStatus): string | undefined {
+  if (gitStatus.status !== "ready") return undefined;
+  return gitStatus.files.map(gitStatusCode).find(Boolean);
 }
 
 /** A quiet segmented tab bar used by the left panel and inspector. */
@@ -277,10 +331,16 @@ export function LeftPanel({
   workspace,
   onWorkspaceChange,
   onAddFrame,
+  gitStatus,
+  targetPath,
+  sidecarPath,
 }: {
   workspace: WorkspaceMode;
   onWorkspaceChange: (workspace: WorkspaceMode) => void;
   onAddFrame: () => void;
+  gitStatus: PanelGitStatus;
+  targetPath: string;
+  sidecarPath: string;
 }) {
   const roots = useDocumentStore((state) => state.roots);
   const selection = useDocumentStore((state) => state.selection);
@@ -369,6 +429,10 @@ export function LeftPanel({
     "flex h-7 min-w-0 items-center gap-xs rounded-sm px-sm text-left text-sm transition-colors";
   const activeItem = "bg-accent-soft text-accent";
   const inactiveItem = "text-ink-dim hover:bg-raised hover:text-ink";
+  const screenGitCode = gitCodeForPath(gitStatus, targetPath) ?? gitCodeForPath(gitStatus, sidecarPath);
+  const sidecarGitCode = gitCodeForPath(gitStatus, sidecarPath);
+  const themeGitCode = gitCodeForPath(gitStatus, "generated/theme.ts");
+  const repoGitCode = firstGitCode(gitStatus);
 
   return (
     <aside
@@ -443,13 +507,14 @@ export function LeftPanel({
             >
               <List size={13} aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{flow}</span>
+              <GitBadge code={index === 0 ? sidecarGitCode : undefined} title={sidecarPath} />
             </button>
           ))}
         </section>
 
         <section className="flex flex-col gap-xs">
           <div className="flex items-center gap-xs">
-            <Eyebrow>Screens</Eyebrow>
+            <Eyebrow>Project Tree</Eyebrow>
             <div className="flex-1" />
             <button type="button" style={panelIconButton} onClick={onAddFrame} title="Add screen">
               <Plus size={16} aria-hidden="true" />
@@ -461,91 +526,86 @@ export function LeftPanel({
               const active = root.id === focusedRoot?.id && workspace === "Screen";
               const locked = !!root.design?.locked;
               return (
-                <div key={root.id} className="flex gap-xs">
-                  <button
-                    type="button"
-                    disabled={locked}
-                    onClick={() => {
-                      setSelection([root.id]);
-                      onWorkspaceChange("Screen");
-                    }}
-                    className={cn(sidebarItem, "flex-1", active ? activeItem : inactiveItem, locked && "cursor-not-allowed opacity-50")}
-                  >
-                    <Square size={13} aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {root.design?.name ?? `Screen ${index + 1}`}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={locked}
-                    onClick={() => deleteScreen(root.id)}
-                    style={panelIconButton}
-                    title="Delete screen"
-                  >
-                    <Trash2 size={15} aria-hidden="true" />
-                  </button>
+                <div key={root.id} className="flex flex-col gap-xs">
+                  <div className="flex gap-xs">
+                    <button
+                      type="button"
+                      disabled={locked}
+                      onClick={() => {
+                        setSelection([root.id]);
+                        onWorkspaceChange("Screen");
+                      }}
+                      className={cn(sidebarItem, "flex-1", active ? activeItem : inactiveItem, locked && "cursor-not-allowed opacity-50")}
+                    >
+                      <Square size={13} aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {root.design?.name ?? `Screen ${index + 1}`}
+                      </span>
+                      <GitBadge code={screenGitCode} title={`${screenGitCode ?? ""} ${targetPath}`} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={locked}
+                      onClick={() => deleteScreen(root.id)}
+                      style={panelIconButton}
+                      title="Delete screen"
+                    >
+                      <Trash2 size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                  {root.id === focusedRoot?.id && (
+                    <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
+                      <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
+                        <DocumentTree
+                          node={root}
+                          rootId={root.id}
+                          selectedIds={selection}
+                          gitBadge={<GitBadge code={sidecarGitCode} title={`${sidecarGitCode ?? ""} ${sidecarPath}`} />}
+                        />
+                      </div>
+                      <div className="flex gap-xs">
+                        <button
+                          type="button"
+                          style={panelIconButton}
+                          onClick={() => moveSelected(reverse ? 1 : -1)}
+                          disabled={reverse ? !canMoveAfter : !canMoveBefore}
+                          title={horizontal ? "Move left" : "Move up"}
+                        >
+                          {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
+                        </button>
+                        <button
+                          type="button"
+                          style={panelIconButton}
+                          onClick={() => moveSelected(reverse ? -1 : 1)}
+                          disabled={reverse ? !canMoveBefore : !canMoveAfter}
+                          title={horizontal ? "Move right" : "Move down"}
+                        >
+                          {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
+                        </button>
+                        <button
+                          type="button"
+                          style={panelIconButton}
+                          onClick={createComponent}
+                          disabled={!canMakeComponent}
+                          title="Create component"
+                        >
+                          <Component size={15} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          style={panelIconButton}
+                          onClick={deleteSelected}
+                          disabled={!canDeleteLayer}
+                          title="Delete layer"
+                        >
+                          <Trash2 size={15} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
-        </section>
-
-        <section className="flex flex-col gap-xs">
-          <div className="flex items-center gap-xs">
-            <Eyebrow>Layers</Eyebrow>
-            <div className="flex-1" />
-          </div>
-          {focusedRoot ? (
-            <>
-              <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
-                <DocumentTree
-                  node={focusedRoot}
-                  rootId={focusedRoot.id}
-                  selectedIds={selection}
-                />
-              </div>
-              <div className="flex gap-xs">
-                <button
-                  type="button"
-                  style={panelIconButton}
-                  onClick={() => moveSelected(reverse ? 1 : -1)}
-                  disabled={reverse ? !canMoveAfter : !canMoveBefore}
-                  title={horizontal ? "Move left" : "Move up"}
-                >
-                  {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
-                </button>
-                <button
-                  type="button"
-                  style={panelIconButton}
-                  onClick={() => moveSelected(reverse ? -1 : 1)}
-                  disabled={reverse ? !canMoveBefore : !canMoveAfter}
-                  title={horizontal ? "Move right" : "Move down"}
-                >
-                  {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
-                </button>
-                <button
-                  type="button"
-                  style={panelIconButton}
-                  onClick={createComponent}
-                  disabled={!canMakeComponent}
-                  title="Create component"
-                >
-                  <Component size={15} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  style={panelIconButton}
-                  onClick={deleteSelected}
-                  disabled={!canDeleteLayer}
-                  title="Delete layer"
-                >
-                  <Trash2 size={15} aria-hidden="true" />
-                </button>
-              </div>
-            </>
-          ) : (
-            <p className="m-0 text-sm text-ink-faint">Select a screen to inspect its layers.</p>
-          )}
         </section>
 
         <section className="flex flex-col gap-xs">
@@ -557,6 +617,7 @@ export function LeftPanel({
           ) : (
             componentList.map((comp) => {
               const armed = armedComponentId === comp.id;
+              const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${comp.name}.tsx`);
               return (
                 <div key={comp.id} className="flex gap-xs">
                   <button
@@ -570,6 +631,7 @@ export function LeftPanel({
                   >
                     <Component size={13} aria-hidden="true" />
                     <span className="min-w-0 flex-1 truncate">{comp.name}</span>
+                    <GitBadge code={componentGitCode} title={`generated/components/${comp.name}.tsx`} />
                   </button>
                   <button
                     type="button"
@@ -607,6 +669,7 @@ export function LeftPanel({
             >
               <Type size={13} aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{item}</span>
+              <GitBadge code={item === "Tokens" ? themeGitCode : undefined} title="generated/theme.ts" />
             </button>
           ))}
         </section>
@@ -617,6 +680,7 @@ export function LeftPanel({
             <button key={item} type="button" className={cn(sidebarItem, inactiveItem)}>
               <Image size={13} aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{item}</span>
+              <GitBadge />
             </button>
           ))}
         </section>
@@ -626,6 +690,7 @@ export function LeftPanel({
           <button type="button" onClick={() => onWorkspaceChange("Flow")} className={cn(sidebarItem, inactiveItem)}>
             <MoveVertical size={13} aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">Activity and PR readiness</span>
+            <GitBadge code={repoGitCode} title="Repository has changes" />
           </button>
         </section>
 

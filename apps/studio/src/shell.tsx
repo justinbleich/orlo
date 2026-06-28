@@ -9,6 +9,7 @@ import {
   ArrowRight,
   ArrowUp,
   Component,
+  FolderOpen,
   Frame,
   Image as ImageIcon,
   List,
@@ -66,6 +67,7 @@ export type RepoPanelContext = {
   entrypoints: string[];
   truncated?: boolean;
 };
+type RepoPanelScreen = RepoPanelContext["screens"][number];
 type PanelGitStatus =
   | { status: "loading" }
   | { status: "ready"; files: GitFileStatus[]; clean: boolean }
@@ -370,6 +372,8 @@ export function LeftPanel({
   activeDesignSystemView,
   onDesignSystemViewChange,
   onOpenChanges,
+  onOpenRepoSettings = () => {},
+  onOpenRepoScreen = () => {},
   gitStatus,
   targetPath,
   sidecarPath,
@@ -388,6 +392,8 @@ export function LeftPanel({
   activeDesignSystemView: DesignSystemView;
   onDesignSystemViewChange: (view: DesignSystemView) => void;
   onOpenChanges: () => void;
+  onOpenRepoSettings: () => void;
+  onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   gitStatus: PanelGitStatus;
   targetPath: string;
   sidecarPath: string;
@@ -560,10 +566,25 @@ export function LeftPanel({
               {repoName}
             </div>
             <GitBadge code={repoGitCode} title="Repository has changes" />
+            <button
+              type="button"
+              style={panelIconButton}
+              onClick={onOpenRepoSettings}
+              title={repoContext ? "Change connected repo" : "Connect repo"}
+            >
+              <FolderOpen size={14} aria-hidden="true" />
+            </button>
           </div>
           <div className="truncate text-2xs text-accent" title={repoContext?.repoPath}>
             {repoSubtitle}
           </div>
+          {repoContext && (
+            <div className="mt-xs flex flex-wrap gap-xs text-2xs text-ink-faint">
+              <span>{repoScreens.length} screens</span>
+              <span>{repoContext.sidecars?.length ?? 0} sidecars</span>
+              <span>{repoAssets.length} assets</span>
+            </div>
+          )}
         </div>
 
         {hasRuntimeSignals && (
@@ -762,10 +783,12 @@ export function LeftPanel({
                   gitCodeForPath(gitStatus, screen.path) ??
                   (screen.sidecarPath ? gitCodeForPath(gitStatus, screen.sidecarPath) : undefined);
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={screen.path}
-                    className={cn(sidebarItem, "text-ink-dim")}
-                    title={screen.path}
+                    onClick={() => onOpenRepoScreen(screen)}
+                    className={cn(sidebarItem, "text-ink-dim hover:bg-raised hover:text-ink")}
+                    title={screen.rnCanvas ? `Open ${screen.sidecarPath ?? screen.path}` : `Import ${screen.path}`}
                   >
                     <Square size={13} aria-hidden="true" />
                     <span className="min-w-0 flex-1 truncate">{screen.name}</span>
@@ -775,7 +798,7 @@ export function LeftPanel({
                       </span>
                     )}
                     <GitBadge code={gitCode} title={screen.path} />
-                  </div>
+                  </button>
                 );
               })}
               {repoScreenCandidates.length > visibleRepoScreens.length && (

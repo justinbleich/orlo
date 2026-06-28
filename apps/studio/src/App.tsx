@@ -1740,14 +1740,14 @@ export default function App() {
     [loadRepoContext, refreshGitStatus, syncRoot],
   );
 
-  const openSidecar = useCallback(async () => {
+  const openSidecar = useCallback(async (path = sidecarPath) => {
     setCodegenBusy(true);
     setCodegenError(null);
     try {
       const res = await fetch("/api/documents/open", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sidecarPath }),
+        body: JSON.stringify({ sidecarPath: path }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -1784,14 +1784,14 @@ export default function App() {
     }
   }, [loadRepoContext, resetCanvasHistory, sidecarPath]);
 
-  const importSource = useCallback(async () => {
+  const importSource = useCallback(async (path = targetPath) => {
     setCodegenBusy(true);
     setCodegenError(null);
     try {
       const res = await fetch("/api/documents/import-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourcePath: targetPath }),
+        body: JSON.stringify({ sourcePath: path }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -1823,6 +1823,22 @@ export default function App() {
       setCodegenBusy(false);
     }
   }, [loadRepoContext, resetCanvasHistory, targetPath]);
+
+  const openRepoSettings = useCallback(() => {
+    setInspectorTab("Code");
+    setStatus("Repository settings");
+  }, []);
+
+  const openRepoScreen = useCallback(
+    (screen: NonNullable<RepoContext>["screens"][number]) => {
+      if (screen.sidecarPath) {
+        void openSidecar(screen.sidecarPath);
+        return;
+      }
+      void importSource(screen.path);
+    },
+    [importSource, openSidecar],
+  );
 
   const scheduleAutoSync = useCallback(() => {
     if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
@@ -2006,6 +2022,8 @@ export default function App() {
           activeDesignSystemView={activeDesignSystemView}
           onDesignSystemViewChange={setActiveDesignSystemView}
           onOpenChanges={openChangesPanel}
+          onOpenRepoSettings={openRepoSettings}
+          onOpenRepoScreen={openRepoScreen}
           gitStatus={gitStatus}
           targetPath={targetPath}
           sidecarPath={sidecarPath}

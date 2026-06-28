@@ -398,6 +398,12 @@ function FlowWorkspace({
   const labelFor = (root: Node, fallbackIndex: number) =>
     screenLabels.get(root.id) ?? root.design?.name ?? `Screen ${fallbackIndex + 1}`;
   const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
+  const flowViewportRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (flowViewportRef.current) flowViewportRef.current.scrollLeft = 0;
+  }, [activeFlow, entryRootId]);
+
   return (
     <div className="studio-chrome flex h-full flex-col bg-canvas">
       <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
@@ -416,7 +422,7 @@ function FlowWorkspace({
           </IconButton>
         </div>
       </div>
-      <div className="relative flex-1 overflow-auto">
+      <div ref={flowViewportRef} className="relative flex-1 overflow-auto">
         <div className="grid min-h-full min-w-[760px] grid-cols-[minmax(0,1fr)_260px]">
           <div className="overflow-auto p-2xl">
             <div className="flex min-w-max items-start gap-2xl">

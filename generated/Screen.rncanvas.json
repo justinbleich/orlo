@@ -2,7 +2,7 @@
   "version": 1,
   "screenName": "Screen",
   "root": {
-    "id": "8517e785-c6ed-42df-8a03-001f4b4c1707",
+    "id": "a5f98120-0d20-459b-8a05-020a55c38483",
     "props": {},
     "style": {
       "width": 390,
@@ -13,20 +13,7 @@
       "gap": 12
     },
     "type": "View",
-    "children": [
-      {
-        "id": "301f04b5-ef1f-42ae-8cf8-0569dc547139",
-        "props": {
-          "text": "Hello RN Canvas"
-        },
-        "style": {
-          "fontFamily": "Inter",
-          "fontSize": 14,
-          "color": "#111111"
-        },
-        "type": "Text"
-      }
-    ]
+    "children": []
   }
 }
 

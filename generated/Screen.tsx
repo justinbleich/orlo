@@ -1,6 +1,6 @@
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 export default function Screen() {
-  return <View style={styles.view}><Text style={styles.text}>Hello RN Canvas</Text></View>;
+  return <View style={styles.view} />;
 }
 const styles = StyleSheet.create({
   view: {
@@ -10,10 +10,5 @@ const styles = StyleSheet.create({
     flexDirection: "column",
     padding: 16,
     gap: 12
-  },
-  text: {
-    fontFamily: "Inter",
-    fontSize: 14,
-    color: "#111111"
   }
 });

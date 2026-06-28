@@ -1,17 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bell,
   FileCode2,
   FileJson2,
   FolderOpen,
-  GitPullRequest,
-  HelpCircle,
   Play,
   RefreshCw,
   Redo2,
   Save,
-  Share2,
-  Smartphone,
   Undo2,
 } from "lucide-react";
 import {
@@ -28,16 +23,25 @@ import {
   findRootContaining,
   getParent,
   useDocumentStore,
+  type ComponentRegistry,
   type DesignToken,
   type Node,
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
+import { FrameRenderer } from "@rn-canvas/render-web";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
 import { Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { color, layout, radius, space, text } from "./studio-theme";
-import { Eyebrow, LeftPanel, Tabs, ToolRail } from "./shell";
+import {
+  Eyebrow,
+  LeftPanel,
+  Tabs,
+  ToolRail,
+  type DesignSystemView,
+  type FlowId,
+} from "./shell";
 import { Button, Field, IconButton, Section, StatusPill, TextField, cn } from "./studio-ui";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
@@ -286,57 +290,246 @@ function stepCanvasHistory(editor: Editor, direction: "undo" | "redo") {
   }
 }
 
-function FlowWorkspace({ roots }: { roots: Node[] }) {
-  const screens = roots.filter((root) => !useDocumentStore.getState().editingComponentId || root.id !== useDocumentStore.getState().editingComponentId);
+function findFrameShapeForRoot(editor: Editor, rootId: NodeId): EditorShape | undefined {
+  return editor
+    .getCurrentPageShapes()
+    .find((shape) => isFrame(shape) && asFrame(shape).props.rootId === rootId);
+}
+
+function focusRootFrame(editor: Editor, rootId: NodeId, animate = true) {
+  const shape = findFrameShapeForRoot(editor, rootId);
+  if (!shape) return false;
+  editor.select(shape.id);
+  const bounds = editor.getShapePageBounds(shape);
+  if (bounds) {
+    editor.zoomToBounds(bounds, {
+      inset: 96,
+      animation: animate ? { duration: 180 } : undefined,
+    });
+  }
+  return true;
+}
+
+const FLOW_LABELS: Record<FlowId, string> = {
+  onboarding: "Onboarding Flow",
+  main: "Main App Flow",
+  auth: "Auth Flow",
+};
+
+const FLOW_DESCRIPTIONS: Record<FlowId, string> = {
+  onboarding: "Default stack order for first-run screens.",
+  main: "Primary app route order from the current screen tree.",
+  auth: "Authentication screens inferred from screen names when present.",
+};
+
+function flowScreens(roots: Node[], flow: FlowId): Node[] {
+  if (flow === "onboarding") return roots;
+  const lowered = (root: Node) => (root.design?.name ?? "").toLowerCase();
+  const auth = roots.filter((root) =>
+    /auth|login|sign|create|verify|welcome/.test(lowered(root)),
+  );
+  const main = roots.filter((root) => !auth.includes(root));
+  if (flow === "auth") return auth.length ? auth : roots.slice(0, 1);
+  return main.length ? main : roots;
+}
+
+function orderedFlowScreens(screens: Node[], entryRootId?: NodeId): Node[] {
+  if (!entryRootId) return screens;
+  const entry = screens.find((root) => root.id === entryRootId);
+  if (!entry) return screens;
+  return [entry, ...screens.filter((root) => root.id !== entryRootId)];
+}
+
+function FlowScreenPreview({
+  root,
+  components,
+}: {
+  root: Node;
+  components: ComponentRegistry;
+}) {
+  const { w, h } = rootSize(root);
+  const scale = Math.min(144 / w, 256 / h);
+  const previewWidth = w * scale;
+  const previewHeight = h * scale;
+
+  return (
+    <div className="relative h-64 w-36 overflow-hidden rounded-sm bg-white shadow-inner">
+      <div
+        className="pointer-events-none absolute left-1/2 top-1/2 origin-top-left"
+        style={{
+          width: w,
+          height: h,
+          transform: `translate(-${previewWidth / 2}px, -${previewHeight / 2}px) scale(${scale})`,
+        }}
+      >
+        <FrameRenderer root={root} components={components} />
+      </div>
+    </div>
+  );
+}
+
+function FlowWorkspace({
+  roots,
+  components,
+  activeFlow,
+  entryRootId,
+  onSelectScreen,
+  onEntryRootChange,
+  onAddFrame,
+}: {
+  roots: Node[];
+  components: ComponentRegistry;
+  activeFlow: FlowId;
+  entryRootId?: NodeId;
+  onSelectScreen: (rootId: NodeId) => void;
+  onEntryRootChange: (rootId: NodeId) => void;
+  onAddFrame: () => void;
+}) {
+  const screens = roots.filter(
+    (root) =>
+      !useDocumentStore.getState().editingComponentId ||
+      root.id !== useDocumentStore.getState().editingComponentId,
+  );
+  const routeScreens = orderedFlowScreens(flowScreens(screens, activeFlow), entryRootId);
+  const entryScreen = routeScreens[0];
+  const screenLabels = new Map(
+    screens.map((root, index) => [root.id, root.design?.name ?? `Screen ${index + 1}`]),
+  );
+  const labelFor = (root: Node, fallbackIndex: number) =>
+    screenLabels.get(root.id) ?? root.design?.name ?? `Screen ${fallbackIndex + 1}`;
+  const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
   return (
     <div className="studio-chrome flex h-full flex-col bg-canvas">
       <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
         <div className="flex flex-col">
-          <span className="text-sm font-semibold text-ink">Onboarding Flow</span>
-          <span className="text-xs text-ink-faint">User signs up and lands in the feed.</span>
+          <span className="text-sm font-semibold text-ink">{FLOW_LABELS[activeFlow]}</span>
+          <span className="text-xs text-ink-faint">{FLOW_DESCRIPTIONS[activeFlow]}</span>
         </div>
+        {entryScreen && (
+          <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
+            Entry <span className="font-medium text-ink">{entryLabel}</span>
+          </div>
+        )}
         <div className="ml-auto flex items-center gap-xs">
-          <Button>Fit</Button>
-          <Button>Routes</Button>
-          <IconButton title="Add screen">
+          <IconButton title="Add screen" onClick={onAddFrame}>
             <PlusIcon />
           </IconButton>
         </div>
       </div>
-      <div className="relative flex-1 overflow-auto p-2xl">
-        <div className="flex min-w-max items-start gap-2xl">
-          {screens.map((root, index) => {
-            const { w, h } = rootSize(root);
-            return (
-              <div key={root.id} className="relative flex flex-col items-center gap-sm">
-                {index > 0 && (
-                  <div className="absolute -left-2xl top-28 h-px w-2xl bg-accent-line" aria-hidden="true" />
-                )}
-                <div className="text-xs font-medium text-ink-dim">
-                  {root.design?.name ?? `Screen ${index + 1}`}
+      <div className="relative flex-1 overflow-auto">
+        <div className="grid min-h-full min-w-[760px] grid-cols-[minmax(0,1fr)_260px]">
+          <div className="overflow-auto p-2xl">
+            <div className="flex min-w-max items-start gap-2xl">
+              {routeScreens.map((root, index) => (
+                <div key={root.id} className="relative flex flex-col items-center gap-sm">
+                  {index > 0 && (
+                    <div
+                      className="absolute -left-2xl top-28 h-px w-2xl bg-accent-line"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <div className="flex h-5 items-center gap-xs text-xs font-medium text-ink-dim">
+                    <span>{labelFor(root, index)}</span>
+                    {root.id === entryScreen?.id && (
+                      <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
+                        Entry
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onSelectScreen(root.id)}
+                    className="flex h-64 w-36 items-center justify-center overflow-hidden rounded-sm border border-line bg-chrome shadow-control transition-colors hover:border-accent-line hover:bg-raised"
+                  >
+                    <FlowScreenPreview root={root} components={components} />
+                  </button>
                 </div>
-                <div className="flex h-64 w-36 items-center justify-center rounded-sm border border-line bg-chrome shadow-control">
-                  <div className="flex flex-col items-center gap-xs text-center">
-                    <Smartphone size={20} className="text-accent" aria-hidden="true" />
-                    <span className="text-xs text-ink">{w} x {h}</span>
-                    <span className="text-2xs text-ink-faint">{root.type}</span>
+              ))}
+              {routeScreens.length === 0 && (
+                <div className="rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
+                  Add a screen to start mapping the flow.
+                </div>
+              )}
+            </div>
+          </div>
+          <aside className="border-l border-line bg-chrome p-md">
+            <div className="flex flex-col gap-md">
+              <div>
+                <div className="eyebrow">Navigator</div>
+                <div className="mt-xs text-sm font-semibold text-ink">
+                  React Navigation stack
+                </div>
+                <p className="m-0 mt-xs text-xs text-ink-faint">
+                  Route order follows the selected flow entrypoint. Export is planned for the
+                  navigation layer; screen selection is live now.
+                </p>
+              </div>
+              {entryScreen && (
+                <div className="rounded-sm bg-raised p-sm">
+                  <div className="text-2xs font-semibold uppercase tracking-[0.08em] text-ink-faint">
+                    Entry point
+                  </div>
+                  <div className="mt-xs truncate text-sm font-medium text-ink">
+                    {entryLabel}
                   </div>
                 </div>
+              )}
+              <div className="flex flex-col gap-xs">
+                {routeScreens.map((root, index) => (
+                  <div
+                    key={root.id}
+                    className="flex h-8 items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onSelectScreen(root.id)}
+                      className="flex min-w-0 flex-1 items-center gap-xs text-left"
+                    >
+                      <span className="w-5 shrink-0 text-2xs tabular-nums text-ink-faint">
+                        {index + 1}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {labelFor(root, index)}
+                      </span>
+                    </button>
+                    {root.id === entryScreen?.id ? (
+                      <span className="shrink-0 text-2xs font-semibold text-accent">
+                        Entry
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onEntryRootChange(root.id)}
+                        className="shrink-0 rounded-pill px-xs py-px text-2xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
+                      >
+                        Set entry
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {routeScreens.length === 0 && (
+                  <p className="m-0 text-xs text-ink-faint">No screens in this flow yet.</p>
+                )}
               </div>
-            );
-          })}
-          {screens.length === 0 && (
-            <div className="rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
-              Add a screen to start mapping the flow.
             </div>
-          )}
+          </aside>
         </div>
       </div>
     </div>
   );
 }
 
-function DesignSystemWorkspace({ tokens }: { tokens: DesignToken[] }) {
+function DesignSystemWorkspace({
+  tokens,
+  activeView,
+  onViewChange,
+  onCreateToken,
+}: {
+  tokens: DesignToken[];
+  activeView: DesignSystemView;
+  onViewChange: (view: DesignSystemView) => void;
+  onCreateToken: (category: "color" | "spacing" | "fontSize") => void;
+}) {
   const grouped = {
     color: tokens.filter((token) => token.category === "color"),
     spacing: tokens.filter((token) => token.category === "spacing"),
@@ -350,13 +543,16 @@ function DesignSystemWorkspace({ tokens }: { tokens: DesignToken[] }) {
           <span className="text-xs text-ink-faint">Define reusable color, spacing, and type values.</span>
         </div>
         <div className="ml-auto flex items-center gap-xs">
-          {["All", "Colors", "Typography", "Spacing", "Radius"].map((tab, index) => (
+          {(["Tokens", "Colors", "Typography", "Spacing", "Radius"] as DesignSystemView[]).map((tab) => (
             <button
               key={tab}
               type="button"
+              onClick={() => onViewChange(tab)}
               className={cn(
                 "h-7 rounded-sm px-sm text-xs transition-colors",
-                index === 0 ? "bg-accent-soft text-accent" : "text-ink-dim hover:bg-raised hover:text-ink",
+                activeView === tab
+                  ? "bg-accent-soft text-accent"
+                  : "text-ink-dim hover:bg-raised hover:text-ink",
               )}
             >
               {tab}
@@ -366,34 +562,76 @@ function DesignSystemWorkspace({ tokens }: { tokens: DesignToken[] }) {
       </div>
       <div className="flex-1 overflow-auto p-xl">
         <div className="mx-auto flex max-w-4xl flex-col gap-lg">
-          <TokenTable title="Colors" tokens={grouped.color} />
-          <TokenTable title="Spacing Scale" tokens={grouped.spacing} />
-          <TokenTable title="Type Scale" tokens={grouped.fontSize} />
+          {(activeView === "Tokens" || activeView === "Colors") && (
+            <TokenTable
+              title="Colors"
+              tokens={grouped.color}
+              onCreate={() => onCreateToken("color")}
+            />
+          )}
+          {(activeView === "Tokens" || activeView === "Spacing") && (
+            <TokenTable
+              title="Spacing Scale"
+              tokens={grouped.spacing}
+              onCreate={() => onCreateToken("spacing")}
+            />
+          )}
+          {(activeView === "Tokens" || activeView === "Typography") && (
+            <TokenTable
+              title="Type Scale"
+              tokens={grouped.fontSize}
+              onCreate={() => onCreateToken("fontSize")}
+            />
+          )}
+          {activeView === "Radius" && (
+            <section className="rounded-sm border border-line bg-chrome p-lg text-sm text-ink-faint shadow-control">
+              Radius tokens are not part of the current document token model yet.
+            </section>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function TokenTable({ title, tokens }: { title: string; tokens: DesignToken[] }) {
+function TokenTable({
+  title,
+  tokens,
+  onCreate,
+}: {
+  title: string;
+  tokens: DesignToken[];
+  onCreate: () => void;
+}) {
   return (
     <section className="rounded-sm border border-line bg-chrome shadow-control">
       <div className="flex items-center border-b border-line-soft px-md py-sm">
         <span className="text-sm font-semibold text-ink">{title}</span>
         <span className="ml-auto text-xs text-ink-faint">{tokens.length} tokens</span>
+        <Button className="ml-sm" variant="ghost" onClick={onCreate}>
+          <PlusIcon /> Add
+        </Button>
       </div>
       <div className="divide-y divide-line-soft">
         {tokens.length === 0 ? (
           <div className="px-md py-lg text-sm text-ink-faint">No tokens yet.</div>
         ) : (
           tokens.map((token) => (
-            <div key={token.id} className="grid grid-cols-[minmax(0,1fr)_96px_1fr] items-center gap-md px-md py-sm text-sm">
+            <div
+              key={token.id}
+              className="grid grid-cols-[minmax(0,1fr)_96px_1fr] items-center gap-md px-md py-sm text-sm"
+            >
               <span className="min-w-0 truncate font-mono text-xs text-ink">{token.name}</span>
               <span className="text-xs text-ink-dim">{String(token.value)}</span>
               <span className="h-2 rounded-pill bg-accent-soft">
                 <span
                   className="block h-full rounded-pill bg-accent/35"
-                  style={{ width: token.category === "color" ? "32%" : `${Math.min(100, Number(token.value) || 16)}%` }}
+                  style={{
+                    width:
+                      token.category === "color"
+                        ? "32%"
+                        : `${Math.min(100, Number(token.value) || 16)}%`,
+                  }}
                 />
               </span>
             </div>
@@ -408,6 +646,89 @@ function PlusIcon() {
   return <span className="text-base leading-none">+</span>;
 }
 
+function ChangesTimeline({
+  gitStatus,
+  repoPath,
+  onRefresh,
+  onOpenCode,
+}: {
+  gitStatus: GitStatus;
+  repoPath: string;
+  onRefresh: () => void;
+  onOpenCode: () => void;
+}) {
+  const entries: Array<{ id: string; label: string; detail: string; tone?: "accent" | "amber" }> = [];
+
+  if (gitStatus.status === "loading") {
+    entries.push({ id: "git-loading", label: "Git status", detail: "Loading repository status." });
+  } else if (gitStatus.status === "error") {
+    entries.push({ id: "git-error", label: "Git unavailable", detail: gitStatus.message, tone: "amber" });
+  } else if (gitStatus.clean) {
+    entries.push({ id: "git-clean", label: "Git clean", detail: gitStatus.branch });
+  } else {
+    gitStatus.files.slice(0, 12).forEach((file) => {
+      entries.push({
+        id: `${file.index}${file.workingTree}-${file.path}`,
+        label: gitFileStatusLabel(file),
+        detail: file.path,
+        tone: file.index === "D" || file.workingTree === "D" ? "amber" : "accent",
+      });
+    });
+    if (gitStatus.files.length > 12) {
+      entries.push({
+        id: "more",
+        label: "More changes",
+        detail: `${gitStatus.files.length - 12} additional files`,
+      });
+    }
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-md p-md text-sm">
+      <div className="flex items-center gap-xs">
+        <Eyebrow>Git Changes</Eyebrow>
+        <div className="flex-1" />
+        <IconButton title="Refresh Git status" onClick={onRefresh}>
+          <RefreshCw size={14} aria-hidden="true" />
+        </IconButton>
+      </div>
+      {repoPath && (
+        <div className="truncate rounded-sm border border-line bg-chrome-2 px-sm py-xs text-xs text-ink-faint" title={repoPath}>
+          {repoPath}
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1 flex-col gap-xs overflow-y-auto pr-xs">
+        {entries.map((entry) => (
+          <div key={entry.id} className="flex gap-sm rounded-sm border border-line bg-chrome-2 p-sm">
+            <span
+              className={cn(
+                "mt-1 size-2 shrink-0 rounded-pill bg-ink-faint",
+                entry.tone === "accent" && "bg-accent",
+                entry.tone === "amber" && "bg-amber",
+              )}
+              aria-hidden="true"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-ink">{entry.label}</div>
+              <div className="truncate text-xs text-ink-faint" title={entry.detail}>
+                {entry.detail}
+              </div>
+            </div>
+          </div>
+        ))}
+        {entries.length === 0 && (
+          <div className="rounded-sm border border-line bg-chrome-2 p-md text-sm text-ink-faint">
+            No changes yet.
+          </div>
+        )}
+      </div>
+      <Button onClick={onOpenCode}>
+        <FileCode2 size={14} aria-hidden="true" /> View generated files
+      </Button>
+    </div>
+  );
+}
+
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
@@ -416,10 +737,15 @@ export default function App() {
   const skipCodeSyncRef = useRef(false);
   const skipNextPathSyncRef = useRef(false);
   const syncRootIdRef = useRef<NodeId | null>(null);
+  const pendingFocusRootIdRef = useRef<NodeId | null>(null);
 
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
   const [inspectorTab, setInspectorTab] = useState("Inspect");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
+  const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
+  const [flowEntrypoints, setFlowEntrypoints] = useState<Partial<Record<FlowId, NodeId>>>({});
+  const [activeDesignSystemView, setActiveDesignSystemView] =
+    useState<DesignSystemView>("Tokens");
   const [screenName, setScreenName] = useState("Screen");
   const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
   const [sidecarPath, setSidecarPath] = useState("generated/Screen.rncanvas.json");
@@ -471,6 +797,10 @@ export default function App() {
   const redo = useDocumentStore((s) => s.redo);
 
   useEffect(() => startMcpBridge(handleMcpCommand), []);
+
+  useEffect(() => {
+    if (inspectorTab === "Props") setInspectorTab("Inspect");
+  }, [inspectorTab]);
 
   useEffect(() => {
     if (artifacts.length && !artifacts.some((artifact) => artifact.id === activeArtifactId)) {
@@ -667,14 +997,53 @@ export default function App() {
     setCanvasCanRedo(false);
   }, []);
 
+  const createToken = useCallback((category: "color" | "spacing" | "fontSize") => {
+    const state = useDocumentStore.getState();
+    const base = category === "color" ? "color" : category === "spacing" ? "space" : "text";
+    const taken = new Set(
+      Object.values(state.tokens)
+        .filter((token) => token.category === category)
+        .map((token) => token.name),
+    );
+    let name = `${base}1`;
+    for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
+    const value = category === "color" ? "#3b82f6" : category === "spacing" ? 8 : 16;
+    state.addToken({ id: crypto.randomUUID(), name, category, value });
+    setWorkspace("Design System");
+    setActiveDesignSystemView(
+      category === "color" ? "Colors" : category === "spacing" ? "Spacing" : "Typography",
+    );
+    setStatus(`Added ${name}`);
+  }, []);
+
+  const selectScreenFromWorkspace = useCallback((rootId: NodeId) => {
+    pendingFocusRootIdRef.current = rootId;
+    useDocumentStore.getState().setSelection([rootId]);
+    setWorkspace("Screen");
+    setInspectorTab("Inspect");
+    setStatus("Opened screen");
+  }, []);
+
+  const openChangesPanel = useCallback(() => {
+    setInspectorTab("History");
+    setStatus("Showing changes");
+  }, []);
+
+  const setFlowEntryRoot = useCallback((rootId: NodeId) => {
+    setFlowEntrypoints((current) => ({ ...current, [activeFlow]: rootId }));
+    setStatus("Updated flow entrypoint");
+  }, [activeFlow]);
+
   // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
   // can't ping-pong with the listener above.
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor || !focusedRoot) return;
-    const shape = editor
-      .getCurrentPageShapes()
-      .find((s) => isFrame(s) && asFrame(s).props.rootId === focusedRoot.id);
+    if (pendingFocusRootIdRef.current === focusedRoot.id) {
+      if (focusRootFrame(editor, focusedRoot.id)) pendingFocusRootIdRef.current = null;
+      return;
+    }
+    const shape = findFrameShapeForRoot(editor, focusedRoot.id);
     if (shape && editor.getOnlySelectedShape()?.id !== shape.id) {
       editor.select(shape.id);
     }
@@ -901,15 +1270,14 @@ export default function App() {
           }
           const selectedId = useDocumentStore.getState().selection[0] ?? "";
           const selectedRoot = findRootContaining(Object.values(roots), selectedId);
-          const selectedShape = selectedRoot
-            ? editor
-                .getCurrentPageShapes()
-                .find(
-                  (shape) =>
-                    isFrame(shape) && asFrame(shape).props.rootId === selectedRoot.id,
-                )
-            : undefined;
-          if (selectedShape) editor.select(selectedShape.id);
+          if (selectedRoot) {
+            if (pendingFocusRootIdRef.current === selectedRoot.id) {
+              if (focusRootFrame(editor, selectedRoot.id)) pendingFocusRootIdRef.current = null;
+            } else {
+              const selectedShape = findFrameShapeForRoot(editor, selectedRoot.id);
+              if (selectedShape) editor.select(selectedShape.id);
+            }
+          }
         },
         { history: "ignore", ignoreShapeLock: true },
       );
@@ -921,6 +1289,7 @@ export default function App() {
   const addFrame = useCallback(() => {
     const root = createScreenFrame();
     const store = useDocumentStore.getState();
+    pendingFocusRootIdRef.current = root.id;
     store.addRoot(root);
     store.setSelection([root.id]);
   }, []);
@@ -1188,30 +1557,18 @@ export default function App() {
           </span>
         </div>
         <div className="ml-auto flex min-w-0 items-center gap-sm">
-          <Button className="min-w-32 justify-between" title="Device preset">
-            <Smartphone size={14} aria-hidden="true" />
-            iPhone 15 Pro
-          </Button>
-          <IconButton title="Preview">
-            <Play size={15} aria-hidden="true" />
-          </IconButton>
-          <Button title="Share">
-            <Share2 size={14} aria-hidden="true" /> Share
-          </Button>
-          <Button
-            variant="primary"
-            disabled={codegenBusy || !focusedRoot}
-            title="Sync files and prepare implementation changes"
-            onClick={() => void requestCodegen("sync")}
+          <StatusPill
+            tone={gitTone}
+            title={gitStatus.status === "error" ? gitStatus.message : gitLabel}
           >
-            <GitPullRequest size={14} aria-hidden="true" /> Create PR
-          </Button>
-          <IconButton title="Notifications">
-            <Bell size={15} aria-hidden="true" />
-          </IconButton>
-          <IconButton title="Help">
-            <HelpCircle size={15} aria-hidden="true" />
-          </IconButton>
+            {gitLabel}
+          </StatusPill>
+          <StatusPill
+            tone={syncTone}
+            title={syncState.status === "error" ? syncState.message : syncLabel}
+          >
+            {syncLabel}
+          </StatusPill>
         </div>
         <div className="flex items-center gap-xs border-l border-line-soft pl-md">
           <IconButton
@@ -1229,19 +1586,25 @@ export default function App() {
             <Redo2 size={16} aria-hidden="true" />
           </IconButton>
         </div>
-        <div className="flex min-w-0 items-center gap-sm">
-          <StatusPill
-            tone={gitTone}
-            title={gitStatus.status === "error" ? gitStatus.message : gitLabel}
+        <div className="flex min-w-0 items-center gap-sm border-l border-line-soft pl-md">
+          <IconButton
+            title="Preview generated code"
+            onClick={() => {
+              setInspectorTab("Code");
+              void requestCodegen("preview");
+            }}
+            disabled={codegenBusy || !focusedRoot}
           >
-            {gitLabel}
-          </StatusPill>
-          <StatusPill
-            tone={syncTone}
-            title={syncState.status === "error" ? syncState.message : syncLabel}
+            <Play size={15} aria-hidden="true" />
+          </IconButton>
+          <Button
+            variant="primary"
+            disabled={codegenBusy || !focusedRoot}
+            title="Sync generated files"
+            onClick={() => void requestCodegen("sync")}
           >
-            {syncLabel}
-          </StatusPill>
+            <Save size={14} aria-hidden="true" /> Sync
+          </Button>
         </div>
       </header>
 
@@ -1251,6 +1614,11 @@ export default function App() {
           workspace={workspace}
           onWorkspaceChange={setWorkspace}
           onAddFrame={addFrame}
+          activeFlow={activeFlow}
+          onFlowChange={setActiveFlow}
+          activeDesignSystemView={activeDesignSystemView}
+          onDesignSystemViewChange={setActiveDesignSystemView}
+          onOpenChanges={openChangesPanel}
           gitStatus={gitStatus}
           targetPath={targetPath}
           sidecarPath={sidecarPath}
@@ -1258,9 +1626,22 @@ export default function App() {
 
         <div className="relative flex min-w-0 flex-1 flex-col">
           {workspace === "Flow" ? (
-            <FlowWorkspace roots={Object.values(roots)} />
+            <FlowWorkspace
+              roots={Object.values(roots)}
+              components={componentRegistry}
+              activeFlow={activeFlow}
+              entryRootId={flowEntrypoints[activeFlow]}
+              onSelectScreen={selectScreenFromWorkspace}
+              onEntryRootChange={setFlowEntryRoot}
+              onAddFrame={addFrame}
+            />
           ) : workspace === "Design System" ? (
-            <DesignSystemWorkspace tokens={Object.values(tokens)} />
+            <DesignSystemWorkspace
+              tokens={Object.values(tokens)}
+              activeView={activeDesignSystemView}
+              onViewChange={setActiveDesignSystemView}
+              onCreateToken={createToken}
+            />
           ) : (
             <>
               <ToolRail
@@ -1329,13 +1710,13 @@ export default function App() {
             <div style={{ padding: space.md, paddingBottom: 0 }}>
               {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
               <Tabs
-                tabs={["Inspect", "Props", "Code", "History"]}
+                tabs={["Inspect", "Code", "History"]}
                 active={inspectorTab}
                 onSelect={setInspectorTab}
               />
             </div>
             <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-              {inspectorTab === "Inspect" || inspectorTab === "Props" ? (
+              {inspectorTab === "Inspect" ? (
                 <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
                   <Inspector rootId={focusedRootId} />
                 </ErrorBoundary>
@@ -1551,12 +1932,12 @@ export default function App() {
                   )}
                 </div>
               ) : (
-                <div className="flex flex-1 flex-col gap-sm p-md text-sm text-ink-faint">
-                  <Eyebrow>History</Eyebrow>
-                  <div className="rounded-sm border border-line bg-chrome-2 p-md">
-                    Changes, AI activity, and PR readiness will appear here as the implementation workflow lands.
-                  </div>
-                </div>
+                <ChangesTimeline
+                  gitStatus={gitStatus}
+                  repoPath={repoPath}
+                  onRefresh={() => void refreshGitStatus()}
+                  onOpenCode={() => setInspectorTab("Code")}
+                />
               )}
             </div>
           </div>

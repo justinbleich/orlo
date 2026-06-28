@@ -10,13 +10,14 @@ import {
   ArrowUp,
   Component,
   Frame,
-  Image,
+  Image as ImageIcon,
   List,
   MousePointer2,
   MousePointerClick,
   MoveVertical,
   Pencil,
   Plus,
+  Route,
   Square,
   TextCursorInput,
   Trash2,
@@ -42,6 +43,8 @@ import { deleteNodes, reorderNode } from "./document-actions";
 import { TokensPanel } from "./TokensPanel";
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
+export type FlowId = "onboarding" | "main" | "auth";
+export type DesignSystemView = "Tokens" | "Typography" | "Colors" | "Spacing" | "Radius";
 type GitFileStatus = { path: string; index: string; workingTree: string };
 type PanelGitStatus =
   | { status: "loading" }
@@ -197,7 +200,7 @@ export function ToolRail({
     { icon: Frame, label: "Frame", onClick: () => { setArmedTool(null); onAddFrame(); } },
     { icon: Square, label: "View", onClick: () => arm("View"), active: armedTool === "View", disabled: !canAddPrimitive },
     { icon: Type, label: "Text", onClick: () => arm("Text"), active: armedTool === "Text", disabled: !canAddPrimitive },
-    { icon: Image, label: "Image", onClick: () => arm("Image"), active: armedTool === "Image", disabled: !canAddPrimitive },
+    { icon: ImageIcon, label: "Image", onClick: () => arm("Image"), active: armedTool === "Image", disabled: !canAddPrimitive },
   ];
   return (
     <nav
@@ -331,6 +334,11 @@ export function LeftPanel({
   workspace,
   onWorkspaceChange,
   onAddFrame,
+  activeFlow,
+  onFlowChange,
+  activeDesignSystemView,
+  onDesignSystemViewChange,
+  onOpenChanges,
   gitStatus,
   targetPath,
   sidecarPath,
@@ -338,6 +346,11 @@ export function LeftPanel({
   workspace: WorkspaceMode;
   onWorkspaceChange: (workspace: WorkspaceMode) => void;
   onAddFrame: () => void;
+  activeFlow: FlowId;
+  onFlowChange: (flow: FlowId) => void;
+  activeDesignSystemView: DesignSystemView;
+  onDesignSystemViewChange: (view: DesignSystemView) => void;
+  onOpenChanges: () => void;
   gitStatus: PanelGitStatus;
   targetPath: string;
   sidecarPath: string;
@@ -433,6 +446,22 @@ export function LeftPanel({
   const sidecarGitCode = gitCodeForPath(gitStatus, sidecarPath);
   const themeGitCode = gitCodeForPath(gitStatus, "generated/theme.ts");
   const repoGitCode = firstGitCode(gitStatus);
+  const flows: Array<{ id: FlowId; label: string; gitCode?: string }> = [
+    { id: "onboarding", label: "Onboarding Flow", gitCode: sidecarGitCode },
+    { id: "main", label: "Main App Flow" },
+    { id: "auth", label: "Auth Flow" },
+  ];
+  const designSystemViews: DesignSystemView[] = ["Tokens", "Typography", "Colors", "Spacing", "Radius"];
+
+  function openFlow(flow: FlowId) {
+    onFlowChange(flow);
+    onWorkspaceChange("Flow");
+  }
+
+  function openDesignSystem(view: DesignSystemView) {
+    onDesignSystemViewChange(view);
+    onWorkspaceChange("Design System");
+  }
 
   return (
     <aside
@@ -449,41 +478,20 @@ export function LeftPanel({
         <button
           type="button"
           title="Project"
+          onClick={() => onWorkspaceChange("Screen")}
           className={cn("flex size-8 items-center justify-center rounded-sm", activeItem)}
         >
           <Frame size={15} aria-hidden="true" />
         </button>
         <button
           type="button"
-          title="Simulator"
-          className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
-        >
-          <MousePointerClick size={15} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
           title="Changes"
-          onClick={() => onWorkspaceChange("Flow")}
+          onClick={onOpenChanges}
           className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
         >
           <MoveVertical size={15} aria-hidden="true" />
         </button>
-        <button
-          type="button"
-          title="Assets"
-          onClick={() => onWorkspaceChange("Design System")}
-          className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
-        >
-          <Image size={15} aria-hidden="true" />
-        </button>
         <div className="flex-1" />
-        <button
-          type="button"
-          title="Settings"
-          className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
-        >
-          <Square size={15} aria-hidden="true" />
-        </button>
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-md overflow-y-auto p-md">
@@ -496,18 +504,17 @@ export function LeftPanel({
           <div className="flex items-center gap-xs">
             <Eyebrow>Flows</Eyebrow>
             <div className="flex-1" />
-            <Plus size={12} className="text-ink-faint" aria-hidden="true" />
           </div>
-          {["Onboarding Flow", "Main App Flow", "Auth Flow"].map((flow, index) => (
+          {flows.map((flow) => (
             <button
-              key={flow}
+              key={flow.id}
               type="button"
-              onClick={() => onWorkspaceChange("Flow")}
-              className={cn(sidebarItem, workspace === "Flow" && index === 0 ? activeItem : inactiveItem)}
+              onClick={() => openFlow(flow.id)}
+              className={cn(sidebarItem, workspace === "Flow" && activeFlow === flow.id ? activeItem : inactiveItem)}
             >
-              <List size={13} aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{flow}</span>
-              <GitBadge code={index === 0 ? sidecarGitCode : undefined} title={sidecarPath} />
+              <Route size={13} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{flow.label}</span>
+              <GitBadge code={flow.gitCode} title={sidecarPath} />
             </button>
           ))}
         </section>
@@ -660,12 +667,12 @@ export function LeftPanel({
 
         <section className="flex flex-col gap-xs">
           <Eyebrow>Design System</Eyebrow>
-          {["Tokens", "Typography", "Colors", "Spacing", "Radius"].map((item) => (
+          {designSystemViews.map((item) => (
             <button
               key={item}
               type="button"
-              onClick={() => onWorkspaceChange("Design System")}
-              className={cn(sidebarItem, workspace === "Design System" && item === "Tokens" ? activeItem : inactiveItem)}
+              onClick={() => openDesignSystem(item)}
+              className={cn(sidebarItem, workspace === "Design System" && activeDesignSystemView === item ? activeItem : inactiveItem)}
             >
               <Type size={13} aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{item}</span>
@@ -675,19 +682,8 @@ export function LeftPanel({
         </section>
 
         <section className="flex flex-col gap-xs">
-          <Eyebrow>Assets</Eyebrow>
-          {["Images", "Icons", "Illustrations"].map((item) => (
-            <button key={item} type="button" className={cn(sidebarItem, inactiveItem)}>
-              <Image size={13} aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{item}</span>
-              <GitBadge />
-            </button>
-          ))}
-        </section>
-
-        <section className="flex flex-col gap-xs">
           <Eyebrow>Changes</Eyebrow>
-          <button type="button" onClick={() => onWorkspaceChange("Flow")} className={cn(sidebarItem, inactiveItem)}>
+          <button type="button" onClick={onOpenChanges} className={cn(sidebarItem, inactiveItem)}>
             <MoveVertical size={13} aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">Activity and PR readiness</span>
             <GitBadge code={repoGitCode} title="Repository has changes" />

@@ -2,47 +2,29 @@
   "version": 1,
   "screenName": "Screen",
   "root": {
-    "id": "sample-root",
-    "type": "View",
+    "id": "8517e785-c6ed-42df-8a03-001f4b4c1707",
     "props": {},
     "style": {
-      "flexDirection": "row",
-      "alignItems": "center",
-      "justifyContent": "space-between",
-      "padding": 16,
-      "width": 320,
-      "height": 120,
+      "width": 390,
+      "height": 844,
       "backgroundColor": "#ffffff",
-      "borderRadius": 8,
-      "borderWidth": 1,
-      "borderColor": "#e0e0e0"
+      "flexDirection": "column",
+      "padding": 16,
+      "gap": 12
     },
+    "type": "View",
     "children": [
       {
-        "id": "sample-text",
-        "type": "Text",
+        "id": "301f04b5-ef1f-42ae-8cf8-0569dc547139",
         "props": {
           "text": "Hello RN Canvas"
         },
         "style": {
-          "fontSize": 18,
-          "fontWeight": "600",
+          "fontFamily": "Inter",
+          "fontSize": 14,
           "color": "#111111"
-        }
-      },
-      {
-        "id": "sample-image",
-        "type": "Image",
-        "props": {
-          "source": {
-            "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAp0lEQVR4AdXBQQqDUBAFwZ7Gi+bauUoWE0EhigquzH9V9Xp/uKl5VnHDxLXmv5q94sTEUTOmZlFsyF4zvmZDfpoczUrCyaLJ08wknISTcAJNrpZwEk7CSTgJJ+EknISTcBJOwkk4CSfhJJyEk3ASTsJJOAkn4SSchJNwEk7CCRS5SsJJOAkniyJPMZNw8lPkKFayV4yv2Jg4KhbNWIoTE9eKveZZxQ1f+qIRngMFE4cAAAAASUVORK5CYII="
-          },
-          "resizeMode": "contain"
         },
-        "style": {
-          "width": 48,
-          "height": 48
-        }
+        "type": "Text"
       }
     ]
   }

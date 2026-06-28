@@ -2,7 +2,7 @@
   "version": 1,
   "screenName": "Screen",
   "root": {
-    "id": "a5f98120-0d20-459b-8a05-020a55c38483",
+    "id": "1613f113-c399-40e3-a885-6484dd0f59d2",
     "props": {},
     "style": {
       "width": 390,
@@ -13,7 +13,48 @@
       "gap": 12
     },
     "type": "View",
-    "children": []
+    "children": [
+      {
+        "id": "d8958f58-eae3-45c7-88e6-e3c3140ffb57",
+        "type": "ComponentInstance",
+        "componentId": "a0fd47a3-5341-407f-955a-20e363f59efb",
+        "overrides": {},
+        "style": {}
+      }
+    ]
+  },
+  "components": {
+    "a0fd47a3-5341-407f-955a-20e363f59efb": {
+      "id": "a0fd47a3-5341-407f-955a-20e363f59efb",
+      "name": "TextComponent",
+      "template": {
+        "id": "d8958f58-eae3-45c7-88e6-e3c3140ffb57",
+        "props": {
+          "text": "Hello RN Canvas"
+        },
+        "style": {
+          "fontFamily": "Inter",
+          "fontSize": 14,
+          "color": "#111111"
+        },
+        "type": "Text"
+      },
+      "props": []
+    }
+  },
+  "tokens": {
+    "7f931896-534e-4405-878a-5d7bfd5a28af": {
+      "id": "7f931896-534e-4405-878a-5d7bfd5a28af",
+      "name": "color1",
+      "category": "color",
+      "value": "#23c918"
+    },
+    "dcf66616-307c-4b55-8b49-e13fb9daae21": {
+      "id": "dcf66616-307c-4b55-8b49-e13fb9daae21",
+      "name": "text1",
+      "category": "fontSize",
+      "value": 18
+    }
   }
 }
 

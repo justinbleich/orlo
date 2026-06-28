@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "updatedAt": "2026-06-28T16:41:11.373Z",
+  "flows": [
+    {
+      "id": "onboarding",
+      "label": "Onboarding Flow",
+      "entryRootId": "997b4bdb-04e9-4a01-be56-53d57bfd2355",
+      "routes": [
+        {
+          "rootId": "997b4bdb-04e9-4a01-be56-53d57bfd2355",
+          "name": "Screen 1"
+        }
+      ]
+    }
+  ]
+}

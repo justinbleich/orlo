@@ -1,5 +1,8 @@
 export const theme = {
   color: {
-    color1: "#3b82f6"
+    color1: "#23c918"
+  },
+  fontSize: {
+    text1: 18
   }
 } as const;

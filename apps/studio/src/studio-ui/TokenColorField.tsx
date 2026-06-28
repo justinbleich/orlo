@@ -1,6 +1,7 @@
 import { forwardRef, useState } from "react";
 import { Link2Off } from "lucide-react";
 import { cn } from "./cn";
+import { ColorPickerPanel } from "./ColorPicker";
 import type { EditLifecycle } from "./controls";
 import { TokenPickerPopover, type TokenPickerOption } from "./TokenPickerPopover";
 
@@ -86,6 +87,9 @@ export function TokenColorField({
         customTab={
           <CustomColorTab
             value={value}
+            onEditStart={onEditStart}
+            onEditEnd={onEditEnd}
+            onEditCancel={onEditCancel}
             onChange={(v) => {
               onEditStart?.();
               if (linkedTokenId) onUnlink();
@@ -177,30 +181,20 @@ const ColorSwatchTrigger = forwardRef<
 function CustomColorTab({
   value,
   onChange,
+  onEditStart,
+  onEditEnd,
+  onEditCancel,
 }: {
   value: string | undefined;
   onChange: (next: string) => void;
-}) {
+} & EditLifecycle) {
   return (
-    <div className="flex flex-col gap-sm">
-      <input
-        type="color"
-        value={value ?? "#000000"}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label="Pick color"
-        className="h-20 w-full cursor-pointer rounded-sm border border-line bg-chrome-2 p-0"
-      />
-      <input
-        type="text"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="#000000"
-        spellCheck={false}
-        className={cn(
-          "h-7 w-full rounded-sm border border-line bg-chrome-2 px-sm font-mono text-xs uppercase text-ink",
-          "placeholder:text-ink-faint outline-none focus-visible:border-accent-line focus-visible:bg-raised",
-        )}
-      />
-    </div>
+    <ColorPickerPanel
+      value={value}
+      onChange={onChange}
+      onEditStart={onEditStart}
+      onEditEnd={onEditEnd}
+      onEditCancel={onEditCancel}
+    />
   );
 }

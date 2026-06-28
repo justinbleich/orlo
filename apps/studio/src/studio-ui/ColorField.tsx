@@ -1,4 +1,5 @@
 import { cn } from "./cn";
+import { ColorPickerPopover } from "./ColorPicker";
 import type { EditLifecycle } from "./controls";
 
 /**
@@ -40,16 +41,21 @@ export function ColorField({
           className="absolute inset-0"
           style={{ background: value ?? "transparent" }}
         />
-        <input
-          type="color"
-          value={value ?? "#000000"}
+        <ColorPickerPopover
+          value={value}
           disabled={disabled}
-          onChange={(e) => {
-            onEditStart?.();
-            onChange(e.target.value);
-          }}
-          aria-label="Pick color"
-          className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+          onChange={onChange}
+          onEditStart={onEditStart}
+          onEditEnd={onEditEnd}
+          onEditCancel={onEditCancel}
+          trigger={
+            <button
+              type="button"
+              disabled={disabled}
+              aria-label="Pick color"
+              className="absolute inset-0 cursor-pointer disabled:cursor-not-allowed"
+            />
+          }
         />
       </span>
       <input

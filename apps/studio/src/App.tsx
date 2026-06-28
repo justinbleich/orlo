@@ -46,7 +46,16 @@ import {
   type FlowPanelItem,
   type RepoPanelContext,
 } from "./shell";
-import { Button, Field, IconButton, Section, StatusPill, TextField, cn } from "./studio-ui";
+import {
+  Button,
+  ColorPickerPopover,
+  Field,
+  IconButton,
+  Section,
+  StatusPill,
+  TextField,
+  cn,
+} from "./studio-ui";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
@@ -773,21 +782,40 @@ function TokenSpecimen({
   token: DesignToken;
   onValueChange: (value: DesignToken["value"]) => void;
 }) {
+  const editLifecycle = useMemo(
+    () => ({
+      onEditStart: () => {
+        const store = useDocumentStore.getState();
+        if (!store.interaction) store.beginInteraction();
+      },
+      onEditEnd: () => useDocumentStore.getState().commitInteraction(),
+      onEditCancel: () => useDocumentStore.getState().cancelInteraction(),
+    }),
+    [],
+  );
+
   if (token.category === "color") {
     const value = String(token.value);
     return (
       <div className="flex flex-col gap-sm">
-        <label className="relative block h-24 overflow-hidden rounded-sm border border-line bg-chrome">
+        <div className="relative block h-24 overflow-hidden rounded-sm border border-line bg-chrome">
           <span className="color-checker absolute inset-0 opacity-40" aria-hidden="true" />
           <span className="absolute inset-0" style={{ background: value }} aria-hidden="true" />
-          <input
-            type="color"
+          <ColorPickerPopover
             value={value}
-            onChange={(event) => onValueChange(event.target.value)}
-            className="absolute inset-0 cursor-pointer opacity-0"
-            aria-label={`${token.name} color`}
+            onChange={onValueChange}
+            onEditStart={editLifecycle.onEditStart}
+            onEditEnd={editLifecycle.onEditEnd}
+            onEditCancel={editLifecycle.onEditCancel}
+            trigger={
+              <button
+                type="button"
+                className="absolute inset-0 cursor-pointer"
+                aria-label={`${token.name} color`}
+              />
+            }
           />
-        </label>
+        </div>
         <input
           value={value}
           onChange={(event) => onValueChange(event.target.value)}

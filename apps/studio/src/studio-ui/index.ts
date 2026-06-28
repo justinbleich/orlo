@@ -10,6 +10,7 @@ export { Field, FieldGrid } from "./Field";
 export { NumberField } from "./NumberField";
 export { TextField } from "./TextField";
 export { ColorField } from "./ColorField";
+export { ColorPickerPanel, ColorPickerPopover } from "./ColorPicker";
 export { TokenColorField, type ColorTokenOption } from "./TokenColorField";
 export { TokenNumberField, type NumberTokenOption } from "./TokenNumberField";
 export { TokenPickerPopover, type TokenPickerOption } from "./TokenPickerPopover";

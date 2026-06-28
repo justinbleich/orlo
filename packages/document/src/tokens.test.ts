@@ -105,6 +105,13 @@ test("validateTokenRegistry accepts dotted names (color.primary.500)", () => {
 
 test("validateTokenRegistry checks names, category, and color values", () => {
   assert.deepEqual(validateTokenRegistry({ t1: brand() }), []);
+  assert.deepEqual(
+    validateTokenRegistry({
+      t1: { ...brand(), value: "rgba(59, 130, 246, 0.64)" },
+    }),
+    [],
+    "alpha-capable RN color strings are valid color tokens",
+  );
   assert.ok(
     validateTokenRegistry({ t1: { ...brand(), name: "1bad" } }).some((e) => e.key === "name"),
   );

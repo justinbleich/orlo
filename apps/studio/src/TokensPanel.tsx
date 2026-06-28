@@ -11,7 +11,7 @@ import {
   type NodeId,
   type TokenCategory,
 } from "@rn-canvas/document";
-import { cn } from "./studio-ui";
+import { ColorPickerPopover, cn } from "./studio-ui";
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*(\.[\w$]+)*$/;
 const CATEGORY_LABEL: Record<TokenCategory, string> = {
@@ -350,6 +350,14 @@ function ColorSwatchInput({
   value: string;
   onChange: (next: string) => void;
 }) {
+  const lifecycle = {
+    onEditStart: () => {
+      const store = useDocumentStore.getState();
+      if (!store.interaction) store.beginInteraction();
+    },
+    onEditEnd: () => useDocumentStore.getState().commitInteraction(),
+    onEditCancel: () => useDocumentStore.getState().cancelInteraction(),
+  };
   return (
     <span
       className={cn(
@@ -359,12 +367,19 @@ function ColorSwatchInput({
     >
       <span className="color-checker absolute inset-0 opacity-40" aria-hidden="true" />
       <span className="absolute inset-0" style={{ background: value }} aria-hidden="true" />
-      <input
-        type="color"
+      <ColorPickerPopover
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label="Token value"
-        className="absolute inset-0 cursor-pointer opacity-0"
+        onChange={onChange}
+        onEditStart={lifecycle.onEditStart}
+        onEditEnd={lifecycle.onEditEnd}
+        onEditCancel={lifecycle.onEditCancel}
+        trigger={
+          <button
+            type="button"
+            aria-label="Token value"
+            className="absolute inset-0 cursor-pointer"
+          />
+        }
       />
     </span>
   );

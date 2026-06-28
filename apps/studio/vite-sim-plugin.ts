@@ -1,9 +1,9 @@
 import type { Plugin } from "vite";
 import type { ComponentRegistry, Node, TokenRegistry } from "@rn-canvas/document";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -41,8 +41,64 @@ type TokensSaveRequest = {
   tokens?: TokenRegistry;
 };
 
+type FlowManifestRequest = {
+  manifest?: FlowManifest;
+};
+
+type FlowManifest = {
+  version: 1;
+  updatedAt?: string;
+  flows: Array<{
+    id: string;
+    label: string;
+    entryRootId?: string;
+    entryName?: string;
+    routes: Array<{ rootId: string; name: string }>;
+  }>;
+};
+
 type RepoRequest = {
   repoPath?: string;
+};
+
+type RepoFramework = {
+  id: "expo" | "react-native" | "expo-router" | "react-navigation";
+  label: string;
+  detail?: string;
+};
+
+type RepoScreenCandidate = {
+  path: string;
+  name: string;
+  kind: "source" | "sidecar";
+  sidecarPath?: string;
+  routeKind: "expo-router" | "react-navigation" | "unknown";
+  rnCanvas: boolean;
+};
+
+type RepoSidecarCandidate = {
+  path: string;
+  screenName?: string;
+  targetPath?: string;
+};
+
+type RepoAssetCandidate = {
+  path: string;
+  kind: "image" | "font" | "lottie" | "other";
+};
+
+type RepoContext = {
+  repoPath: string;
+  repoName: string;
+  packageManager: "pnpm" | "yarn" | "npm" | "unknown";
+  frameworks: RepoFramework[];
+  dependencies: Record<string, string>;
+  screens: RepoScreenCandidate[];
+  sidecars: RepoSidecarCandidate[];
+  assets: RepoAssetCandidate[];
+  entrypoints: string[];
+  ignored: { directories: string[] };
+  truncated: boolean;
 };
 
 type GitFileStatus = {
@@ -275,6 +331,259 @@ async function readGitStatus() {
   };
 }
 
+function flowManifestPath() {
+  return join(activeRepoRoot, ".rncanvas", "flows.json");
+}
+
+async function readFlowManifest(): Promise<FlowManifest> {
+  try {
+    const raw = await readFile(flowManifestPath(), "utf8");
+    const parsed = JSON.parse(raw) as FlowManifest;
+    if (parsed.version === 1 && Array.isArray(parsed.flows)) return parsed;
+  } catch {
+    // No manifest yet is the normal first-run state.
+  }
+  return { version: 1, flows: [] };
+}
+
+async function writeFlowManifest(manifest: FlowManifest) {
+  const path = flowManifestPath();
+  await mkdir(dirname(path), { recursive: true });
+  const next: FlowManifest = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    flows: manifest.flows,
+  };
+  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`);
+  return next;
+}
+
+const repoScanIgnoredDirs = new Set([
+  ".git",
+  ".next",
+  ".turbo",
+  ".expo",
+  ".vercel",
+  "coverage",
+  "dist",
+  "build",
+  "node_modules",
+  "Pods",
+  "DerivedData",
+]);
+
+const sourceExts = new Set([".tsx", ".jsx"]);
+const assetExts = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".svg",
+  ".ttf",
+  ".otf",
+  ".json",
+]);
+
+function packageManagerFor(files: Set<string>): RepoContext["packageManager"] {
+  if (files.has("pnpm-lock.yaml")) return "pnpm";
+  if (files.has("yarn.lock")) return "yarn";
+  if (files.has("package-lock.json")) return "npm";
+  return "unknown";
+}
+
+async function readPackageDependencies(root: string) {
+  try {
+    const raw = await readFile(join(root, "package.json"), "utf8");
+    const pkg = JSON.parse(raw) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    return { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+  } catch {
+    return {};
+  }
+}
+
+function routeKindForPath(path: string, dependencies: Record<string, string>) {
+  if (/^(app|src\/app)\//.test(path)) return "expo-router";
+  if (Object.keys(dependencies).some((dep) => dep.startsWith("@react-navigation/"))) {
+    return "react-navigation";
+  }
+  if (dependencies["expo-router"]) return "expo-router";
+  return "unknown";
+}
+
+function isLikelyScreenSource(path: string) {
+  if (!sourceExts.has(extname(path))) return false;
+  if (/\.(test|spec|stories)\.[tj]sx$/.test(path)) return false;
+  if (/(^|\/)__tests__(\/|$)/.test(path)) return false;
+  if (/(^|\/)(components|ui|tokens|theme)(\/|$)/i.test(path)) return false;
+  if (/^(app|src\/app|screens|src\/screens|routes|src\/routes|generated)\//.test(path)) return true;
+  if (/(Screen|Route|Page)\.[tj]sx$/.test(path)) return true;
+  return /\/(screens|routes)\//.test(path);
+}
+
+function screenNameFromPath(path: string) {
+  const base = basename(path)
+    .replace(/\.rncanvas\.json$/, "")
+    .replace(/\.[jt]sx$/, "");
+  if (base === "index") return basename(dirname(path));
+  if (base === "_layout") return "Layout";
+  return base.replace(/^\[(.+)\]$/, "$1");
+}
+
+async function maybeReadSidecar(path: string): Promise<RepoSidecarCandidate> {
+  try {
+    const raw = await readFile(join(activeRepoRoot, path), "utf8");
+    const parsed = JSON.parse(raw) as { screenName?: string };
+    return {
+      path,
+      screenName: parsed.screenName,
+      targetPath: path.replace(/\.rncanvas\.json$/, ".tsx"),
+    };
+  } catch {
+    return { path, targetPath: path.replace(/\.rncanvas\.json$/, ".tsx") };
+  }
+}
+
+function assetKind(path: string): RepoAssetCandidate["kind"] {
+  const ext = extname(path).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(ext)) return "image";
+  if ([".ttf", ".otf"].includes(ext)) return "font";
+  if (ext === ".json" && /lottie/i.test(path)) return "lottie";
+  return "other";
+}
+
+async function walkRepoFiles(root: string) {
+  const files: string[] = [];
+  const rootEntries = new Set<string>();
+  let truncated = false;
+  const maxFiles = 4_000;
+  const maxDepth = 7;
+
+  async function visit(dir: string, depth: number) {
+    if (files.length >= maxFiles) {
+      truncated = true;
+      return;
+    }
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      const rel = relative(root, abs);
+      if (depth === 0) rootEntries.add(entry.name);
+      if (entry.isDirectory()) {
+        if (repoScanIgnoredDirs.has(entry.name) || depth >= maxDepth) continue;
+        await visit(abs, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      files.push(rel);
+      if (files.length >= maxFiles) {
+        truncated = true;
+        return;
+      }
+    }
+  }
+
+  await visit(root, 0);
+  return { files, rootEntries, truncated };
+}
+
+async function readRepoContext(): Promise<RepoContext> {
+  const root = activeRepoRoot;
+  const { files, rootEntries, truncated } = await walkRepoFiles(root);
+  const dependencies = await readPackageDependencies(root);
+  const frameworks: RepoFramework[] = [];
+  if (dependencies.expo || files.some((file) => /^app\.(json|config\.)/.test(file))) {
+    frameworks.push({ id: "expo", label: "Expo", detail: dependencies.expo });
+  }
+  if (dependencies["react-native"]) {
+    frameworks.push({
+      id: "react-native",
+      label: "React Native",
+      detail: dependencies["react-native"],
+    });
+  }
+  if (dependencies["expo-router"] || files.some((file) => /^(app|src\/app)\//.test(file))) {
+    frameworks.push({
+      id: "expo-router",
+      label: "Expo Router",
+      detail: dependencies["expo-router"],
+    });
+  }
+  const reactNavigationDeps = Object.keys(dependencies).filter((dep) =>
+    dep.startsWith("@react-navigation/"),
+  );
+  if (reactNavigationDeps.length > 0) {
+    frameworks.push({
+      id: "react-navigation",
+      label: "React Navigation",
+      detail: reactNavigationDeps.slice(0, 2).join(", "),
+    });
+  }
+
+  const sidecars = await Promise.all(
+    files.filter((file) => file.endsWith(".rncanvas.json")).map((file) => maybeReadSidecar(file)),
+  );
+  const sidecarByTarget = new Map(
+    sidecars
+      .filter((sidecar): sidecar is RepoSidecarCandidate & { targetPath: string } => !!sidecar.targetPath)
+      .map((sidecar) => [sidecar.targetPath, sidecar]),
+  );
+  const screenMap = new Map<string, RepoScreenCandidate>();
+  for (const file of files) {
+    if (isLikelyScreenSource(file)) {
+      const sidecar = sidecarByTarget.get(file);
+      screenMap.set(file, {
+        path: file,
+        name: sidecar?.screenName ?? screenNameFromPath(file),
+        kind: "source",
+        sidecarPath: sidecar?.path,
+        routeKind: routeKindForPath(file, dependencies),
+        rnCanvas: !!sidecar,
+      });
+    }
+  }
+  for (const sidecar of sidecars) {
+    if (sidecar.targetPath && !screenMap.has(sidecar.targetPath)) {
+      screenMap.set(sidecar.path, {
+        path: sidecar.path,
+        name: sidecar.screenName ?? screenNameFromPath(sidecar.path),
+        kind: "sidecar",
+        sidecarPath: sidecar.path,
+        routeKind: routeKindForPath(sidecar.path, dependencies),
+        rnCanvas: true,
+      });
+    }
+  }
+
+  const entrypoints = files.filter((file) =>
+    /^(App\.[tj]sx|app\/_layout\.[tj]sx|src\/app\/_layout\.[tj]sx|index\.[jt]s|main\.[tj]sx)$/.test(
+      file,
+    ),
+  );
+  const assets = files
+    .filter((file) => assetExts.has(extname(file).toLowerCase()))
+    .filter((file) => /(^|\/)(assets|public|images|fonts|lottie)(\/|$)/i.test(file))
+    .slice(0, 80)
+    .map((file) => ({ path: file, kind: assetKind(file) }));
+
+  return {
+    repoPath: root,
+    repoName: basename(root),
+    packageManager: packageManagerFor(rootEntries),
+    frameworks,
+    dependencies,
+    screens: [...screenMap.values()].slice(0, 80),
+    sidecars,
+    assets,
+    entrypoints,
+    ignored: { directories: [...repoScanIgnoredDirs].sort() },
+    truncated,
+  };
+}
+
 export function simScreenshotPlugin(): Plugin {
   const commandQueue: BrowserCommand[] = [];
   const pending = new Map<
@@ -432,7 +741,11 @@ export function simScreenshotPlugin(): Plugin {
       server.middlewares.use("/api/repo", async (req, res) => {
         try {
           if (req.method === "GET") {
-            sendJson(res, 200, { repoPath: activeRepoRoot, defaultRepoPath: repoRoot });
+            sendJson(res, 200, {
+              repoPath: activeRepoRoot,
+              defaultRepoPath: repoRoot,
+              context: await readRepoContext(),
+            });
             return;
           }
           if (req.method !== "POST") {
@@ -445,10 +758,25 @@ export function simScreenshotPlugin(): Plugin {
             repoPath: activeRepoRoot,
             defaultRepoPath: repoRoot,
             git: await readGitStatus(),
+            context: await readRepoContext(),
           });
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Repository connection failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/repo/context", async (req, res) => {
+        if (req.method !== "GET") {
+          sendJson(res, 405, { error: "GET required" });
+          return;
+        }
+        try {
+          sendJson(res, 200, await readRepoContext());
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Repository scan failed",
           });
         }
       });
@@ -463,6 +791,26 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Git status failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/flows", async (req, res) => {
+        try {
+          if (req.method === "GET") {
+            sendJson(res, 200, await readFlowManifest());
+            return;
+          }
+          if (req.method !== "POST") {
+            sendJson(res, 405, { error: "GET or POST required" });
+            return;
+          }
+          const body = await readRequestJson<FlowManifestRequest>(req);
+          if (!body.manifest) throw new Error("Missing flow manifest");
+          sendJson(res, 200, await writeFlowManifest(body.manifest));
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Flow manifest failed",
           });
         }
       });

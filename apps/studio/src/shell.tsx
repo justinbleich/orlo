@@ -46,6 +46,24 @@ type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
 export type FlowId = "onboarding" | "main" | "auth";
 export type DesignSystemView = "Tokens" | "Typography" | "Colors" | "Spacing" | "Radius";
 type GitFileStatus = { path: string; index: string; workingTree: string };
+export type RepoPanelContext = {
+  repoPath: string;
+  repoName: string;
+  packageManager: string;
+  frameworks: Array<{ id: string; label: string; detail?: string }>;
+  screens: Array<{
+    path: string;
+    name: string;
+    kind: "source" | "sidecar";
+    sidecarPath?: string;
+    routeKind: "expo-router" | "react-navigation" | "unknown";
+    rnCanvas: boolean;
+  }>;
+  sidecars: Array<{ path: string; screenName?: string; targetPath?: string }>;
+  assets: Array<{ path: string; kind: string }>;
+  entrypoints: string[];
+  truncated?: boolean;
+};
 type PanelGitStatus =
   | { status: "loading" }
   | { status: "ready"; files: GitFileStatus[]; clean: boolean }
@@ -115,6 +133,12 @@ function gitCodeForPath(gitStatus: PanelGitStatus, path: string): string | undef
 function firstGitCode(gitStatus: PanelGitStatus): string | undefined {
   if (gitStatus.status !== "ready") return undefined;
   return gitStatus.files.map(gitStatusCode).find(Boolean);
+}
+
+function shortPathLabel(path: string) {
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length <= 2) return path;
+  return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
 }
 
 /** A quiet segmented tab bar used by the left panel and inspector. */
@@ -342,6 +366,7 @@ export function LeftPanel({
   gitStatus,
   targetPath,
   sidecarPath,
+  repoContext,
 }: {
   workspace: WorkspaceMode;
   onWorkspaceChange: (workspace: WorkspaceMode) => void;
@@ -354,6 +379,7 @@ export function LeftPanel({
   gitStatus: PanelGitStatus;
   targetPath: string;
   sidecarPath: string;
+  repoContext?: RepoPanelContext | null;
 }) {
   const roots = useDocumentStore((state) => state.roots);
   const selection = useDocumentStore((state) => state.selection);
@@ -446,6 +472,20 @@ export function LeftPanel({
   const sidecarGitCode = gitCodeForPath(gitStatus, sidecarPath);
   const themeGitCode = gitCodeForPath(gitStatus, "generated/theme.ts");
   const repoGitCode = firstGitCode(gitStatus);
+  const repoName = repoContext?.repoName ?? "Repository";
+  const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
+  const repoSubtitle =
+    frameworkLabels.length > 0
+      ? frameworkLabels.slice(0, 2).join(" · ")
+      : repoContext?.packageManager
+        ? `${repoContext.packageManager} workspace`
+        : "Attach a repo";
+  const repoScreenCandidates =
+    repoContext?.screens.filter((screen) => screen.path !== targetPath && screen.sidecarPath !== sidecarPath) ??
+    [];
+  const visibleRepoScreens = repoScreenCandidates.slice(0, 6);
+  const visibleAssets = repoContext?.assets.slice(0, 4) ?? [];
+  const visibleEntrypoints = repoContext?.entrypoints.slice(0, 3) ?? [];
   const flows: Array<{ id: FlowId; label: string; gitCode?: string }> = [
     { id: "onboarding", label: "Onboarding Flow", gitCode: sidecarGitCode },
     { id: "main", label: "Main App Flow" },
@@ -496,9 +536,54 @@ export function LeftPanel({
 
       <div className="flex min-w-0 flex-1 flex-col gap-md overflow-y-auto p-md">
         <div className="flex min-w-0 flex-col">
-          <div className="text-sm font-semibold text-ink">Runcaster</div>
-          <div className="truncate text-2xs text-accent">feature/new-onboarding</div>
+          <div className="flex min-w-0 items-center gap-xs">
+            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+              {repoName}
+            </div>
+            <GitBadge code={repoGitCode} title="Repository has changes" />
+          </div>
+          <div className="truncate text-2xs text-accent" title={repoContext?.repoPath}>
+            {repoSubtitle}
+          </div>
         </div>
+
+        {repoContext && (
+          <section className="flex flex-col gap-xs">
+            <Eyebrow>Repo</Eyebrow>
+            <div className="rounded-sm border border-line-soft bg-chrome-2 p-sm">
+              <div className="flex flex-wrap gap-xs">
+                {repoContext.packageManager !== "unknown" && (
+                  <span className="rounded-pill bg-raised px-xs py-px text-2xs font-semibold text-ink-dim">
+                    {repoContext.packageManager}
+                  </span>
+                )}
+                {repoContext.frameworks.slice(0, 3).map((framework) => (
+                  <span
+                    key={framework.id}
+                    title={framework.detail}
+                    className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent"
+                  >
+                    {framework.label}
+                  </span>
+                ))}
+                {repoContext.truncated && (
+                  <span className="rounded-pill bg-raised px-xs py-px text-2xs font-semibold text-ink-faint">
+                    scan capped
+                  </span>
+                )}
+              </div>
+              {visibleEntrypoints.length > 0 && (
+                <div className="mt-xs flex flex-col gap-2xs">
+                  {visibleEntrypoints.map((entry) => (
+                    <div key={entry} className="truncate text-2xs text-ink-faint" title={entry}>
+                      {entry}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         <section className="flex flex-col gap-xs">
           <div className="flex items-center gap-xs">
@@ -613,6 +698,37 @@ export function LeftPanel({
                 </div>
               );
             })}
+          {visibleRepoScreens.length > 0 && (
+            <div className="mt-xs flex flex-col gap-xs border-t border-line-soft pt-sm">
+              <Eyebrow>Repo Screens</Eyebrow>
+              {visibleRepoScreens.map((screen) => {
+                const gitCode =
+                  gitCodeForPath(gitStatus, screen.path) ??
+                  (screen.sidecarPath ? gitCodeForPath(gitStatus, screen.sidecarPath) : undefined);
+                return (
+                  <div
+                    key={screen.path}
+                    className={cn(sidebarItem, "text-ink-dim")}
+                    title={screen.path}
+                  >
+                    <Square size={13} aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">{screen.name}</span>
+                    {screen.rnCanvas && (
+                      <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
+                        canvas
+                      </span>
+                    )}
+                    <GitBadge code={gitCode} title={screen.path} />
+                  </div>
+                );
+              })}
+              {repoScreenCandidates.length > visibleRepoScreens.length && (
+                <div className="px-sm text-2xs text-ink-faint">
+                  +{repoScreenCandidates.length - visibleRepoScreens.length} more screens
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="flex flex-col gap-xs">
@@ -689,6 +805,19 @@ export function LeftPanel({
             <GitBadge code={repoGitCode} title="Repository has changes" />
           </button>
         </section>
+
+        {visibleAssets.length > 0 && (
+          <section className="flex flex-col gap-xs">
+            <Eyebrow>Assets</Eyebrow>
+            {visibleAssets.map((asset) => (
+              <div key={asset.path} className={cn(sidebarItem, "text-ink-dim")} title={asset.path}>
+                <ImageIcon size={13} aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{shortPathLabel(asset.path)}</span>
+                <span className="text-2xs text-ink-faint">{asset.kind}</span>
+              </div>
+            ))}
+          </section>
+        )}
 
         {workspace === "Design System" && (
           <section className="flex flex-col gap-sm border-t border-line-soft pt-md">

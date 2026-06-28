@@ -41,6 +41,7 @@ import {
   ToolRail,
   type DesignSystemView,
   type FlowId,
+  type RepoPanelContext,
 } from "./shell";
 import { Button, Field, IconButton, Section, StatusPill, TextField, cn } from "./studio-ui";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
@@ -130,7 +131,20 @@ type GitStatus =
   | { status: "ready"; repoPath: string; branch: string; clean: boolean; files: GitFileStatus[] }
   | { status: "error"; message: string };
 
+type RepoContext = RepoPanelContext;
+
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
+
+type FlowManifest = {
+  version: 1;
+  flows: Array<{
+    id: FlowId;
+    label: string;
+    entryRootId?: NodeId;
+    entryName?: string;
+    routes: Array<{ rootId: NodeId; name: string }>;
+  }>;
+};
 
 type OpenDocumentResult = {
   version: 1;
@@ -463,11 +477,11 @@ function FlowWorkspace({
               <div>
                 <div className="eyebrow">Navigator</div>
                 <div className="mt-xs text-sm font-semibold text-ink">
-                  React Navigation stack
+                  Prototype route graph
                 </div>
                 <p className="m-0 mt-xs text-xs text-ink-faint">
-                  Route order follows the selected flow entrypoint. Export is planned for the
-                  navigation layer; screen selection is live now.
+                  Route order follows the selected entrypoint. Router adapters can map this
+                  graph to React Navigation, Expo Router, or a custom stack later.
                 </p>
               </div>
               {entryScreen && (
@@ -765,6 +779,7 @@ export default function App() {
   const [repoDraft, setRepoDraft] = useState("");
   const [repoError, setRepoError] = useState<string | null>(null);
   const [repoBusy, setRepoBusy] = useState(false);
+  const [repoContext, setRepoContext] = useState<RepoContext | null>(null);
   const [canvasCanUndo, setCanvasCanUndo] = useState(false);
   const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
@@ -845,8 +860,20 @@ export default function App() {
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       setRepoPath(body.repoPath ?? "");
       setRepoDraft(body.repoPath ?? "");
+      setRepoContext(body.context ?? null);
     } catch (error) {
       setRepoError(error instanceof Error ? error.message : "Repository load failed");
+    }
+  }, []);
+
+  const loadRepoContext = useCallback(async () => {
+    try {
+      const res = await fetch("/api/repo/context");
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      setRepoContext(body);
+    } catch (error) {
+      setRepoError(error instanceof Error ? error.message : "Repository scan failed");
     }
   }, []);
 
@@ -887,6 +914,8 @@ export default function App() {
       } else {
         await refreshGitStatus();
       }
+      if (body.context) setRepoContext(body.context);
+      else await loadRepoContext();
       skipNextPathSyncRef.current = true;
       setStatus(`Connected ${nextPath}`);
     } catch (error) {
@@ -896,14 +925,71 @@ export default function App() {
     } finally {
       setRepoBusy(false);
     }
-  }, [refreshGitStatus, repoDraft]);
+  }, [loadRepoContext, refreshGitStatus, repoDraft]);
+
+  const loadFlowManifest = useCallback(async () => {
+    try {
+      const res = await fetch("/api/flows");
+      const body = (await res.json()) as FlowManifest & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      const next: Partial<Record<FlowId, NodeId>> = {};
+      for (const flow of body.flows ?? []) {
+        if (
+          (flow.id === "onboarding" || flow.id === "main" || flow.id === "auth") &&
+          flow.entryRootId
+        ) {
+          next[flow.id] = flow.entryRootId;
+        }
+      }
+      setFlowEntrypoints(next);
+    } catch {
+      // A missing flow manifest is fine; flows start from inferred screen order.
+    }
+  }, []);
+
+  const persistFlowManifest = useCallback(
+    async (entrypoints: Partial<Record<FlowId, NodeId>>) => {
+      const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+      const manifest: FlowManifest = {
+        version: 1,
+        flows: (["onboarding", "main", "auth"] as FlowId[]).map((flow) => {
+          const routeScreens = orderedFlowScreens(
+            flowScreens(screenRoots, flow),
+            entrypoints[flow],
+          );
+          const entry = routeScreens[0];
+          return {
+            id: flow,
+            label: FLOW_LABELS[flow],
+            entryRootId: entry?.id,
+            entryName: entry?.design?.name,
+            routes: routeScreens.map((root, index) => ({
+              rootId: root.id,
+              name: root.design?.name ?? `Screen ${index + 1}`,
+            })),
+          };
+        }),
+      };
+      const res = await fetch("/api/flows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manifest }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      void refreshGitStatus();
+      void loadRepoContext();
+    },
+    [editingComponentId, loadRepoContext, refreshGitStatus, roots],
+  );
 
   useEffect(() => {
     void loadRepo();
     void refreshGitStatus();
+    void loadFlowManifest();
     const timer = setInterval(() => void refreshGitStatus(), 5_000);
     return () => clearInterval(timer);
-  }, [loadRepo, refreshGitStatus]);
+  }, [loadFlowManifest, loadRepo, refreshGitStatus]);
 
   // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
   // beside the sidecar whenever the token registry changes. Debounced and
@@ -1036,9 +1122,16 @@ export default function App() {
   }, []);
 
   const setFlowEntryRoot = useCallback((rootId: NodeId) => {
-    setFlowEntrypoints((current) => ({ ...current, [activeFlow]: rootId }));
-    setStatus("Updated flow entrypoint");
-  }, [activeFlow]);
+    setFlowEntrypoints((current) => {
+      const next = { ...current, [activeFlow]: rootId };
+      void persistFlowManifest(next).then(
+        () => setStatus("Updated flow entrypoint"),
+        (error) =>
+          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+      return next;
+    });
+  }, [activeFlow, persistFlowManifest]);
 
   // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
   // can't ping-pong with the listener above.
@@ -1345,7 +1438,10 @@ export default function App() {
         setCodegenResult(body);
         if (source === "manual") setActiveArtifactId("screen");
         if (mode === "sync") setSyncState({ status: "synced", path: body.targetPath });
-        if (mode === "sync") void refreshGitStatus();
+        if (mode === "sync") {
+          void refreshGitStatus();
+          void loadRepoContext();
+        }
         setStatus(
           mode === "sync"
             ? `${source === "auto" ? "Autosynced" : "Synced"} ${body.targetPath} + ${body.sidecarPath}`
@@ -1363,7 +1459,7 @@ export default function App() {
         setCodegenBusy(false);
       }
     },
-    [refreshGitStatus, syncRoot],
+    [loadRepoContext, refreshGitStatus, syncRoot],
   );
 
   const openSidecar = useCallback(async () => {
@@ -1399,6 +1495,7 @@ export default function App() {
       setSidecarPath(opened.sidecarPath);
       setCodegenResult(null);
       setActiveArtifactId("screen");
+      void loadRepoContext();
       setStatus(`Opened ${opened.sidecarPath}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Document load failed";
@@ -1407,7 +1504,7 @@ export default function App() {
     } finally {
       setCodegenBusy(false);
     }
-  }, [resetCanvasHistory, sidecarPath]);
+  }, [loadRepoContext, resetCanvasHistory, sidecarPath]);
 
   const importSource = useCallback(async () => {
     setCodegenBusy(true);
@@ -1438,6 +1535,7 @@ export default function App() {
       setSidecarPath(imported.sidecarPath);
       setCodegenResult(null);
       setActiveArtifactId("screen");
+      void loadRepoContext();
       setStatus(`Imported ${imported.sourcePath}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Code import failed";
@@ -1446,7 +1544,7 @@ export default function App() {
     } finally {
       setCodegenBusy(false);
     }
-  }, [resetCanvasHistory, targetPath]);
+  }, [loadRepoContext, resetCanvasHistory, targetPath]);
 
   const scheduleAutoSync = useCallback(() => {
     if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
@@ -1628,6 +1726,7 @@ export default function App() {
           gitStatus={gitStatus}
           targetPath={targetPath}
           sidecarPath={sidecarPath}
+          repoContext={repoContext}
         />
 
         <div className="relative flex min-w-0 flex-1 flex-col">

@@ -416,6 +416,7 @@ function routeKindForPath(path: string, dependencies: Record<string, string>) {
 
 function isLikelyScreenSource(path: string) {
   if (!sourceExts.has(extname(path))) return false;
+  if (/(^|\/)_layout\.[tj]sx$/.test(path)) return false;
   if (/\.(test|spec|stories)\.[tj]sx$/.test(path)) return false;
   if (/(^|\/)__tests__(\/|$)/.test(path)) return false;
   if (/(^|\/)(components|ui|tokens|theme)(\/|$)/i.test(path)) return false;
@@ -428,7 +429,11 @@ function screenNameFromPath(path: string) {
   const base = basename(path)
     .replace(/\.rncanvas\.json$/, "")
     .replace(/\.[jt]sx$/, "");
-  if (base === "index") return basename(dirname(path));
+  if (base === "index") {
+    const dir = dirname(path);
+    if (dir === "app" || dir === "src/app" || dir === ".") return "Home";
+    return basename(dir);
+  }
   if (base === "_layout") return "Layout";
   return base.replace(/^\[(.+)\]$/, "$1");
 }

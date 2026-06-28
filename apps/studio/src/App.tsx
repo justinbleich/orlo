@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Redo2,
   Save,
+  Trash2,
   Undo2,
 } from "lucide-react";
 import {
@@ -28,6 +29,7 @@ import {
   type Node,
   type NodeId,
   type RNPrimitive,
+  type TokenCategory,
 } from "@rn-canvas/document";
 import { FrameRenderer } from "@rn-canvas/render-web";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
@@ -41,6 +43,7 @@ import {
   ToolRail,
   type DesignSystemView,
   type FlowId,
+  type FlowPanelItem,
   type RepoPanelContext,
 } from "./shell";
 import { Button, Field, IconButton, Section, StatusPill, TextField, cn } from "./studio-ui";
@@ -134,6 +137,7 @@ type GitStatus =
 type RepoContext = RepoPanelContext;
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
+type FlowDefinition = { id: FlowId; label: string; description?: string };
 
 type FlowManifest = {
   version: 1;
@@ -324,17 +328,48 @@ function focusRootFrame(editor: Editor, rootId: NodeId, animate = true) {
   return true;
 }
 
-const FLOW_LABELS: Record<FlowId, string> = {
-  onboarding: "Onboarding Flow",
-  main: "Main App Flow",
-  auth: "Auth Flow",
-};
+const DEFAULT_FLOWS: FlowDefinition[] = [
+  {
+    id: "onboarding",
+    label: "Onboarding Flow",
+    description: "Default stack order for first-run screens.",
+  },
+  {
+    id: "main",
+    label: "Main App Flow",
+    description: "Primary app route order from the current screen tree.",
+  },
+  {
+    id: "auth",
+    label: "Auth Flow",
+    description: "Authentication screens inferred from screen names when present.",
+  },
+];
 
-const FLOW_DESCRIPTIONS: Record<FlowId, string> = {
-  onboarding: "Default stack order for first-run screens.",
-  main: "Primary app route order from the current screen tree.",
-  auth: "Authentication screens inferred from screen names when present.",
-};
+const TOKEN_IDENTIFIER = /^[A-Za-z_$][\w$]*(\.[\w$]+)*$/;
+
+function slugFlowId(label: string, taken: Set<string>) {
+  const base =
+    label
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "flow";
+  let id = base;
+  for (let i = 2; taken.has(id); i += 1) id = `${base}-${i}`;
+  return id;
+}
+
+function flowLabel(flows: FlowDefinition[], id: FlowId) {
+  return flows.find((flow) => flow.id === id)?.label ?? "Flow";
+}
+
+function flowDescription(flows: FlowDefinition[], id: FlowId) {
+  return (
+    flows.find((flow) => flow.id === id)?.description ??
+    "Prototype route order for this screen group."
+  );
+}
 
 function flowScreens(roots: Node[], flow: FlowId): Node[] {
   if (flow === "onboarding") return roots;
@@ -385,6 +420,7 @@ function FlowScreenPreview({
 function FlowWorkspace({
   roots,
   components,
+  flows,
   activeFlow,
   entryRootId,
   onSelectScreen,
@@ -393,6 +429,7 @@ function FlowWorkspace({
 }: {
   roots: Node[];
   components: ComponentRegistry;
+  flows: FlowDefinition[];
   activeFlow: FlowId;
   entryRootId?: NodeId;
   onSelectScreen: (rootId: NodeId) => void;
@@ -422,8 +459,8 @@ function FlowWorkspace({
     <div className="studio-chrome flex h-full flex-col bg-canvas">
       <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
         <div className="flex flex-col">
-          <span className="text-sm font-semibold text-ink">{FLOW_LABELS[activeFlow]}</span>
-          <span className="text-xs text-ink-faint">{FLOW_DESCRIPTIONS[activeFlow]}</span>
+          <span className="text-sm font-semibold text-ink">{flowLabel(flows, activeFlow)}</span>
+          <span className="text-xs text-ink-faint">{flowDescription(flows, activeFlow)}</span>
         </div>
         {entryScreen && (
           <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
@@ -583,22 +620,25 @@ function DesignSystemWorkspace({
       <div className="flex-1 overflow-auto p-xl">
         <div className="mx-auto flex max-w-4xl flex-col gap-lg">
           {(activeView === "Tokens" || activeView === "Colors") && (
-            <TokenTable
+            <TokenBoard
               title="Colors"
+              category="color"
               tokens={grouped.color}
               onCreate={() => onCreateToken("color")}
             />
           )}
           {(activeView === "Tokens" || activeView === "Spacing") && (
-            <TokenTable
+            <TokenBoard
               title="Spacing Scale"
+              category="spacing"
               tokens={grouped.spacing}
               onCreate={() => onCreateToken("spacing")}
             />
           )}
           {(activeView === "Tokens" || activeView === "Typography") && (
-            <TokenTable
+            <TokenBoard
               title="Type Scale"
+              category="fontSize"
               tokens={grouped.fontSize}
               onCreate={() => onCreateToken("fontSize")}
             />
@@ -614,51 +654,205 @@ function DesignSystemWorkspace({
   );
 }
 
-function TokenTable({
+function TokenBoard({
   title,
+  category,
   tokens,
   onCreate,
 }: {
   title: string;
+  category: TokenCategory;
   tokens: DesignToken[];
   onCreate: () => void;
 }) {
   return (
-    <section className="rounded-sm border border-line bg-chrome shadow-control">
-      <div className="flex items-center border-b border-line-soft px-md py-sm">
-        <span className="text-sm font-semibold text-ink">{title}</span>
-        <span className="ml-auto text-xs text-ink-faint">{tokens.length} tokens</span>
+    <section className="rounded-sm border border-line bg-chrome p-md shadow-control">
+      <div className="mb-md flex items-center">
+        <div>
+          <span className="text-sm font-semibold text-ink">{title}</span>
+          <div className="mt-2xs text-xs text-ink-faint">{tokens.length} tokens</div>
+        </div>
+        <div className="ml-auto" />
         <Button className="ml-sm" variant="ghost" onClick={onCreate}>
           <PlusIcon /> Add
         </Button>
       </div>
-      <div className="divide-y divide-line-soft">
+      <div className={cn(
+        "grid gap-sm",
+        category === "color"
+          ? "grid-cols-[repeat(auto-fill,minmax(150px,1fr))]"
+          : "grid-cols-[repeat(auto-fill,minmax(220px,1fr))]",
+      )}>
         {tokens.length === 0 ? (
-          <div className="px-md py-lg text-sm text-ink-faint">No tokens yet.</div>
-        ) : (
-          tokens.map((token) => (
-            <div
-              key={token.id}
-              className="grid grid-cols-[minmax(0,1fr)_96px_1fr] items-center gap-md px-md py-sm text-sm"
-            >
-              <span className="min-w-0 truncate font-mono text-xs text-ink">{token.name}</span>
-              <span className="text-xs text-ink-dim">{String(token.value)}</span>
-              <span className="h-2 rounded-pill bg-accent-soft">
-                <span
-                  className="block h-full rounded-pill bg-accent/35"
-                  style={{
-                    width:
-                      token.category === "color"
-                        ? "32%"
-                        : `${Math.min(100, Number(token.value) || 16)}%`,
-                  }}
-                />
-              </span>
-            </div>
-          ))
-        )}
+          <div className="rounded-sm border border-dashed border-line bg-chrome-2 p-lg text-sm text-ink-faint">
+            No tokens yet.
+          </div>
+        ) : tokens.map((token) => <TokenBoardCard key={token.id} token={token} />)}
       </div>
     </section>
+  );
+}
+
+function TokenBoardCard({ token }: { token: DesignToken }) {
+  const tokens = useDocumentStore((s) => s.tokens);
+  const updateToken = useDocumentStore((s) => s.updateToken);
+  const removeToken = useDocumentStore((s) => s.removeToken);
+  const getTokenUsage = useDocumentStore((s) => s.getTokenUsage);
+  const setSelection = useDocumentStore((s) => s.setSelection);
+  const [nameDraft, setNameDraft] = useState(token.name);
+  const usage = useMemo(() => getTokenUsage(token.id), [getTokenUsage, token.id, tokens]);
+
+  useEffect(() => setNameDraft(token.name), [token.name]);
+
+  const commitName = () => {
+    const next = nameDraft.trim().replace(/-/g, ".");
+    const duplicate = Object.values(tokens).some(
+      (item) => item.id !== token.id && item.category === token.category && item.name === next,
+    );
+    if (!next || !TOKEN_IDENTIFIER.test(next) || duplicate) {
+      setNameDraft(token.name);
+      return;
+    }
+    if (next !== token.name) updateToken(token.id, { name: next });
+  };
+
+  const deleteToken = () => {
+    if (
+      usage.length > 0 &&
+      !window.confirm(`Delete ${token.name}? It is used by ${usage.length} node${usage.length === 1 ? "" : "s"}.`)
+    ) {
+      return;
+    }
+    removeToken(token.id);
+  };
+
+  const selectUsage = () => {
+    if (usage.length === 0) return;
+    setSelection(Array.from(new Set(usage.map((item) => item.nodeId))));
+  };
+
+  return (
+    <div className="group flex min-h-36 flex-col gap-sm rounded-sm border border-line-soft bg-chrome-2 p-sm transition-colors hover:border-line hover:bg-raised/50">
+      <TokenSpecimen token={token} onValueChange={(value) => updateToken(token.id, { value })} />
+      <div className="mt-auto flex items-center gap-xs">
+        <input
+          value={nameDraft}
+          onChange={(event) => setNameDraft(event.target.value)}
+          onBlur={commitName}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") (event.target as HTMLInputElement).blur();
+            if (event.key === "Escape") {
+              setNameDraft(token.name);
+              (event.target as HTMLInputElement).blur();
+            }
+          }}
+          spellCheck={false}
+          className="h-7 min-w-0 flex-1 rounded-xs border border-transparent bg-transparent px-xs font-mono text-xs text-ink outline-none transition-colors hover:bg-chrome focus-visible:border-accent-line focus-visible:bg-chrome"
+        />
+        <button
+          type="button"
+          onClick={selectUsage}
+          disabled={usage.length === 0}
+          title={usage.length ? `Used ${usage.length} time${usage.length === 1 ? "" : "s"}` : "Unused"}
+          className="h-6 min-w-7 rounded-xs bg-chrome px-xs text-2xs tabular-nums text-ink-faint disabled:opacity-40 enabled:hover:bg-accent-soft enabled:hover:text-accent"
+        >
+          {usage.length}
+        </button>
+        <IconButton title="Delete token" onClick={deleteToken}>
+          <Trash2 size={13} aria-hidden="true" />
+        </IconButton>
+      </div>
+    </div>
+  );
+}
+
+function TokenSpecimen({
+  token,
+  onValueChange,
+}: {
+  token: DesignToken;
+  onValueChange: (value: DesignToken["value"]) => void;
+}) {
+  if (token.category === "color") {
+    const value = String(token.value);
+    return (
+      <div className="flex flex-col gap-sm">
+        <label className="relative block h-24 overflow-hidden rounded-sm border border-line bg-chrome">
+          <span className="color-checker absolute inset-0 opacity-40" aria-hidden="true" />
+          <span className="absolute inset-0" style={{ background: value }} aria-hidden="true" />
+          <input
+            type="color"
+            value={value}
+            onChange={(event) => onValueChange(event.target.value)}
+            className="absolute inset-0 cursor-pointer opacity-0"
+            aria-label={`${token.name} color`}
+          />
+        </label>
+        <input
+          value={value}
+          onChange={(event) => onValueChange(event.target.value)}
+          className="h-7 rounded-xs border border-line bg-chrome px-xs font-mono text-xs text-ink outline-none focus-visible:border-accent-line"
+          spellCheck={false}
+        />
+      </div>
+    );
+  }
+
+  if (token.category === "spacing") {
+    const value = Number(token.value) || 0;
+    return (
+      <div className="flex flex-col gap-sm">
+        <div className="flex h-24 items-end gap-xs rounded-sm border border-line bg-chrome p-sm">
+          {[0.5, 0.75, 1, 1.5, 2].map((multiplier) => (
+            <span
+              key={multiplier}
+              className="block flex-1 rounded-t-xs bg-accent/45"
+              style={{ height: `${Math.max(8, Math.min(84, value * multiplier))}px` }}
+              aria-hidden="true"
+            />
+          ))}
+        </div>
+        <NumberTokenInput value={value} suffix="px" onChange={onValueChange} />
+      </div>
+    );
+  }
+
+  const value = Number(token.value) || 0;
+  return (
+    <div className="flex flex-col gap-sm">
+      <div className="flex h-24 items-center overflow-hidden rounded-sm border border-line bg-chrome px-sm">
+        <span
+          className="truncate font-semibold text-ink"
+          style={{ fontSize: Math.max(10, Math.min(42, value)) }}
+        >
+          Ag
+        </span>
+      </div>
+      <NumberTokenInput value={value} suffix="pt" onChange={onValueChange} />
+    </div>
+  );
+}
+
+function NumberTokenInput({
+  value,
+  suffix,
+  onChange,
+}: {
+  value: number;
+  suffix: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="flex h-7 items-center gap-xs rounded-xs border border-line bg-chrome px-xs text-xs text-ink-faint">
+      <input
+        type="number"
+        value={value}
+        min={0}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="min-w-0 flex-1 bg-transparent text-right tabular-nums text-ink outline-none"
+      />
+      <span>{suffix}</span>
+    </label>
   );
 }
 
@@ -762,8 +956,10 @@ export default function App() {
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
   const [inspectorTab, setInspectorTab] = useState("Inspect");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
+  const [flows, setFlows] = useState<FlowDefinition[]>(DEFAULT_FLOWS);
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
   const [flowEntrypoints, setFlowEntrypoints] = useState<Partial<Record<FlowId, NodeId>>>({});
+  const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
   const [screenName, setScreenName] = useState("Screen");
@@ -800,6 +996,14 @@ export default function App() {
   );
   const focusedRootId = focusedRoot?.id ?? null;
   const artifacts = useMemo(() => codeArtifacts(codegenResult), [codegenResult]);
+  const flowPanelItems = useMemo<FlowPanelItem[]>(() => {
+    const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+    return flows.map((flow) => ({
+      id: flow.id,
+      label: flow.label,
+      screenCount: flowScreens(screenRoots, flow.id).length,
+    }));
+  }, [editingComponentId, flows, roots]);
   const activeArtifact =
     artifacts.find((artifact) => artifact.id === activeArtifactId) ?? artifacts[0] ?? null;
   if (focusedRootId && focusedRootId !== editingComponentId) {
@@ -822,6 +1026,13 @@ export default function App() {
   useEffect(() => {
     if (inspectorTab === "Props") setInspectorTab("Inspect");
   }, [inspectorTab]);
+
+  useEffect(() => {
+    if (flows.length === 0) return;
+    if (!flows.some((flow) => flow.id === activeFlow)) {
+      setActiveFlow(flows[0].id);
+    }
+  }, [activeFlow, flows]);
 
   useEffect(() => {
     if (artifacts.length && !artifacts.some((artifact) => artifact.id === activeArtifactId)) {
@@ -933,13 +1144,19 @@ export default function App() {
       const body = (await res.json()) as FlowManifest & { error?: string };
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       const next: Partial<Record<FlowId, NodeId>> = {};
+      const manifestFlows = Array.isArray(body.flows)
+        ? body.flows
+            .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
+            .map((flow) => ({ id: flow.id, label: flow.label }))
+        : [];
       for (const flow of body.flows ?? []) {
-        if (
-          (flow.id === "onboarding" || flow.id === "main" || flow.id === "auth") &&
-          flow.entryRootId
-        ) {
-          next[flow.id] = flow.entryRootId;
-        }
+        if (flow.entryRootId) next[flow.id] = flow.entryRootId;
+      }
+      if (manifestFlows.length > 0) {
+        setFlows(manifestFlows);
+        setActiveFlow((current) =>
+          manifestFlows.some((flow) => flow.id === current) ? current : manifestFlows[0].id,
+        );
       }
       setFlowEntrypoints(next);
     } catch {
@@ -948,19 +1165,22 @@ export default function App() {
   }, []);
 
   const persistFlowManifest = useCallback(
-    async (entrypoints: Partial<Record<FlowId, NodeId>>) => {
+    async (
+      nextFlows: FlowDefinition[] = flows,
+      entrypoints: Partial<Record<FlowId, NodeId>> = flowEntrypoints,
+    ) => {
       const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
       const manifest: FlowManifest = {
         version: 1,
-        flows: (["onboarding", "main", "auth"] as FlowId[]).map((flow) => {
+        flows: nextFlows.map((flow) => {
           const routeScreens = orderedFlowScreens(
-            flowScreens(screenRoots, flow),
-            entrypoints[flow],
+            flowScreens(screenRoots, flow.id),
+            entrypoints[flow.id],
           );
           const entry = routeScreens[0];
           return {
-            id: flow,
-            label: FLOW_LABELS[flow],
+            id: flow.id,
+            label: flow.label,
             entryRootId: entry?.id,
             entryName: entry?.design?.name,
             routes: routeScreens.map((root, index) => ({
@@ -980,7 +1200,7 @@ export default function App() {
       void refreshGitStatus();
       void loadRepoContext();
     },
-    [editingComponentId, loadRepoContext, refreshGitStatus, roots],
+    [editingComponentId, flowEntrypoints, flows, loadRepoContext, refreshGitStatus, roots],
   );
 
   useEffect(() => {
@@ -1124,14 +1344,72 @@ export default function App() {
   const setFlowEntryRoot = useCallback((rootId: NodeId) => {
     setFlowEntrypoints((current) => {
       const next = { ...current, [activeFlow]: rootId };
-      void persistFlowManifest(next).then(
+      void persistFlowManifest(flows, next).then(
         () => setStatus("Updated flow entrypoint"),
         (error) =>
           setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
       return next;
     });
-  }, [activeFlow, persistFlowManifest]);
+  }, [activeFlow, flows, persistFlowManifest]);
+
+  const addFlow = useCallback(() => {
+    setFlows((current) => {
+      const labelBase = "New Flow";
+      const takenLabels = new Set(current.map((flow) => flow.label));
+      let label = labelBase;
+      for (let i = 2; takenLabels.has(label); i += 1) label = `${labelBase} ${i}`;
+      const nextFlow: FlowDefinition = {
+        id: slugFlowId(label, new Set(current.map((flow) => flow.id))),
+        label,
+        description: "Prototype route order for this screen group.",
+      };
+      const next = [...current, nextFlow];
+      void persistFlowManifest(next, flowEntrypoints).then(
+        () => setStatus(`Added ${label}`),
+        (error) =>
+          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+      setActiveFlow(nextFlow.id);
+      setPendingRemoveFlowId(null);
+      setWorkspace("Flow");
+      return next;
+    });
+  }, [flowEntrypoints, persistFlowManifest]);
+
+  const removeFlow = useCallback(
+    (flow: FlowPanelItem) => {
+      if (flows.length <= 1) {
+        setStatus("Keep at least one flow.");
+        return;
+      }
+      const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+      const screenCount = flow.screenCount ?? flowScreens(screenRoots, flow.id).length;
+      if (screenCount > 1 && pendingRemoveFlowId !== flow.id) {
+        setPendingRemoveFlowId(flow.id);
+        setStatus(`Confirm removal of ${flow.label}`);
+        return;
+      }
+      const nextFlows = flows.filter((item) => item.id !== flow.id);
+      const nextEntrypoints = { ...flowEntrypoints };
+      delete nextEntrypoints[flow.id];
+      const nextActiveFlow = activeFlow === flow.id ? nextFlows[0]?.id : activeFlow;
+      if (!nextActiveFlow) {
+        setStatus("Keep at least one flow.");
+        return;
+      }
+      setFlows(nextFlows);
+      setFlowEntrypoints(nextEntrypoints);
+      setPendingRemoveFlowId(null);
+      setActiveFlow(nextActiveFlow);
+      void persistFlowManifest(nextFlows, nextEntrypoints).then(
+        () => setStatus(`Removed ${flow.label}`),
+        (error) =>
+          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+    },
+    [activeFlow, editingComponentId, flowEntrypoints, flows, pendingRemoveFlowId, persistFlowManifest, roots],
+  );
 
   // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
   // can't ping-pong with the listener above.
@@ -1720,6 +1998,11 @@ export default function App() {
           onAddFrame={addFrame}
           activeFlow={activeFlow}
           onFlowChange={setActiveFlow}
+          flows={flowPanelItems}
+          onAddFlow={addFlow}
+          onRemoveFlow={removeFlow}
+          onCancelRemoveFlow={() => setPendingRemoveFlowId(null)}
+          pendingRemoveFlowId={pendingRemoveFlowId}
           activeDesignSystemView={activeDesignSystemView}
           onDesignSystemViewChange={setActiveDesignSystemView}
           onOpenChanges={openChangesPanel}
@@ -1734,6 +2017,7 @@ export default function App() {
             <FlowWorkspace
               roots={Object.values(roots)}
               components={componentRegistry}
+              flows={flows}
               activeFlow={activeFlow}
               entryRootId={flowEntrypoints[activeFlow]}
               onSelectScreen={selectScreenFromWorkspace}

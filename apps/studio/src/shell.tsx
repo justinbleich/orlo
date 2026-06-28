@@ -22,6 +22,7 @@ import {
   TextCursorInput,
   Trash2,
   Type,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -43,7 +44,8 @@ import { deleteNodes, reorderNode } from "./document-actions";
 import { TokensPanel } from "./TokensPanel";
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
-export type FlowId = "onboarding" | "main" | "auth";
+export type FlowId = string;
+export type FlowPanelItem = { id: FlowId; label: string; gitCode?: string; screenCount?: number };
 export type DesignSystemView = "Tokens" | "Typography" | "Colors" | "Spacing" | "Radius";
 type GitFileStatus = { path: string; index: string; workingTree: string };
 export type RepoPanelContext = {
@@ -360,6 +362,11 @@ export function LeftPanel({
   onAddFrame,
   activeFlow,
   onFlowChange,
+  flows = [],
+  onAddFlow = () => {},
+  onRemoveFlow = () => {},
+  onCancelRemoveFlow = () => {},
+  pendingRemoveFlowId,
   activeDesignSystemView,
   onDesignSystemViewChange,
   onOpenChanges,
@@ -373,6 +380,11 @@ export function LeftPanel({
   onAddFrame: () => void;
   activeFlow: FlowId;
   onFlowChange: (flow: FlowId) => void;
+  flows: FlowPanelItem[];
+  onAddFlow: () => void;
+  onRemoveFlow: (flow: FlowPanelItem) => void;
+  onCancelRemoveFlow: () => void;
+  pendingRemoveFlowId?: FlowId | null;
   activeDesignSystemView: DesignSystemView;
   onDesignSystemViewChange: (view: DesignSystemView) => void;
   onOpenChanges: () => void;
@@ -473,24 +485,31 @@ export function LeftPanel({
   const themeGitCode = gitCodeForPath(gitStatus, "generated/theme.ts");
   const repoGitCode = firstGitCode(gitStatus);
   const repoName = repoContext?.repoName ?? "Repository";
-  const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
+  const repoFrameworks = repoContext?.frameworks ?? [];
+  const repoScreens = repoContext?.screens ?? [];
+  const repoAssets = repoContext?.assets ?? [];
+  const repoEntrypoints = repoContext?.entrypoints ?? [];
+  const frameworkLabels = repoFrameworks.map((framework) => framework.label);
   const repoSubtitle =
     frameworkLabels.length > 0
-      ? frameworkLabels.slice(0, 2).join(" · ")
+      ? `${frameworkLabels.slice(0, 3).join(" · ")}${frameworkLabels.length > 3 ? ` +${frameworkLabels.length - 3}` : ""}`
       : repoContext?.packageManager
-        ? `${repoContext.packageManager} workspace`
+        ? `No app runtime detected · ${repoContext.packageManager}`
         : "Attach a repo";
   const repoScreenCandidates =
-    repoContext?.screens.filter((screen) => screen.path !== targetPath && screen.sidecarPath !== sidecarPath) ??
-    [];
+    repoScreens.filter((screen) => screen.path !== targetPath && screen.sidecarPath !== sidecarPath);
   const visibleRepoScreens = repoScreenCandidates.slice(0, 6);
-  const visibleAssets = repoContext?.assets.slice(0, 4) ?? [];
-  const visibleEntrypoints = repoContext?.entrypoints.slice(0, 3) ?? [];
-  const flows: Array<{ id: FlowId; label: string; gitCode?: string }> = [
-    { id: "onboarding", label: "Onboarding Flow", gitCode: sidecarGitCode },
-    { id: "main", label: "Main App Flow" },
-    { id: "auth", label: "Auth Flow" },
-  ];
+  const visibleAssets = repoAssets.slice(0, 4);
+  const visibleEntrypoints = repoEntrypoints.slice(0, 3);
+  const hasRuntimeSignals = !!repoContext && (
+    repoFrameworks.length > 0 ||
+    visibleEntrypoints.length > 0 ||
+    repoContext.truncated
+  );
+  const flowItems = flows.map((flow, index) => ({
+    ...flow,
+    gitCode: flow.gitCode ?? (index === 0 ? sidecarGitCode : undefined),
+  }));
   const designSystemViews: DesignSystemView[] = ["Tokens", "Typography", "Colors", "Spacing", "Radius"];
 
   function openFlow(flow: FlowId) {
@@ -547,9 +566,9 @@ export function LeftPanel({
           </div>
         </div>
 
-        {repoContext && (
+        {hasRuntimeSignals && (
           <section className="flex flex-col gap-xs">
-            <Eyebrow>Repo</Eyebrow>
+            <Eyebrow>Runtime</Eyebrow>
             <div className="rounded-sm border border-line-soft bg-chrome-2 p-sm">
               <div className="flex flex-wrap gap-xs">
                 {repoContext.packageManager !== "unknown" && (
@@ -557,7 +576,7 @@ export function LeftPanel({
                     {repoContext.packageManager}
                   </span>
                 )}
-                {repoContext.frameworks.slice(0, 3).map((framework) => (
+                {repoFrameworks.map((framework) => (
                   <span
                     key={framework.id}
                     title={framework.detail}
@@ -589,18 +608,55 @@ export function LeftPanel({
           <div className="flex items-center gap-xs">
             <Eyebrow>Flows</Eyebrow>
             <div className="flex-1" />
-          </div>
-          {flows.map((flow) => (
-            <button
-              key={flow.id}
-              type="button"
-              onClick={() => openFlow(flow.id)}
-              className={cn(sidebarItem, workspace === "Flow" && activeFlow === flow.id ? activeItem : inactiveItem)}
-            >
-              <Route size={13} aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{flow.label}</span>
-              <GitBadge code={flow.gitCode} title={sidecarPath} />
+            <button type="button" style={panelIconButton} onClick={onAddFlow} title="Add flow">
+              <Plus size={16} aria-hidden="true" />
             </button>
+          </div>
+          {flowItems.map((flow) => (
+            <div key={flow.id} className="flex gap-xs">
+              <button
+                type="button"
+                onClick={() => openFlow(flow.id)}
+                className={cn(sidebarItem, "flex-1", workspace === "Flow" && activeFlow === flow.id ? activeItem : inactiveItem)}
+              >
+                <Route size={13} aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{flow.label}</span>
+                {flow.screenCount !== undefined && (
+                  <span className="text-2xs tabular-nums text-ink-faint">{flow.screenCount}</span>
+                )}
+                <GitBadge code={flow.gitCode} title={sidecarPath} />
+              </button>
+              {pendingRemoveFlowId === flow.id ? (
+                <>
+                  <button
+                    type="button"
+                    style={panelIconButton}
+                    onClick={() => onRemoveFlow(flow)}
+                    title={`Confirm remove ${flow.label}`}
+                    className="text-amber"
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    style={panelIconButton}
+                    onClick={onCancelRemoveFlow}
+                    title="Cancel remove flow"
+                  >
+                    <X size={15} aria-hidden="true" />
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  style={panelIconButton}
+                  onClick={() => onRemoveFlow(flow)}
+                  title={`Remove ${flow.label}`}
+                >
+                  <Trash2 size={15} aria-hidden="true" />
+                </button>
+              )}
+            </div>
           ))}
         </section>
 

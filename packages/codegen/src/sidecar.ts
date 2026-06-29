@@ -1,9 +1,14 @@
 /**
- * The committed `*.rncanvas.json` sidecar (PRD §6/§7.5, BUILD Phase 3). It holds
- * the canonical node tree + design metadata and is what the studio loads — the
- * generated code is never reverse-engineered back into the document.
+ * Optional RN Studio metadata for an editable projection.
  *
- * Design metadata lives ONLY here, never in the emitted code (see emit.ts).
+ * For Studio-authored objects, this stores the richest known Node tree and
+ * design metadata so Canvas can reopen with full fidelity. For repo-authored
+ * objects, source on the active branch remains durable truth; a sidecar can
+ * assist projection/editability, but it must not become a competing project
+ * source of truth.
+ *
+ * Design metadata is intentionally kept out of emitted runtime code (see
+ * emit.ts). Source writers may regenerate or reconcile this metadata as needed.
  */
 import {
   validateComponentRegistry,
@@ -17,7 +22,7 @@ import {
 export interface SidecarDocument {
   version: 1;
   screenName: string;
-  /** The full node tree, including design-time metadata. */
+  /** The projected editable node tree, including design-time metadata. */
   root: Node;
   /** Reusable component definitions referenced by this document (Phase 2C). */
   components?: ComponentRegistry;

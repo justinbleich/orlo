@@ -229,8 +229,8 @@ function ComponentVariantWorkspace({
 /**
  * A tldraw shape that hosts one RN document subtree. tldraw owns the *spatial*
  * data (x/y/w/h/z); the shape only references a document root by id. The RN tree
- * is owned by the document store — the single source of truth — so editing a node
- * in the inspector re-renders here via the Zustand subscription.
+ * is owned by the document store for the active Canvas projection, so editing a
+ * node in the inspector re-renders here via the Zustand subscription.
  */
 // The persisted tldraw shape type stays "rnframe" so existing tldraw stores
 // keep loading after this rename. Only the TS symbols change.

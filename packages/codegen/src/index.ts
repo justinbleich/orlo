@@ -32,7 +32,7 @@ export interface GeneratedScreen {
   screenName: string;
   /** Idiomatic RN source (no design metadata). */
   code: string;
-  /** Serialized `*.rncanvas.json` sidecar (canonical tree + design metadata). */
+  /** Serialized `*.rncanvas.json` projection metadata for richer Studio editing. */
   sidecar: string;
   /** Standalone modules for every component this screen uses (transitively). */
   components: GeneratedComponent[];
@@ -115,12 +115,12 @@ export interface OpenedDocument {
 }
 
 /**
- * Open a committed document (Phase 2D-2b single-writer file model). The sidecar is
- * canonical for the tree, components, and token *identity* (id↔name); the adjacent
- * `theme.ts`, when present, is canonical for token *values + names*. We reconcile
- * the file's tokens against the sidecar's ids, then `reapplyTokens` so file values
- * win in the tree. With no theme source we fall back to the sidecar tokens as-is
- * (pre-2D-2b documents, or a fresh doc with no theme file yet).
+ * Open an RN Studio projection. The sidecar stores the editable tree,
+ * components, and token identity (id↔name). The adjacent `theme.ts`, when
+ * present, supplies the branch-backed token values + names. We reconcile the
+ * file's tokens against the sidecar's ids, then `reapplyTokens` so source file
+ * values win in the Canvas projection. With no theme source we fall back to the
+ * sidecar tokens as-is (older documents, or a fresh doc with no theme file yet).
  */
 export function openDocument(sidecarJson: string, themeSource?: string): OpenedDocument {
   const sidecar = parseSidecar(sidecarJson);

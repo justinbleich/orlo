@@ -10,7 +10,6 @@ import {
   ArrowUp,
   Component,
   FileText,
-  FolderOpen,
   Frame,
   Image as ImageIcon,
   List,
@@ -401,7 +400,6 @@ export function LeftPanel({
   activeDesignSystemView,
   onDesignSystemViewChange,
   onOpenChanges,
-  onOpenRepoSettings = () => {},
   onOpenRepoScreen = () => {},
   gitStatus,
   targetPath,
@@ -421,7 +419,6 @@ export function LeftPanel({
   activeDesignSystemView: DesignSystemView;
   onDesignSystemViewChange: (view: DesignSystemView) => void;
   onOpenChanges: () => void;
-  onOpenRepoSettings: () => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   gitStatus: PanelGitStatus;
   targetPath: string;
@@ -558,17 +555,8 @@ export function LeftPanel({
   const sidecarGitCode = gitCodeForPath(gitStatus, sidecarPath);
   const themeGitCode = gitCodeForPath(gitStatus, "generated/theme.ts");
   const repoGitCode = firstGitCode(gitStatus);
-  const repoName = repoContext?.repoName ?? "Repository";
-  const repoFrameworks = repoContext?.frameworks ?? [];
   const repoScreens = repoContext?.screens ?? [];
   const repoAssets = repoContext?.assets ?? [];
-  const frameworkLabels = repoFrameworks.map((framework) => framework.label);
-  const repoSubtitle =
-    frameworkLabels.length > 0
-      ? `${frameworkLabels.slice(0, 3).join(" · ")}${frameworkLabels.length > 3 ? ` +${frameworkLabels.length - 3}` : ""}`
-      : repoContext?.packageManager
-        ? `No app runtime detected · ${repoContext.packageManager}`
-        : "Attach a repo";
   function isActiveRepoScreen(screen: RepoPanelScreen) {
     return screen.path === targetPath || screen.sidecarPath === sidecarPath;
   }
@@ -628,24 +616,6 @@ export function LeftPanel({
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-md overflow-y-auto p-md">
-        <div className="flex min-w-0 flex-col">
-          <div className="flex min-w-0 items-center gap-xs">
-            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
-              {repoName}
-            </div>
-            <GitBadge code={repoGitCode} title="Repository has changes" />
-            <PanelAction
-              onClick={onOpenRepoSettings}
-              title={repoContext ? "Change connected repo" : "Connect repo"}
-            >
-              <FolderOpen size={14} aria-hidden="true" />
-            </PanelAction>
-          </div>
-          <div className="truncate text-2xs text-accent" title={repoContext?.repoPath}>
-            {repoSubtitle}
-          </div>
-        </div>
-
         <PanelSection
           title="Flows"
           count={flowItems.length + repoFlowGroups.length}

@@ -2,6 +2,13 @@ export type RepoPanelContext = {
   repoPath: string;
   repoName: string;
   packageManager: string;
+  designSession?: {
+    mode: "current-branch";
+    branch: string;
+    suggestedBranch: string;
+    syncTarget: string;
+    worktreePath: string;
+  };
   frameworks: Array<{ id: string; label: string; detail?: string }>;
   flows?: Array<{
     id: string;

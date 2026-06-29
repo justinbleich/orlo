@@ -1,8 +1,9 @@
 /**
- * Zustand document store — the single source of truth at runtime. tldraw will
- * own frame *spatial* data and reference a root by id; this store owns the RN
- * trees. Undo/redo here is a thin snapshot history (BUILD Phase 6 polishes it;
- * tldraw history coordination happens when RNFrame lands).
+ * Zustand document store — the in-memory editing truth for the currently opened
+ * Canvas projection. tldraw owns frame *spatial* data and references roots by id;
+ * this store owns the projected RN trees, components, and tokens while the
+ * object is being edited. Durable truth lives in source files on the active Git
+ * branch/worktree, with sidecars acting as optional projection metadata.
  */
 import { create } from "zustand";
 import type { RNStyle } from "@rn-canvas/styles";
@@ -79,8 +80,8 @@ export interface DocumentState {
   commitInteraction(): void;
   cancelInteraction(): void;
 
-  /** Replace the open document atomically. Used by sidecar loading; opening a
-   *  document starts a fresh undo history rather than mixing document sessions. */
+  /** Replace the open projection atomically. Opening a new object starts a fresh
+   *  undo history rather than mixing edit sessions. */
   loadRoots(
     roots: Roots,
     selection?: NodeId[],

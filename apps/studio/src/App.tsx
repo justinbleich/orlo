@@ -268,6 +268,21 @@ function gitSummary(status: GitStatus): string {
   return `${status.branch} ${status.files.length} changed`;
 }
 
+function gitStatusCode(file: GitFileStatus): string {
+  const code = `${file.index}${file.workingTree}`;
+  if (code === "??") return "U";
+  if (file.workingTree === "M" || file.index === "M") return "M";
+  if (file.workingTree === "D" || file.index === "D") return "D";
+  if (file.workingTree === "A" || file.index === "A") return "A";
+  if (file.workingTree === "R" || file.index === "R") return "R";
+  return code.trim() || "";
+}
+
+function firstGitCode(status: GitStatus): string | undefined {
+  if (status.status !== "ready") return undefined;
+  return status.files.map(gitStatusCode).find(Boolean);
+}
+
 /** Create a tldraw shape for any document root that doesn't have one yet. */
 function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   const existing = new Set(
@@ -1283,7 +1298,8 @@ export default function App() {
       if (body.context) setRepoContext(body.context);
       else await loadRepoContext();
       skipNextPathSyncRef.current = true;
-      setStatus(`Connected ${nextPath}`);
+      const target = body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
+      setStatus(`Connected ${nextPath} · editing ${target}`);
     },
     [loadRepoContext, refreshGitStatus, repoDraft],
   );
@@ -2131,6 +2147,16 @@ export default function App() {
     gitStatus.status === "error" ? "amber" : gitStatus.status === "ready" && !gitStatus.clean ? "accent" : "neutral";
   const syncTone =
     syncState.status === "error" ? "amber" : syncState.status === "syncing" || syncState.status === "scheduled" ? "accent" : "neutral";
+  const repoName = repoContext?.repoName ?? "Repository";
+  const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
+  const syncTarget = repoContext?.designSession?.syncTarget;
+  const repoSubtitle =
+    frameworkLabels.length > 0
+      ? `${frameworkLabels.slice(0, 3).join(" · ")}${frameworkLabels.length > 3 ? ` +${frameworkLabels.length - 3}` : ""}${syncTarget ? ` · ${syncTarget}` : ""}`
+      : repoContext?.packageManager
+        ? `No app runtime detected · ${repoContext.packageManager}${syncTarget ? ` · ${syncTarget}` : ""}`
+        : "Attach a repo";
+  const repoGitCode = firstGitCode(gitStatus);
 
   return (
     <div
@@ -2151,20 +2177,26 @@ export default function App() {
         }}
       >
         <div className="flex min-w-0 flex-col">
-          <div className="flex min-w-0 items-baseline gap-xs">
-            <strong className="text-xl font-semibold text-ink">{workspace} Workspace</strong>
-            <span className="truncate text-lg text-ink-dim">
-              {workspace === "Screen"
-                ? "Design a screen"
-                : workspace === "Component"
-                  ? "Build reusable components"
-                  : workspace === "Flow"
-                    ? "Design navigation and journeys"
-                    : "Define the visual language"}
-            </span>
+          <div className="flex min-w-0 items-center gap-xs">
+            <strong className="min-w-0 truncate text-xl font-semibold text-ink">
+              {repoName}
+            </strong>
+            {repoGitCode && (
+              <span
+                title="Repository has changes"
+                aria-label="Repository has changes"
+                className="flex size-1 shrink-0 rounded-full bg-accent"
+              />
+            )}
+            <IconButton
+              title={repoContext ? "Change connected repo" : "Connect repo"}
+              onClick={openRepoSettings}
+            >
+              <FolderOpen size={14} aria-hidden="true" />
+            </IconButton>
           </div>
-          <span className="truncate text-xs text-ink-faint">
-            Runcaster / feature/new-onboarding
+          <span className="truncate text-xs text-ink-faint" title={repoContext?.repoPath}>
+            {repoSubtitle}
           </span>
         </div>
         <div className="ml-auto flex min-w-0 items-center gap-sm">
@@ -2235,7 +2267,6 @@ export default function App() {
           activeDesignSystemView={activeDesignSystemView}
           onDesignSystemViewChange={setActiveDesignSystemView}
           onOpenChanges={openChangesPanel}
-          onOpenRepoSettings={openRepoSettings}
           onOpenRepoScreen={openRepoScreen}
           gitStatus={gitStatus}
           targetPath={targetPath}
@@ -2398,6 +2429,18 @@ export default function App() {
                         <RefreshCw size={14} aria-hidden="true" />
                       </IconButton>
                     </div>
+                    {repoContext?.designSession && (
+                      <div className="rounded-sm border border-line-soft bg-raised px-sm py-xs text-xs text-ink-dim">
+                        <div className="flex min-w-0 justify-between gap-sm">
+                          <span className="text-ink-faint">Sync target</span>
+                          <span className="min-w-0 truncate text-ink">{repoContext.designSession.syncTarget}</span>
+                        </div>
+                        <div className="mt-1 flex min-w-0 justify-between gap-sm">
+                          <span className="text-ink-faint">Studio branch</span>
+                          <span className="min-w-0 truncate">{repoContext.designSession.suggestedBranch}</span>
+                        </div>
+                      </div>
+                    )}
                     {repoError && (
                       <p className="m-0 text-xs text-amber">
                         {repoError}

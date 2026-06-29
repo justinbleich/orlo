@@ -61,6 +61,14 @@ type RepoRequest = {
   repoPath?: string;
 };
 
+type RepoDesignSession = {
+  mode: "current-branch";
+  branch: string;
+  suggestedBranch: string;
+  syncTarget: string;
+  worktreePath: string;
+};
+
 type RepoFramework = {
   id: "expo" | "react-native" | "expo-router" | "react-navigation";
   label: string;
@@ -99,6 +107,7 @@ type RepoContext = {
   repoPath: string;
   repoName: string;
   packageManager: "pnpm" | "yarn" | "npm" | "unknown";
+  designSession: RepoDesignSession;
   frameworks: RepoFramework[];
   dependencies: Record<string, string>;
   flows: RepoFlowCandidate[];
@@ -348,6 +357,32 @@ async function readGitStatus() {
     branch: branchLine.replace(/^##\s*/, ""),
     clean: files.length === 0,
     files,
+  };
+}
+
+function displayBranchName(branchLine: string) {
+  const name = branchLine.replace(/^##\s*/, "").split("...")[0]?.trim();
+  return name || "detached";
+}
+
+function studioBranchName(root: string) {
+  const repoSlug = basename(root)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "repo";
+  const date = new Date().toISOString().slice(0, 10);
+  return `studio/${repoSlug}-${date}`;
+}
+
+async function readDesignSession(root: string): Promise<RepoDesignSession> {
+  const { branch } = await readGitStatus();
+  const branchName = displayBranchName(branch);
+  return {
+    mode: "current-branch",
+    branch: branchName,
+    suggestedBranch: studioBranchName(root),
+    syncTarget: branchName === "detached" ? "detached worktree" : branchName,
+    worktreePath: root,
   };
 }
 
@@ -661,6 +696,7 @@ async function readRepoContext(): Promise<RepoContext> {
     repoPath: root,
     repoName: basename(root),
     packageManager: packageManagerFor(rootEntries),
+    designSession: await readDesignSession(root),
     frameworks,
     dependencies,
     flows: inferRepoFlows(screens),

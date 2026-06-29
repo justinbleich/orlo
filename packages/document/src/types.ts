@@ -1,7 +1,7 @@
 /**
- * The canonical RN-primitive node tree — the single source of truth (PRD §6).
- * The renderer, codegen, and harness all derive from this; none holds canonical
- * state of its own.
+ * The RN-primitive node tree used by Canvas projections. While an object is open
+ * in Studio, the renderer, codegen, and harness derive from this tree; durable
+ * truth for connected repos lives in source files on the active Git branch.
  */
 import type { Color, RNStyle } from "@rn-canvas/styles";
 

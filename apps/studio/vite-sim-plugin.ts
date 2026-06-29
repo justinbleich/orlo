@@ -743,6 +743,20 @@ export function simScreenshotPlugin(): Plugin {
         }
       });
 
+      server.middlewares.use("/api/repo/context", async (req, res) => {
+        if (req.method !== "GET") {
+          sendJson(res, 405, { error: "GET required" });
+          return;
+        }
+        try {
+          sendJson(res, 200, await readRepoContext());
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Repository scan failed",
+          });
+        }
+      });
+
       server.middlewares.use("/api/repo", async (req, res) => {
         try {
           if (req.method === "GET") {
@@ -768,20 +782,6 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Repository connection failed",
-          });
-        }
-      });
-
-      server.middlewares.use("/api/repo/context", async (req, res) => {
-        if (req.method !== "GET") {
-          sendJson(res, 405, { error: "GET required" });
-          return;
-        }
-        try {
-          sendJson(res, 200, await readRepoContext());
-        } catch (error) {
-          sendJson(res, 400, {
-            error: error instanceof Error ? error.message : "Repository scan failed",
           });
         }
       });

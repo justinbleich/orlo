@@ -1110,7 +1110,7 @@ export default function App() {
       const res = await fetch("/api/repo/context");
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      setRepoContext(body);
+      setRepoContext(body.context ?? body);
     } catch (error) {
       setRepoError(error instanceof Error ? error.message : "Repository scan failed");
     }

@@ -1514,8 +1514,11 @@ export default function App() {
     editor.store.listen(
       () => {
         if (reconcilingShapesRef.current) return;
-        const sel = editor.getOnlySelectedShape();
-        if (!sel || !isFrame(sel)) return;
+        const selectedShapes = editor.getSelectedShapes();
+        if (selectedShapes.length === 0) return;
+        if (selectedShapes.length !== 1) return;
+        const sel = selectedShapes[0];
+        if (!isFrame(sel)) return;
         const rootId = asFrame(sel).props.rootId;
         const s = useDocumentStore.getState();
         const curRoot = findRootContaining(Object.values(s.roots), s.selection[0] ?? "");
@@ -2343,6 +2346,15 @@ export default function App() {
               <div
                 data-testid="rn-canvas-surface"
                 className="relative min-h-0 flex-1"
+                onPointerDownCapture={(event) => {
+                  if (event.button !== 0) return;
+                  const target = event.target;
+                  if (!(target instanceof Element)) return;
+                  if (target.closest("[data-rn-root-id]")) return;
+                  if (target.closest(".tl-selection__handle")) return;
+                  const store = useDocumentStore.getState();
+                  if (store.selection.length > 0) store.setSelection([]);
+                }}
               >
                 <Tldraw
                   onMount={onMount}

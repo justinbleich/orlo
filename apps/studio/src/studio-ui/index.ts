@@ -16,6 +16,7 @@ export { TokenNumberField, type NumberTokenOption } from "./TokenNumberField";
 export { TokenPickerPopover, type TokenPickerOption } from "./TokenPickerPopover";
 export { IconButton, IconToggle } from "./IconButton";
 export { Button, StatusPill } from "./Button";
+export { PanelAction, PanelPill, PanelRow, PanelSection, PanelStaticRow } from "./Panel";
 export { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 export { Select, type SelectOption } from "./Select";
 export type { EditLifecycle } from "./controls";

@@ -9,6 +9,7 @@ import {
   ArrowRight,
   ArrowUp,
   Component,
+  FileText,
   FolderOpen,
   Frame,
   Image as ImageIcon,
@@ -39,7 +40,7 @@ import {
 import { Menu } from "@base-ui/react/menu";
 import { color, layout, radius, space, text } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
-import { cn } from "./studio-ui";
+import { cn, PanelAction, PanelPill, PanelRow, PanelSection, PanelStaticRow } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
 import { TokensPanel } from "./TokensPanel";
@@ -100,27 +101,27 @@ function gitStatusCode(file: GitFileStatus): string {
   return code.trim() || "";
 }
 
-function gitStatusTone(code: string): "neutral" | "accent" | "amber" {
-  if (code === "U" || code === "A") return "accent";
+function gitStatusTone(code: string): "neutral" | "accent" | "amber" | "live" {
+  if (code === "A" || code === "U") return "live";
   if (code === "D") return "amber";
-  return code ? "neutral" : "neutral";
+  return code ? "accent" : "neutral";
 }
 
 function GitBadge({ code, title }: { code?: string; title?: string }) {
-  if (!code) return <span className="w-4 shrink-0" aria-hidden="true" />;
+  if (!code) return <span className="w-1 shrink-0" aria-hidden="true" />;
   const tone = gitStatusTone(code);
   return (
     <span
       title={title}
+      aria-label={title}
       className={cn(
-        "flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border text-[9px] font-semibold leading-none",
-        tone === "accent" && "border-accent-line bg-accent-soft text-accent",
-        tone === "amber" && "border-amber/40 bg-amber/10 text-amber",
-        tone === "neutral" && "border-line bg-chrome text-ink-faint",
+        "flex size-1 shrink-0 items-center justify-center rounded-full",
+        tone === "accent" && "bg-accent",
+        tone === "live" && "bg-live",
+        tone === "amber" && "bg-amber",
+        tone === "neutral" && "bg-ink-faint",
       )}
-    >
-      {code}
-    </span>
+    />
   );
 }
 
@@ -150,11 +151,43 @@ export function Tabs({
   tabs,
   active,
   onSelect,
+  variant = "segmented",
 }: {
   tabs: string[];
   active: string;
   onSelect: (t: string) => void;
+  variant?: "segmented" | "underline";
 }) {
+  if (variant === "underline") {
+    return (
+      <div className="flex h-8 items-end gap-md border-b border-line-soft">
+        {tabs.map((t) => {
+          const on = t === active;
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onSelect(t)}
+              className={cn(
+                "relative h-8 px-2xs text-xs font-semibold transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+                on ? "text-accent" : "text-ink-faint hover:text-ink",
+              )}
+            >
+              {t}
+              {on && (
+                <span
+                  className="absolute inset-x-0 bottom-[-1px] h-px bg-accent"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div className="flex gap-xs rounded-sm border border-line/60 bg-chrome-2 p-2xs">
       {tabs.map((t) => {
@@ -482,10 +515,8 @@ export function LeftPanel({
     deleteNodes(focusedRoot.id, [selectedId]);
   }
 
-  const sidebarItem =
-    "flex h-7 min-w-0 items-center gap-xs rounded-sm px-sm text-left text-sm transition-colors";
   const activeItem = "bg-accent-soft text-accent";
-  const inactiveItem = "text-ink-dim hover:bg-raised hover:text-ink";
+  const rowAction = "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100";
   const screenGitCode = gitCodeForPath(gitStatus, targetPath) ?? gitCodeForPath(gitStatus, sidecarPath);
   const sidecarGitCode = gitCodeForPath(gitStatus, sidecarPath);
   const themeGitCode = gitCodeForPath(gitStatus, "generated/theme.ts");
@@ -494,7 +525,6 @@ export function LeftPanel({
   const repoFrameworks = repoContext?.frameworks ?? [];
   const repoScreens = repoContext?.screens ?? [];
   const repoAssets = repoContext?.assets ?? [];
-  const repoEntrypoints = repoContext?.entrypoints ?? [];
   const frameworkLabels = repoFrameworks.map((framework) => framework.label);
   const repoSubtitle =
     frameworkLabels.length > 0
@@ -506,12 +536,8 @@ export function LeftPanel({
     repoScreens.filter((screen) => screen.path !== targetPath && screen.sidecarPath !== sidecarPath);
   const visibleRepoScreens = repoScreenCandidates.slice(0, 6);
   const visibleAssets = repoAssets.slice(0, 4);
-  const visibleEntrypoints = repoEntrypoints.slice(0, 3);
-  const hasRuntimeSignals = !!repoContext && (
-    repoFrameworks.length > 0 ||
-    visibleEntrypoints.length > 0 ||
-    repoContext.truncated
-  );
+  const canvasScreens = rootList.filter((root) => root.id !== editingComponentId);
+  const changedFiles = gitStatus.status === "ready" ? gitStatus.files : [];
   const flowItems = flows.map((flow, index) => ({
     ...flow,
     gitCode: flow.gitCode ?? (index === 0 ? sidecarGitCode : undefined),
@@ -566,337 +592,251 @@ export function LeftPanel({
               {repoName}
             </div>
             <GitBadge code={repoGitCode} title="Repository has changes" />
-            <button
-              type="button"
-              style={panelIconButton}
+            <PanelAction
               onClick={onOpenRepoSettings}
               title={repoContext ? "Change connected repo" : "Connect repo"}
             >
               <FolderOpen size={14} aria-hidden="true" />
-            </button>
+            </PanelAction>
           </div>
           <div className="truncate text-2xs text-accent" title={repoContext?.repoPath}>
             {repoSubtitle}
           </div>
-          {repoContext && (
-            <div className="mt-xs flex flex-wrap gap-xs text-2xs text-ink-faint">
-              <span>{repoScreens.length} screens</span>
-              <span>{repoContext.sidecars?.length ?? 0} sidecars</span>
-              <span>{repoAssets.length} assets</span>
-            </div>
-          )}
         </div>
 
-        {hasRuntimeSignals && (
-          <section className="flex flex-col gap-xs">
-            <Eyebrow>Runtime</Eyebrow>
-            <div className="rounded-sm border border-line-soft bg-chrome-2 p-sm">
-              <div className="flex flex-wrap gap-xs">
-                {repoContext.packageManager !== "unknown" && (
-                  <span className="rounded-pill bg-raised px-xs py-px text-2xs font-semibold text-ink-dim">
-                    {repoContext.packageManager}
-                  </span>
-                )}
-                {repoFrameworks.map((framework) => (
-                  <span
-                    key={framework.id}
-                    title={framework.detail}
-                    className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent"
-                  >
-                    {framework.label}
-                  </span>
-                ))}
-                {repoContext.truncated && (
-                  <span className="rounded-pill bg-raised px-xs py-px text-2xs font-semibold text-ink-faint">
-                    scan capped
-                  </span>
-                )}
-              </div>
-              {visibleEntrypoints.length > 0 && (
-                <div className="mt-xs flex flex-col gap-2xs">
-                  {visibleEntrypoints.map((entry) => (
-                    <div key={entry} className="truncate text-2xs text-ink-faint" title={entry}>
-                      {entry}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        <section className="flex flex-col gap-xs">
-          <div className="flex items-center gap-xs">
-            <Eyebrow>Flows</Eyebrow>
-            <div className="flex-1" />
-            <button type="button" style={panelIconButton} onClick={onAddFlow} title="Add flow">
+        <PanelSection
+          title="Flows"
+          count={flowItems.length}
+          action={(
+            <PanelAction onClick={onAddFlow} title="Add flow">
               <Plus size={16} aria-hidden="true" />
-            </button>
-          </div>
+            </PanelAction>
+          )}
+        >
           {flowItems.map((flow) => (
-            <div key={flow.id} className="flex gap-xs">
-              <button
-                type="button"
+            <PanelRow
+              key={flow.id}
+              icon={Route}
                 onClick={() => openFlow(flow.id)}
-                className={cn(sidebarItem, "flex-1", workspace === "Flow" && activeFlow === flow.id ? activeItem : inactiveItem)}
-              >
-                <Route size={13} aria-hidden="true" />
+              active={workspace === "Flow" && activeFlow === flow.id}
+              action={pendingRemoveFlowId === flow.id ? (
+                <>
+                  <PanelAction
+                    onClick={() => onRemoveFlow(flow)}
+                    title={`Confirm remove ${flow.label}`}
+                    className="text-amber opacity-100"
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                  </PanelAction>
+                  <PanelAction
+                    onClick={onCancelRemoveFlow}
+                    title="Cancel remove flow"
+                    className="opacity-100"
+                  >
+                    <X size={15} aria-hidden="true" />
+                  </PanelAction>
+                </>
+              ) : (
+                <PanelAction
+                  onClick={() => onRemoveFlow(flow)}
+                  title={`Remove ${flow.label}`}
+                  className={rowAction}
+                >
+                  <Trash2 size={15} aria-hidden="true" />
+                </PanelAction>
+              )}
+            >
                 <span className="min-w-0 flex-1 truncate">{flow.label}</span>
                 {flow.screenCount !== undefined && (
                   <span className="text-2xs tabular-nums text-ink-faint">{flow.screenCount}</span>
                 )}
                 <GitBadge code={flow.gitCode} title={sidecarPath} />
-              </button>
-              {pendingRemoveFlowId === flow.id ? (
-                <>
-                  <button
-                    type="button"
-                    style={panelIconButton}
-                    onClick={() => onRemoveFlow(flow)}
-                    title={`Confirm remove ${flow.label}`}
-                    className="text-amber"
-                  >
-                    <Trash2 size={15} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    style={panelIconButton}
-                    onClick={onCancelRemoveFlow}
-                    title="Cancel remove flow"
-                  >
-                    <X size={15} aria-hidden="true" />
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  style={panelIconButton}
-                  onClick={() => onRemoveFlow(flow)}
-                  title={`Remove ${flow.label}`}
-                >
-                  <Trash2 size={15} aria-hidden="true" />
-                </button>
-              )}
-            </div>
+            </PanelRow>
           ))}
-        </section>
+        </PanelSection>
 
-        <section className="flex flex-col gap-xs">
-          <div className="flex items-center gap-xs">
-            <Eyebrow>Project Tree</Eyebrow>
-            <div className="flex-1" />
-            <button type="button" style={panelIconButton} onClick={onAddFrame} title="Add screen">
+        <PanelSection
+          title="Screens"
+          count={canvasScreens.length + visibleRepoScreens.length}
+          action={(
+            <PanelAction onClick={onAddFrame} title="Add screen">
               <Plus size={16} aria-hidden="true" />
-            </button>
-          </div>
-          {rootList
-            .filter((root) => root.id !== editingComponentId)
-            .map((root, index) => {
-              const active = root.id === focusedRoot?.id && workspace === "Screen";
-              const locked = !!root.design?.locked;
-              return (
-                <div key={root.id} className="flex flex-col gap-xs">
-                  <div className="flex gap-xs">
-                    <button
-                      type="button"
-                      disabled={locked}
-                      onClick={() => {
-                        setSelection([root.id]);
-                        onWorkspaceChange("Screen");
-                      }}
-                      className={cn(sidebarItem, "flex-1", active ? activeItem : inactiveItem, locked && "cursor-not-allowed opacity-50")}
-                    >
-                      <Square size={13} aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {root.design?.name ?? `Screen ${index + 1}`}
-                      </span>
-                      <GitBadge code={screenGitCode} title={`${screenGitCode ?? ""} ${targetPath}`} />
-                    </button>
-                    <button
-                      type="button"
+            </PanelAction>
+          )}
+        >
+          {canvasScreens.map((root, index) => {
+            const active = root.id === focusedRoot?.id && workspace === "Screen";
+            const locked = !!root.design?.locked;
+            return (
+              <div key={root.id} className="flex flex-col gap-xs">
+                <PanelRow
+                  icon={Square}
+                  disabled={locked}
+                  onClick={() => {
+                    setSelection([root.id]);
+                    onWorkspaceChange("Screen");
+                  }}
+                  active={active}
+                  className={locked ? "cursor-not-allowed opacity-50" : undefined}
+                  action={(
+                    <PanelAction
                       disabled={locked}
                       onClick={() => deleteScreen(root.id)}
-                      style={panelIconButton}
                       title="Delete screen"
+                      className={rowAction}
                     >
                       <Trash2 size={15} aria-hidden="true" />
-                    </button>
-                  </div>
-                  {root.id === focusedRoot?.id && (
-                    <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
-                      <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
-                        <DocumentTree
-                          node={root}
-                          rootId={root.id}
-                          selectedIds={selection}
-                          gitBadge={<GitBadge code={sidecarGitCode} title={`${sidecarGitCode ?? ""} ${sidecarPath}`} />}
-                        />
-                      </div>
-                      <div className="flex gap-xs">
-                        <button
-                          type="button"
-                          style={panelIconButton}
-                          onClick={() => moveSelected(reverse ? 1 : -1)}
-                          disabled={reverse ? !canMoveAfter : !canMoveBefore}
-                          title={horizontal ? "Move left" : "Move up"}
-                        >
-                          {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
-                        </button>
-                        <button
-                          type="button"
-                          style={panelIconButton}
-                          onClick={() => moveSelected(reverse ? -1 : 1)}
-                          disabled={reverse ? !canMoveBefore : !canMoveAfter}
-                          title={horizontal ? "Move right" : "Move down"}
-                        >
-                          {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
-                        </button>
-                        <button
-                          type="button"
-                          style={panelIconButton}
-                          onClick={createComponent}
-                          disabled={!canMakeComponent}
-                          title="Create component"
-                        >
-                          <Component size={15} aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          style={panelIconButton}
-                          onClick={deleteSelected}
-                          disabled={!canDeleteLayer}
-                          title="Delete layer"
-                        >
-                          <Trash2 size={15} aria-hidden="true" />
-                        </button>
-                      </div>
-                    </div>
+                    </PanelAction>
                   )}
-                </div>
-              );
-            })}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {root.design?.name ?? `Screen ${index + 1}`}
+                  </span>
+                  <GitBadge code={screenGitCode} title={`${screenGitCode ?? ""} ${targetPath}`} />
+                </PanelRow>
+                {root.id === focusedRoot?.id && (
+                  <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
+                    <div className="eyebrow px-xs pt-2xs">Layers</div>
+                    <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
+                      <DocumentTree node={root} rootId={root.id} selectedIds={selection} />
+                    </div>
+                    <div className="flex gap-xs">
+                      <PanelAction
+                        onClick={() => moveSelected(reverse ? 1 : -1)}
+                        disabled={reverse ? !canMoveAfter : !canMoveBefore}
+                        title={horizontal ? "Move left" : "Move up"}
+                      >
+                        {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
+                      </PanelAction>
+                      <PanelAction
+                        onClick={() => moveSelected(reverse ? -1 : 1)}
+                        disabled={reverse ? !canMoveBefore : !canMoveAfter}
+                        title={horizontal ? "Move right" : "Move down"}
+                      >
+                        {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
+                      </PanelAction>
+                      <PanelAction
+                        onClick={createComponent}
+                        disabled={!canMakeComponent}
+                        title="Create component"
+                      >
+                        <Component size={15} aria-hidden="true" />
+                      </PanelAction>
+                      <PanelAction
+                        onClick={deleteSelected}
+                        disabled={!canDeleteLayer}
+                        title="Delete layer"
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                      </PanelAction>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {visibleRepoScreens.length > 0 && (
-            <div className="mt-xs flex flex-col gap-xs border-t border-line-soft pt-sm">
-              <Eyebrow>Repo Screens</Eyebrow>
+            <div className="mt-xs flex flex-col gap-xs border-t border-line-soft pt-xs">
+              <Eyebrow>In Repo</Eyebrow>
               {visibleRepoScreens.map((screen) => {
                 const gitCode =
                   gitCodeForPath(gitStatus, screen.path) ??
                   (screen.sidecarPath ? gitCodeForPath(gitStatus, screen.sidecarPath) : undefined);
                 return (
-                  <button
-                    type="button"
+                  <PanelRow
                     key={screen.path}
+                    icon={FileText}
                     onClick={() => onOpenRepoScreen(screen)}
-                    className={cn(sidebarItem, "text-ink-dim hover:bg-raised hover:text-ink")}
                     title={screen.rnCanvas ? `Open ${screen.sidecarPath ?? screen.path}` : `Import ${screen.path}`}
                   >
-                    <Square size={13} aria-hidden="true" />
                     <span className="min-w-0 flex-1 truncate">{screen.name}</span>
-                    {screen.rnCanvas && (
-                      <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                        canvas
-                      </span>
-                    )}
+                    {screen.rnCanvas && <PanelPill tone="accent">canvas</PanelPill>}
                     <GitBadge code={gitCode} title={screen.path} />
-                  </button>
+                  </PanelRow>
                 );
               })}
-              {repoScreenCandidates.length > visibleRepoScreens.length && (
-                <div className="px-sm text-2xs text-ink-faint">
-                  +{repoScreenCandidates.length - visibleRepoScreens.length} more screens
-                </div>
-              )}
             </div>
           )}
-        </section>
+        </PanelSection>
 
-        <section className="flex flex-col gap-xs">
-          <div className="flex items-center gap-xs">
-            <Eyebrow>Components</Eyebrow>
-          </div>
+        <PanelSection title="Components" count={componentList.length}>
           {componentList.length === 0 ? (
-            <p className="m-0 text-sm text-ink-faint">Select a layer and “Create component” to add one.</p>
+            <p className="m-0 px-sm text-xs text-ink-faint">No components yet.</p>
           ) : (
             componentList.map((comp) => {
               const armed = armedComponentId === comp.id;
               const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${comp.name}.tsx`);
               return (
-                <div key={comp.id} className="flex gap-xs">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setArmedComponent(armed ? null : comp.id);
-                      onWorkspaceChange("Component");
-                    }}
-                    title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
-                    className={cn(sidebarItem, "flex-1", workspace === "Component" || armed ? activeItem : inactiveItem)}
-                  >
-                    <Component size={13} aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate">{comp.name}</span>
-                    <GitBadge code={componentGitCode} title={`generated/components/${comp.name}.tsx`} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      beginComponentEdit(comp.id);
-                      onWorkspaceChange("Component");
-                    }}
-                    style={panelIconButton}
-                    title="Edit component"
-                  >
-                    <Pencil size={14} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeComponent(comp.id)}
-                    style={panelIconButton}
-                    title="Delete component"
-                  >
-                    <Trash2 size={15} aria-hidden="true" />
-                  </button>
-                </div>
+                <PanelRow
+                  key={comp.id}
+                  icon={Component}
+                  onClick={() => {
+                    setArmedComponent(armed ? null : comp.id);
+                    onWorkspaceChange("Component");
+                  }}
+                  title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
+                  active={workspace === "Component" || armed}
+                  action={(
+                    <>
+                      <PanelAction
+                        onClick={() => {
+                          beginComponentEdit(comp.id);
+                          onWorkspaceChange("Component");
+                        }}
+                        title="Edit component"
+                        className={rowAction}
+                      >
+                        <Pencil size={14} aria-hidden="true" />
+                      </PanelAction>
+                      <PanelAction
+                        onClick={() => removeComponent(comp.id)}
+                        title="Delete component"
+                        className={rowAction}
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                      </PanelAction>
+                    </>
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{comp.name}</span>
+                  <GitBadge code={componentGitCode} title={`generated/components/${comp.name}.tsx`} />
+                </PanelRow>
               );
             })
           )}
-        </section>
+        </PanelSection>
 
-        <section className="flex flex-col gap-xs">
-          <Eyebrow>Design System</Eyebrow>
+        <PanelSection title="Design System" count={designSystemViews.length}>
           {designSystemViews.map((item) => (
-            <button
+            <PanelRow
               key={item}
-              type="button"
+              icon={Type}
               onClick={() => openDesignSystem(item)}
-              className={cn(sidebarItem, workspace === "Design System" && activeDesignSystemView === item ? activeItem : inactiveItem)}
+              active={workspace === "Design System" && activeDesignSystemView === item}
             >
-              <Type size={13} aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{item}</span>
               <GitBadge code={item === "Tokens" ? themeGitCode : undefined} title="generated/theme.ts" />
-            </button>
+            </PanelRow>
           ))}
-        </section>
-
-        <section className="flex flex-col gap-xs">
-          <Eyebrow>Changes</Eyebrow>
-          <button type="button" onClick={onOpenChanges} className={cn(sidebarItem, inactiveItem)}>
-            <MoveVertical size={13} aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate">Activity and PR readiness</span>
-            <GitBadge code={repoGitCode} title="Repository has changes" />
-          </button>
-        </section>
+        </PanelSection>
 
         {visibleAssets.length > 0 && (
-          <section className="flex flex-col gap-xs">
-            <Eyebrow>Assets</Eyebrow>
+          <PanelSection title="Assets" count={repoAssets.length}>
             {visibleAssets.map((asset) => (
-              <div key={asset.path} className={cn(sidebarItem, "text-ink-dim")} title={asset.path}>
-                <ImageIcon size={13} aria-hidden="true" />
+              <PanelStaticRow key={asset.path} icon={ImageIcon} title={asset.path}>
                 <span className="min-w-0 flex-1 truncate">{shortPathLabel(asset.path)}</span>
                 <span className="text-2xs text-ink-faint">{asset.kind}</span>
-              </div>
+              </PanelStaticRow>
             ))}
-          </section>
+          </PanelSection>
         )}
+
+        <PanelSection title="Changes" count={changedFiles.length}>
+          <PanelRow icon={MoveVertical} onClick={onOpenChanges}>
+            <span className="min-w-0 flex-1 truncate">Activity and PR readiness</span>
+            <GitBadge code={repoGitCode} title="Repository has changes" />
+          </PanelRow>
+        </PanelSection>
 
         {workspace === "Design System" && (
           <section className="flex flex-col gap-sm border-t border-line-soft pt-md">

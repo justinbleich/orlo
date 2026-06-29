@@ -937,8 +937,19 @@ function SelectionHeader({
           {anyHidden ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
         </IconToggle>
       </div>
-      <div className="eyebrow pl-2xs">
-        {multi ? `${nodes.length} layers` : `${primary.type} · ${primary.id.slice(0, 8)}`}
+      <div className="eyebrow flex min-w-0 items-center gap-xs pl-2xs">
+        <span>{multi ? `${nodes.length} layers` : primary.type}</span>
+        {!multi && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span
+              title={`Node id: ${primary.id}`}
+              className="min-w-0 truncate font-mono normal-case tracking-normal text-ink-faint"
+            >
+              {primary.id.slice(0, 8)}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

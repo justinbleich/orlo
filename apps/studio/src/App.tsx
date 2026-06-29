@@ -2143,11 +2143,20 @@ export default function App() {
         >
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: space.md, paddingBottom: 0 }}>
+              <div className="mb-xs flex items-center gap-xs">
+                <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
+                {inspectorTab !== "Inspect" && (
+                  <span className="text-2xs font-semibold text-ink-faint">
+                    {inspectorTab}
+                  </span>
+                )}
+              </div>
               {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
               <Tabs
                 tabs={["Inspect", "Code", "History"]}
                 active={inspectorTab}
                 onSelect={setInspectorTab}
+                variant="underline"
               />
             </div>
             <div style={{ flex: 1, minHeight: 0, display: "flex" }}>

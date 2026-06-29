@@ -80,12 +80,14 @@ export function DocumentTree({
   const label = node.design?.name ?? componentName ?? node.type;
   const typeHint = isInstance ? "instance" : node.type;
   const children = childrenOf(node);
+  const title = `${label} · ${typeHint} · ${node.id}`;
 
   return (
     <>
       <div
         data-layer-id={node.id}
         data-layer-type={node.type}
+        title={title}
         draggable={!locked && depth > 0}
         onDragStart={(event) => {
           draggedNodeId = node.id;
@@ -128,10 +130,10 @@ export function DocumentTree({
           paddingLeft: `calc(${space.sm} + ${depth} * ${space.md})`,
           cursor: locked ? "not-allowed" : "pointer",
           fontSize: text.sm,
-          background: selected ? color.accent : over ? color.accentSoft : "transparent",
-          color: node.design?.hidden ? color.inkFaint : color.ink,
+          background: selected || over ? color.accentSoft : "transparent",
+          color: node.design?.hidden ? color.inkFaint : selected ? color.accent : color.ink,
           borderRadius: radius.sm,
-          boxShadow: over ? `inset 0 0 0 1px ${color.accentLine}` : "none",
+          boxShadow: selected || over ? `inset 0 0 0 1px ${color.accentLine}` : "none",
           display: "flex",
           alignItems: "center",
           gap: space.xs,
@@ -195,7 +197,8 @@ export function DocumentTree({
           <Component size={13} aria-hidden="true" style={{ color: color.accent, flexShrink: 0 }} />
         )}
         <span className={cn("min-w-0 flex-1 truncate")}>
-          {label} <span style={{ color: color.inkFaint }}>· {typeHint}</span>
+          {label}
+          {isInstance && <span style={{ color: color.inkFaint }}> · instance</span>}
         </span>
         {gitBadge}
       </div>

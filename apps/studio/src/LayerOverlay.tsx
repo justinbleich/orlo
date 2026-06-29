@@ -107,6 +107,7 @@ export function LayerOverlay({
   const [snapGuides, setSnapGuides] = useState<{ x?: number; y?: number }>({});
   const [spacingSegments, setSpacingSegments] = useState<SpacingSegment[]>([]);
   const [editing, setEditing] = useState<{ id: NodeId; value: string } | null>(null);
+  const [hoveredBox, setHoveredBox] = useState<LayoutBox | null>(null);
   // True while an armed tool's cursor is over this frame — drives the "drop here"
   // ring so users know which screen the next node lands in (no pre-selection).
   const [armedHover, setArmedHover] = useState(false);
@@ -172,6 +173,10 @@ export function LayerOverlay({
   }, [selectedInRoot, result, isSingle, instanceKey, instanceBoxes]);
 
   const singleBox = isSingle ? selectedBoxes[0] : undefined;
+
+  function nodeLabel(node: Node): string {
+    return node.design?.name ?? node.type;
+  }
 
   function setSelection(ids: NodeId[]) {
     useDocumentStore.getState().setSelection(ids);
@@ -444,7 +449,18 @@ export function LayerOverlay({
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const current = gesture.current;
-    if (!current || current.pointerId !== event.pointerId) return;
+    if (!current) {
+      if (!active || editing || armed) {
+        setHoveredBox(null);
+        return;
+      }
+      const rawHit = hitTestLayout(result.layout, eventPoint(event));
+      const hit = rawHit ? resolveHit(rawHit) : null;
+      setHoveredBox(hit && hit.node.id !== root.id && !hit.node.design?.hidden ? hit : null);
+      return;
+    }
+    if (current.pointerId !== event.pointerId) return;
+    if (hoveredBox) setHoveredBox(null);
     // Keep drag moves off tldraw so it can't translate the frame underneath.
     event.stopPropagation();
     const point = eventPoint(event);
@@ -675,6 +691,32 @@ export function LayerOverlay({
     se: { right: -4, bottom: -4, cursor: "nwse-resize" },
     sw: { left: -4, bottom: -4, cursor: "nesw-resize" },
   };
+  const showHoverLabel =
+    active &&
+    hoveredBox &&
+    !selectedInRoot.includes(hoveredBox.node.id) &&
+    !gesture.current;
+  const labelTop = (box: LayoutBox) => (box.top > 24 ? box.top - 22 : box.top + 4);
+  const labelLeft = (box: LayoutBox) => Math.max(0, Math.min(box.left, result.width - 120));
+  const labelStyle = (box: LayoutBox, selected = false): React.CSSProperties => ({
+    position: "absolute",
+    left: labelLeft(box),
+    top: labelTop(box),
+    maxWidth: 160,
+    padding: "2px 6px",
+    borderRadius: radius.xs,
+    background: selected ? color.accent : color.chrome,
+    boxShadow: "var(--shadow-control)",
+    color: selected ? color.chrome : color.accent,
+    fontFamily: font.sans,
+    fontSize: text["2xs"],
+    fontWeight: 600,
+    lineHeight: "14px",
+    overflow: "hidden",
+    pointerEvents: "none",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  });
 
   return (
     <div
@@ -687,7 +729,10 @@ export function LayerOverlay({
       onPointerUp={(event) => finishGesture(event)}
       onPointerCancel={(event) => finishGesture(event, true)}
       onPointerEnter={() => { if (armed) setArmedHover(true); }}
-      onPointerLeave={() => setArmedHover(false)}
+      onPointerLeave={() => {
+        setArmedHover(false);
+        setHoveredBox(null);
+      }}
       onDoubleClick={onDoubleClick}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !editing) selectParent();
@@ -813,6 +858,25 @@ export function LayerOverlay({
           );
         })}
 
+      {/* Faint hover outline for discoverability without taking selection focus. */}
+      {showHoverLabel && (
+        <div
+          data-rn-hover-outline=""
+          style={{
+            position: "absolute",
+            left: hoveredBox.left,
+            top: hoveredBox.top,
+            width: hoveredBox.width,
+            height: hoveredBox.height,
+            border: `1px solid ${color.accentLine}`,
+            borderRadius: radius.sm,
+            background: color.accentSoft,
+            opacity: 0.65,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
       {/* Selection outlines for every selected node in this frame. */}
       {active &&
         selectedBoxes.map((box, index) => (
@@ -855,6 +919,23 @@ export function LayerOverlay({
               ))}
           </div>
         ))}
+
+      {/* Layer labels for selection and hover. */}
+      {active &&
+        selectedBoxes.map((box, index) => (
+          <div
+            key={`label-${box.node.id}-${index}`}
+            data-rn-layer-label=""
+            style={labelStyle(box, true)}
+          >
+            {nodeLabel(box.node)}
+          </div>
+        ))}
+      {showHoverLabel && (
+        <div data-rn-layer-label="" style={labelStyle(hoveredBox)}>
+          {nodeLabel(hoveredBox.node)}
+        </div>
+      )}
 
       {/* Marquee rectangle. */}
       {active && marquee && (

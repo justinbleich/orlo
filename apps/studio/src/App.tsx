@@ -193,6 +193,7 @@ function rootSize(root: Node): { w: number; h: number } {
 
 /** Logical size of the default device canvas (iPhone 14/13, points). */
 const DEVICE_FRAME = { width: 390, height: 844 } as const;
+const DEVICE_SAFE_AREA = { top: 64, bottom: 48, side: 16 } as const;
 
 /**
  * A blank full-bleed mobile screen: device-sized, top-aligned column, white,
@@ -205,7 +206,9 @@ function createScreenFrame(children: Node[] = []): Node {
       height: DEVICE_FRAME.height,
       backgroundColor: "#ffffff",
       flexDirection: "column",
-      padding: 16,
+      padding: DEVICE_SAFE_AREA.side,
+      paddingTop: DEVICE_SAFE_AREA.top,
+      paddingBottom: DEVICE_SAFE_AREA.bottom,
       gap: 12,
     },
     children,
@@ -356,6 +359,18 @@ function focusRootFrame(editor: Editor, rootId: NodeId, animate = true) {
       animation: animate ? { duration: 180 } : undefined,
     });
   }
+  return true;
+}
+
+function syncCanvasFrameSelection(editor: Editor, rootId: NodeId, selectFrame: boolean) {
+  const shape = findFrameShapeForRoot(editor, rootId);
+  if (!shape) return false;
+  const selected = editor.getSelectedShapeIds().includes(shape.id);
+  if (selectFrame) {
+    if (!selected) editor.select(shape.id);
+    return true;
+  }
+  if (selected) editor.deselect(shape.id);
   return true;
 }
 
@@ -1478,8 +1493,9 @@ export default function App() {
 
   const onMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
-    // Dark canvas to match the studio shell (chrome theming, not artboard).
-    editor.user.updateUserPreferences({ colorScheme: "dark" });
+    // Keep tldraw's own canvas affordances light and gridded by default.
+    editor.user.updateUserPreferences({ colorScheme: "light" });
+    editor.updateInstanceState({ isGridMode: true });
 
     const store = useDocumentStore.getState();
     if (Object.keys(store.roots).length === 0) {
@@ -1644,15 +1660,13 @@ export default function App() {
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor || !focusedRoot) return;
+    const selectedId = selection[0] ?? "";
     if (pendingFocusRootIdRef.current === focusedRoot.id) {
       if (focusRootFrame(editor, focusedRoot.id)) pendingFocusRootIdRef.current = null;
       return;
     }
-    const shape = findFrameShapeForRoot(editor, focusedRoot.id);
-    if (shape && editor.getOnlySelectedShape()?.id !== shape.id) {
-      editor.select(shape.id);
-    }
-  }, [focusedRoot]);
+    syncCanvasFrameSelection(editor, focusedRoot.id, selectedId === focusedRoot.id);
+  }, [focusedRoot, selection]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1879,8 +1893,7 @@ export default function App() {
             if (pendingFocusRootIdRef.current === selectedRoot.id) {
               if (focusRootFrame(editor, selectedRoot.id)) pendingFocusRootIdRef.current = null;
             } else {
-              const selectedShape = findFrameShapeForRoot(editor, selectedRoot.id);
-              if (selectedShape) editor.select(selectedShape.id);
+              syncCanvasFrameSelection(editor, selectedRoot.id, selectedId === selectedRoot.id);
             }
           }
         },

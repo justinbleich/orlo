@@ -9,6 +9,7 @@ import {
   type RecordProps,
   type TLBaseShape,
 } from "tldraw";
+import { BatteryFull, Signal, Wifi } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import {
   applyOverrides,
@@ -33,6 +34,8 @@ import { color, font, radius, space, text } from "../studio-theme";
 // limited set of frames live; render the rest as lightweight proxies.)
 const LOD_MIN_ONSCREEN_WIDTH = 160;
 const MAX_VARIANT_PREVIEWS = 12;
+const DEVICE_FRAME_RADIUS = 32;
+const IOS_STATUS_BAR_HEIGHT = 54;
 
 /** Lightweight stand-in for an off-focus / zoomed-out frame — no Yoga, no rnw. */
 function LODProxy({ w, h, label }: { w: number; h: number; label: string }) {
@@ -51,6 +54,63 @@ function LODProxy({ w, h, label }: { w: number; h: number; label: string }) {
       }}
     >
       {label}
+    </div>
+  );
+}
+
+/** Non-exporting iOS preview chrome. It helps designers place content against
+ * real device affordances without adding fake RN nodes to generated screens. */
+function IOSDeviceChrome({ w, h }: { w: number; h: number }) {
+  const sidePadding = Math.max(22, Math.min(34, w * 0.07));
+  return (
+    <div
+      data-rn-device-chrome="ios"
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "hidden",
+        borderRadius: DEVICE_FRAME_RADIUS,
+        color: color.artInk,
+        fontFamily: font.sans,
+        pointerEvents: "none",
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: sidePadding,
+          right: sidePadding,
+          top: 0,
+          height: IOS_STATUS_BAR_HEIGHT,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontSize: 13,
+          fontWeight: 600,
+          letterSpacing: 0,
+        }}
+      >
+        <span>9:41</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <Signal size={15} strokeWidth={2.8} aria-hidden="true" />
+          <Wifi size={15} strokeWidth={2.8} aria-hidden="true" />
+          <BatteryFull size={23} strokeWidth={2.2} aria-hidden="true" />
+        </span>
+      </div>
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: w / 2 - 67,
+          bottom: Math.max(8, Math.min(12, h * 0.015)),
+          width: 134,
+          height: 5,
+          borderRadius: 999,
+          background: color.artInk,
+          opacity: 0.86,
+        }}
+      />
     </div>
   );
 }
@@ -340,6 +400,7 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     }, [setStudioLayout, shape.props.rootId]);
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
+    const selection = useDocumentStore((s) => s.selection);
     const editingComponentId = useDocumentStore((s) => s.editingComponentId);
     // The component registry expands any instances in this frame to primitives.
     const components = useDocumentStore((s) => s.components);
@@ -359,18 +420,24 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
       () => shape.props.w * editor.getZoomLevel() >= LOD_MIN_ONSCREEN_WIDTH,
       [editor, shape.id, shape.props.w],
     );
-    const live = selected || largeEnough;
+    const hasInnerSelection =
+      !!root && selection.some((id) => id !== root.id && !!findNode(root, id));
+    const live = selected || largeEnough || hasInnerSelection;
     // The overlay owns pointer input when its frame is selected, or for any frame
     // while a tool is armed (so you can draw into an unselected screen directly).
-    const interactive = !outOfFocus && (selected || armed);
+    const interactive = !outOfFocus && (selected || hasInnerSelection || armed);
     return (
       <HTMLContainer
         data-rn-root-id={shape.props.rootId}
         style={{
+          position: "relative",
           width: shape.props.w,
           height: shape.props.h,
           overflow: editingDefinition ? "visible" : "hidden",
           backgroundColor: "#ffffff",
+          border: `1px solid ${hasInnerSelection ? "transparent" : color.artLine}`,
+          borderRadius: DEVICE_FRAME_RADIUS,
+          boxShadow: hasInnerSelection ? "none" : "0 8px 24px rgba(17, 24, 39, 0.08)",
           opacity: outOfFocus ? 0 : 1,
           // Let tldraw handle selection/drag; inner RN content is preview-only.
           pointerEvents: interactive ? "auto" : "none",
@@ -391,6 +458,9 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
             label={root.design?.name ?? root.type}
           />
         )}
+        {root && live && !editingDefinition && (
+          <IOSDeviceChrome w={shape.props.w} h={shape.props.h} />
+        )}
         {root && live && layoutResult && (
           <LayerOverlay root={root} result={layoutResult} active={interactive} />
         )}
@@ -408,7 +478,12 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
   }
 
   override indicator(shape: FrameShape) {
-    return <rect width={shape.props.w} height={shape.props.h} rx={4} />;
+    const store = useDocumentStore.getState();
+    const root = store.roots[shape.props.rootId];
+    const hasInnerSelection =
+      !!root && store.selection.some((id) => id !== root.id && !!findNode(root, id));
+    if (hasInnerSelection) return null;
+    return <rect width={shape.props.w} height={shape.props.h} rx={DEVICE_FRAME_RADIUS} />;
   }
 
   override getIndicatorPath(): undefined {

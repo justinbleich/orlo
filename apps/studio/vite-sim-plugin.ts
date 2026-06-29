@@ -76,6 +76,14 @@ type RepoScreenCandidate = {
   rnCanvas: boolean;
 };
 
+type RepoFlowCandidate = {
+  id: string;
+  label: string;
+  description: string;
+  routeKind: RepoScreenCandidate["routeKind"];
+  screenPaths: string[];
+};
+
 type RepoSidecarCandidate = {
   path: string;
   screenName?: string;
@@ -93,6 +101,7 @@ type RepoContext = {
   packageManager: "pnpm" | "yarn" | "npm" | "unknown";
   frameworks: RepoFramework[];
   dependencies: Record<string, string>;
+  flows: RepoFlowCandidate[];
   screens: RepoScreenCandidate[];
   sidecars: RepoSidecarCandidate[];
   assets: RepoAssetCandidate[];
@@ -175,6 +184,17 @@ async function resolveRepoRoot(input?: string) {
     maxBuffer: 1024 * 1024,
   });
   return stdout.trim();
+}
+
+async function selectFolderPath() {
+  if (process.platform === "darwin") {
+    const { stdout } = await execFileAsync("osascript", [
+      "-e",
+      'POSIX path of (choose folder with prompt "Select a React Native repository")',
+    ], { maxBuffer: 1024 * 1024 });
+    return stdout.trim().replace(/\/$/, "");
+  }
+  throw new Error("Folder selection is not available in this host. Paste a repository path instead.");
 }
 
 function resolveTargetPath(screenName: string, targetPath?: string) {
@@ -438,6 +458,67 @@ function screenNameFromPath(path: string) {
   return base.replace(/^\[(.+)\]$/, "$1");
 }
 
+function titleFromRouteSegment(segment: string) {
+  const clean = segment
+    .replace(/^\((.+)\)$/, "$1")
+    .replace(/^\[(.+)\]$/, "$1")
+    .replace(/\.[^.]+$/, "");
+  const words = clean
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[-_\s]+/)
+    .filter(Boolean);
+  if (words.length === 0) return clean || "Untitled";
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
+function routePartsForPath(path: string) {
+  const parts = path.split("/").filter(Boolean);
+  if (parts[0] === "src" && parts[1] === "app") return parts.slice(2);
+  if (parts[0] === "app" || parts[0] === "screens" || parts[0] === "routes") return parts.slice(1);
+  if (parts[0] === "src" && (parts[1] === "screens" || parts[1] === "routes")) return parts.slice(2);
+  return parts;
+}
+
+function slugId(input: string) {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "flow";
+}
+
+function flowSegmentForScreen(screen: RepoScreenCandidate) {
+  const parts = routePartsForPath(screen.path).filter((part) => !part.startsWith("("));
+  if (parts.length < 2) return undefined;
+  const segment = parts[0];
+  if (!segment || segment === "index" || segment === "generated") return undefined;
+  return segment;
+}
+
+function inferRepoFlows(screens: RepoScreenCandidate[]): RepoFlowCandidate[] {
+  // Repo-derived flows are product objects over the current branch, not Studio-only
+  // metadata. Mutating one should eventually resolve to route/navigation file changes.
+  const groups = new Map<string, RepoScreenCandidate[]>();
+  for (const screen of screens) {
+    const segment = flowSegmentForScreen(screen);
+    if (!segment) continue;
+    const group = groups.get(segment) ?? [];
+    group.push(screen);
+    groups.set(segment, group);
+  }
+  return [...groups.entries()].map(([segment, screens]) => {
+    const label = titleFromRouteSegment(segment);
+    const routeKind = screens.find((screen) => screen.routeKind !== "unknown")?.routeKind ?? screens[0]?.routeKind ?? "unknown";
+    return {
+      id: `repo-flow:${slugId(segment)}`,
+      label,
+      description: `${label} journey inferred from repo routes.`,
+      routeKind,
+      screenPaths: screens.map((screen) => screen.path),
+    };
+  });
+}
+
 async function maybeReadSidecar(path: string): Promise<RepoSidecarCandidate> {
   try {
     const raw = await readFile(join(activeRepoRoot, path), "utf8");
@@ -574,13 +655,16 @@ async function readRepoContext(): Promise<RepoContext> {
     .slice(0, 80)
     .map((file) => ({ path: file, kind: assetKind(file) }));
 
+  const screens = [...screenMap.values()].slice(0, 80);
+
   return {
     repoPath: root,
     repoName: basename(root),
     packageManager: packageManagerFor(rootEntries),
     frameworks,
     dependencies,
-    screens: [...screenMap.values()].slice(0, 80),
+    flows: inferRepoFlows(screens),
+    screens,
     sidecars,
     assets,
     entrypoints,
@@ -753,6 +837,26 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Repository scan failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/repo/select-folder", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          activeRepoRoot = await resolveRepoRoot(await selectFolderPath());
+          sendJson(res, 200, {
+            repoPath: activeRepoRoot,
+            defaultRepoPath: repoRoot,
+            git: await readGitStatus(),
+            context: await readRepoContext(),
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Folder selection failed",
           });
         }
       });

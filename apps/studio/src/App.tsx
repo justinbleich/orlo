@@ -44,8 +44,15 @@ import {
   type DesignSystemView,
   type FlowId,
   type FlowPanelItem,
-  type RepoPanelContext,
 } from "./shell";
+import {
+  displayScreenName,
+  repoChangesForContext,
+  repoFlowItemsForContext,
+  type RepoFlowPanelItem,
+  type RepoPanelContext,
+  type RepoPanelScreen,
+} from "./repo-project-model";
 import {
   Button,
   ColorPickerPopover,
@@ -430,18 +437,22 @@ function FlowWorkspace({
   roots,
   components,
   flows,
+  repoFlows,
   activeFlow,
   entryRootId,
   onSelectScreen,
+  onOpenRepoScreen,
   onEntryRootChange,
   onAddFrame,
 }: {
   roots: Node[];
   components: ComponentRegistry;
   flows: FlowDefinition[];
+  repoFlows: RepoFlowPanelItem[];
   activeFlow: FlowId;
   entryRootId?: NodeId;
   onSelectScreen: (rootId: NodeId) => void;
+  onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   onEntryRootChange: (rootId: NodeId) => void;
   onAddFrame: () => void;
 }) {
@@ -459,10 +470,105 @@ function FlowWorkspace({
     screenLabels.get(root.id) ?? root.design?.name ?? `Screen ${fallbackIndex + 1}`;
   const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
   const flowViewportRef = useRef<HTMLDivElement | null>(null);
+  const repoFlow = repoFlows.find((flow) => flow.id === activeFlow);
 
   useEffect(() => {
     if (flowViewportRef.current) flowViewportRef.current.scrollLeft = 0;
   }, [activeFlow, entryRootId]);
+
+  if (repoFlow) {
+    const entry = repoFlow.screens[0];
+    return (
+      <div className="studio-chrome flex h-full flex-col bg-canvas">
+        <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-ink">{repoFlow.name}</span>
+            <span className="text-xs text-ink-faint">
+              Repo-inferred journey from route order
+            </span>
+          </div>
+          {entry && (
+            <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
+              Entry <span className="font-medium text-ink">{displayScreenName(entry)}</span>
+            </div>
+          )}
+        </div>
+        <div ref={flowViewportRef} className="relative flex-1 overflow-auto">
+          <div className="grid min-h-full min-w-[760px] grid-cols-[minmax(0,1fr)_280px]">
+            <div className="overflow-auto p-2xl">
+              <div className="flex min-w-max items-start gap-2xl">
+                {repoFlow.screens.map((screen, index) => (
+                  <div key={screen.path} className="relative flex w-44 flex-col items-center gap-sm">
+                    {index > 0 && (
+                      <div
+                        className="absolute -left-2xl top-20 h-px w-2xl bg-accent-line"
+                        aria-hidden="true"
+                      />
+                    )}
+                    <div className="flex h-5 items-center gap-xs text-xs font-medium text-ink-dim">
+                      <span>{displayScreenName(screen)}</span>
+                      {index === 0 && (
+                        <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
+                          Entry
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onOpenRepoScreen(screen)}
+                      className="flex h-40 w-36 flex-col items-center justify-center gap-sm rounded-sm border border-line bg-chrome p-md text-center shadow-control transition-colors hover:border-accent-line hover:bg-raised"
+                      title={screen.path}
+                    >
+                      <span className="flex size-9 items-center justify-center rounded-sm bg-accent-soft text-sm font-semibold text-accent">
+                        {index + 1}
+                      </span>
+                      <span className="max-w-full truncate text-sm font-semibold text-ink">
+                        {displayScreenName(screen)}
+                      </span>
+                      <span className="max-w-full truncate text-2xs text-ink-faint">
+                        {screen.path}
+                      </span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <aside className="border-l border-line bg-chrome p-md">
+              <div className="flex flex-col gap-md">
+                <div>
+                  <div className="eyebrow">Route Wiring</div>
+                  <div className="mt-xs text-sm font-semibold text-ink">
+                    {repoFlow.screens.length} screens
+                  </div>
+                  <p className="m-0 mt-xs text-xs text-ink-faint">
+                    This sequence is inferred from matching route folders. Open a screen to edit its layers.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-xs">
+                  {repoFlow.screens.map((screen, index) => (
+                    <button
+                      key={screen.path}
+                      type="button"
+                      onClick={() => onOpenRepoScreen(screen)}
+                      className="flex min-h-8 items-center gap-xs rounded-sm px-sm py-xs text-left text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+                    >
+                      <span className="w-5 shrink-0 text-2xs tabular-nums text-ink-faint">
+                        {index + 1}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{displayScreenName(screen)}</span>
+                        <span className="block truncate text-2xs text-ink-faint">{screen.path}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="studio-chrome flex h-full flex-col bg-canvas">
@@ -891,15 +997,23 @@ function PlusIcon() {
 function ChangesTimeline({
   gitStatus,
   repoPath,
+  repoContext,
   onRefresh,
   onOpenCode,
 }: {
   gitStatus: GitStatus;
   repoPath: string;
+  repoContext: RepoContext | null;
   onRefresh: () => void;
   onOpenCode: () => void;
 }) {
-  const entries: Array<{ id: string; label: string; detail: string; tone?: "accent" | "amber" }> = [];
+  const entries: Array<{
+    id: string;
+    label: string;
+    detail: string;
+    tone?: "accent" | "amber";
+    files?: GitFileStatus[];
+  }> = [];
 
   if (gitStatus.status === "loading") {
     entries.push({ id: "git-loading", label: "Git status", detail: "Loading repository status." });
@@ -908,19 +1022,22 @@ function ChangesTimeline({
   } else if (gitStatus.clean) {
     entries.push({ id: "git-clean", label: "Git clean", detail: gitStatus.branch });
   } else {
-    gitStatus.files.slice(0, 12).forEach((file) => {
+    const groups = repoChangesForContext(repoContext, gitStatus.files);
+    groups.slice(0, 12).forEach((group) => {
+      const deleted = group.files.some((file) => file.index === "D" || file.workingTree === "D");
       entries.push({
-        id: `${file.index}${file.workingTree}-${file.path}`,
-        label: gitFileStatusLabel(file),
-        detail: file.path,
-        tone: file.index === "D" || file.workingTree === "D" ? "amber" : "accent",
+        id: group.id,
+        label: group.label,
+        detail: `${group.detail} · ${group.files.length} ${group.files.length === 1 ? "file" : "files"}`,
+        tone: deleted ? "amber" : "accent",
+        files: group.files,
       });
     });
-    if (gitStatus.files.length > 12) {
+    if (groups.length > 12) {
       entries.push({
         id: "more",
         label: "More changes",
-        detail: `${gitStatus.files.length - 12} additional files`,
+        detail: `${groups.length - 12} additional objects`,
       });
     }
   }
@@ -955,6 +1072,27 @@ function ChangesTimeline({
               <div className="truncate text-xs text-ink-faint" title={entry.detail}>
                 {entry.detail}
               </div>
+              {entry.files && entry.files.length > 0 && (
+                <div className="mt-xs flex flex-col gap-2xs">
+                  {entry.files.slice(0, 4).map((file) => (
+                    <div
+                      key={`${file.index}${file.workingTree}-${file.path}`}
+                      className="flex min-w-0 items-center gap-xs text-2xs text-ink-faint"
+                      title={file.path}
+                    >
+                      <span className="shrink-0 rounded-xs bg-raised px-2xs font-mono">
+                        {gitFileStatusLabel(file)}
+                      </span>
+                      <span className="min-w-0 truncate">{file.path}</span>
+                    </div>
+                  ))}
+                  {entry.files.length > 4 && (
+                    <div className="text-2xs text-ink-faint">
+                      +{entry.files.length - 4} more files
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -1032,6 +1170,10 @@ export default function App() {
       screenCount: flowScreens(screenRoots, flow.id).length,
     }));
   }, [editingComponentId, flows, roots]);
+  const repoFlowItems = useMemo(
+    () => repoFlowItemsForContext(repoContext),
+    [repoContext],
+  );
   const activeArtifact =
     artifacts.find((artifact) => artifact.id === activeArtifactId) ?? artifacts[0] ?? null;
   if (focusedRootId && focusedRootId !== editingComponentId) {
@@ -1057,10 +1199,12 @@ export default function App() {
 
   useEffect(() => {
     if (flows.length === 0) return;
-    if (!flows.some((flow) => flow.id === activeFlow)) {
+    const hasManualFlow = flows.some((flow) => flow.id === activeFlow);
+    const hasRepoFlow = repoFlowItems.some((flow) => flow.id === activeFlow);
+    if (!hasManualFlow && !hasRepoFlow) {
       setActiveFlow(flows[0].id);
     }
-  }, [activeFlow, flows]);
+  }, [activeFlow, flows, repoFlowItems]);
 
   useEffect(() => {
     if (artifacts.length && !artifacts.some((artifact) => artifact.id === activeArtifactId)) {
@@ -1116,6 +1260,34 @@ export default function App() {
     }
   }, []);
 
+  const applyConnectedRepo = useCallback(
+    async (body: {
+      repoPath?: string;
+      git?: Partial<Extract<GitStatus, { status: "ready" }>>;
+      context?: RepoContext;
+    }, fallbackPath = repoDraft) => {
+      const nextPath = body.repoPath ?? fallbackPath;
+      setRepoPath(nextPath);
+      setRepoDraft(nextPath);
+      if (body.git) {
+        setGitStatus({
+          status: "ready",
+          repoPath: body.git.repoPath ?? nextPath,
+          branch: body.git.branch ?? "unknown",
+          clean: !!body.git.clean,
+          files: Array.isArray(body.git.files) ? body.git.files : [],
+        });
+      } else {
+        await refreshGitStatus();
+      }
+      if (body.context) setRepoContext(body.context);
+      else await loadRepoContext();
+      skipNextPathSyncRef.current = true;
+      setStatus(`Connected ${nextPath}`);
+    },
+    [loadRepoContext, refreshGitStatus, repoDraft],
+  );
+
   const connectRepo = useCallback(async () => {
     if (codegenBusyRef.current) {
       const message = "Wait for the current sync to finish before changing repositories.";
@@ -1139,24 +1311,7 @@ export default function App() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const nextPath = body.repoPath ?? repoDraft;
-      setRepoPath(nextPath);
-      setRepoDraft(nextPath);
-      if (body.git) {
-        setGitStatus({
-          status: "ready",
-          repoPath: body.git.repoPath ?? nextPath,
-          branch: body.git.branch ?? "unknown",
-          clean: !!body.git.clean,
-          files: Array.isArray(body.git.files) ? body.git.files : [],
-        });
-      } else {
-        await refreshGitStatus();
-      }
-      if (body.context) setRepoContext(body.context);
-      else await loadRepoContext();
-      skipNextPathSyncRef.current = true;
-      setStatus(`Connected ${nextPath}`);
+      await applyConnectedRepo(body, repoDraft);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Repository connection failed";
       setRepoError(message);
@@ -1164,7 +1319,36 @@ export default function App() {
     } finally {
       setRepoBusy(false);
     }
-  }, [loadRepoContext, refreshGitStatus, repoDraft]);
+  }, [applyConnectedRepo, repoDraft]);
+
+  const selectRepoFolder = useCallback(async () => {
+    if (codegenBusyRef.current) {
+      const message = "Wait for the current sync to finish before changing repositories.";
+      setRepoError(message);
+      setStatus(message);
+      return;
+    }
+    if (autoSyncTimerRef.current) {
+      clearTimeout(autoSyncTimerRef.current);
+      autoSyncTimerRef.current = null;
+    }
+    skipNextPathSyncRef.current = true;
+    setSyncState({ status: "idle" });
+    setRepoBusy(true);
+    setRepoError(null);
+    try {
+      const res = await fetch("/api/repo/select-folder", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      await applyConnectedRepo(body, repoDraft);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Folder selection failed";
+      setRepoError(message);
+      setStatus(message);
+    } finally {
+      setRepoBusy(false);
+    }
+  }, [applyConnectedRepo, repoDraft]);
 
   const loadFlowManifest = useCallback(async () => {
     try {
@@ -1859,6 +2043,7 @@ export default function App() {
 
   const openRepoScreen = useCallback(
     (screen: NonNullable<RepoContext>["screens"][number]) => {
+      setWorkspace("Screen");
       if (screen.sidecarPath) {
         void openSidecar(screen.sidecarPath);
         return;
@@ -2064,9 +2249,11 @@ export default function App() {
               roots={Object.values(roots)}
               components={componentRegistry}
               flows={flows}
+              repoFlows={repoFlowItems}
               activeFlow={activeFlow}
               entryRootId={flowEntrypoints[activeFlow]}
               onSelectScreen={selectScreenFromWorkspace}
+              onOpenRepoScreen={openRepoScreen}
               onEntryRootChange={setFlowEntryRoot}
               onAddFrame={addFrame}
             />
@@ -2177,6 +2364,13 @@ export default function App() {
                 >
                   <Eyebrow>Code</Eyebrow>
                   <Section title="Repository">
+                    <Button
+                      className="w-full"
+                      disabled={repoBusy || codegenBusy}
+                      onClick={() => void selectRepoFolder()}
+                    >
+                      <FolderOpen size={14} aria-hidden="true" /> Select folder
+                    </Button>
                     <Field label="Connected repo" stacked>
                       <TextField
                         value={repoDraft}
@@ -2195,7 +2389,7 @@ export default function App() {
                         disabled={repoBusy || codegenBusy || !repoDraft.trim()}
                         onClick={() => void connectRepo()}
                       >
-                        <FolderOpen size={14} aria-hidden="true" /> Connect
+                        Connect path
                       </Button>
                       <IconButton
                         title="Refresh Git status"
@@ -2379,6 +2573,7 @@ export default function App() {
                 <ChangesTimeline
                   gitStatus={gitStatus}
                   repoPath={repoPath}
+                  repoContext={repoContext}
                   onRefresh={() => void refreshGitStatus()}
                   onOpenCode={() => setInspectorTab("Code")}
                 />

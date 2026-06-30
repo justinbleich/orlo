@@ -2,6 +2,38 @@ import type { Node, NodeId } from "@rn-canvas/document";
 
 export type FlowDefinitionLike = { id: string };
 export type FlowRoutes = Partial<Record<string, NodeId[]>>;
+export type FlowRouteDescriptor = { rootId?: NodeId; name?: string; screenKey?: string };
+
+export function flowScreenName(root: Node, index: number) {
+  return root.design?.name ?? `Screen ${index + 1}`;
+}
+
+export function flowScreenKey(root: Node, index: number) {
+  const name = root.design?.name?.trim();
+  return name ? `name:${name.toLowerCase()}` : `screen:${index + 1}`;
+}
+
+export function resolveFlowRouteIds(
+  roots: readonly Node[],
+  routes: readonly FlowRouteDescriptor[],
+): NodeId[] {
+  const byId = new Map(roots.map((root) => [root.id, root]));
+  const byKey = new Map(roots.map((root, index) => [flowScreenKey(root, index), root]));
+  const byName = new Map(roots.map((root, index) => [flowScreenName(root, index), root]));
+  const used = new Set<NodeId>();
+  const resolved: NodeId[] = [];
+
+  for (const route of routes) {
+    const root =
+      (route.rootId ? byId.get(route.rootId) : undefined) ??
+      (route.screenKey ? byKey.get(route.screenKey) : undefined) ??
+      (route.name ? byName.get(route.name) : undefined);
+    if (!root || used.has(root.id)) continue;
+    used.add(root.id);
+    resolved.push(root.id);
+  }
+  return resolved;
+}
 
 export function inferredFlowScreens(roots: readonly Node[], flow: string): Node[] {
   if (flow === "onboarding") return [...roots];

@@ -75,9 +75,12 @@ import {
   addFlowRoute,
   flowAvailableScreens,
   flowRouteScreens,
+  flowScreenKey,
+  flowScreenName,
   moveFlowRouteToIndex,
   removeFlowRoute,
   reorderFlowRoute,
+  resolveFlowRouteIds,
   type FlowRoutes,
 } from "./flow-model";
 import {
@@ -179,9 +182,10 @@ type FlowManifest = {
   flows: Array<{
     id: FlowId;
     label: string;
+    description?: string;
     entryRootId?: NodeId;
     entryName?: string;
-    routes: Array<{ rootId: NodeId; name: string }>;
+    routes: Array<{ rootId: NodeId; name: string; screenKey?: string }>;
   }>;
 };
 
@@ -480,6 +484,7 @@ function FlowWorkspace({
   onMoveRoute,
   onMoveRouteToIndex,
   onAddFrame,
+  onRenameFlow,
 }: {
   roots: Node[];
   components: ComponentRegistry;
@@ -496,6 +501,7 @@ function FlowWorkspace({
   onMoveRoute: (rootId: NodeId, offset: -1 | 1) => void;
   onMoveRouteToIndex: (rootId: NodeId, targetIndex: number) => void;
   onAddFrame: () => void;
+  onRenameFlow: (flowId: FlowId, label: string) => boolean;
 }) {
   const screens = roots.filter(
     (root) =>
@@ -507,18 +513,41 @@ function FlowWorkspace({
   const entryScreen =
     (entryRootId && routeScreens.find((root) => root.id === entryRootId)) ?? routeScreens[0];
   const screenLabels = new Map(
-    screens.map((root, index) => [root.id, root.design?.name ?? `Screen ${index + 1}`]),
+    screens.map((root, index) => [root.id, flowScreenName(root, index)]),
   );
   const labelFor = (root: Node, fallbackIndex: number) =>
-    screenLabels.get(root.id) ?? root.design?.name ?? `Screen ${fallbackIndex + 1}`;
+    screenLabels.get(root.id) ?? flowScreenName(root, fallbackIndex);
   const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
   const flowViewportRef = useRef<HTMLDivElement | null>(null);
   const [draggedRouteId, setDraggedRouteId] = useState<NodeId | null>(null);
   const repoFlow = repoFlows.find((flow) => flow.id === activeFlow);
+  const activeFlowDefinition = flows.find((flow) => flow.id === activeFlow);
+  const activeFlowLabel = activeFlowDefinition?.label ?? flowLabel(flows, activeFlow);
+  const [flowNameDraft, setFlowNameDraft] = useState(activeFlowLabel);
+  const skipNextFlowNameCommitRef = useRef(false);
 
   useEffect(() => {
     if (flowViewportRef.current) flowViewportRef.current.scrollLeft = 0;
   }, [activeFlow, entryRootId, routeIds]);
+
+  useEffect(() => {
+    setFlowNameDraft(activeFlowLabel);
+  }, [activeFlow, activeFlowLabel]);
+
+  const resetFlowNameDraft = () => setFlowNameDraft(activeFlowLabel);
+
+  const commitFlowNameDraft = () => {
+    if (skipNextFlowNameCommitRef.current) {
+      skipNextFlowNameCommitRef.current = false;
+      return;
+    }
+    const nextLabel = flowNameDraft.trim();
+    if (!nextLabel || nextLabel === activeFlowLabel) {
+      resetFlowNameDraft();
+      return;
+    }
+    if (!onRenameFlow(activeFlow, nextLabel)) resetFlowNameDraft();
+  };
 
   const dragProps = (rootId: NodeId, index: number) => ({
     draggable: true,
@@ -639,8 +668,24 @@ function FlowWorkspace({
   return (
     <div className="studio-chrome flex h-full flex-col bg-canvas">
       <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold text-ink">{flowLabel(flows, activeFlow)}</span>
+        <div className="flex min-w-0 flex-col">
+          <TextField
+            aria-label="Flow name"
+            value={flowNameDraft}
+            onChange={setFlowNameDraft}
+            onBlur={commitFlowNameDraft}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") {
+                skipNextFlowNameCommitRef.current = true;
+                resetFlowNameDraft();
+                event.currentTarget.blur();
+              }
+            }}
+            className="h-7 max-w-64 border-transparent bg-transparent px-2xs text-sm font-semibold text-ink shadow-none hover:border-line hover:bg-raised focus-visible:border-accent-line focus-visible:bg-chrome-2"
+          />
           <span className="text-xs text-ink-faint">{flowDescription(flows, activeFlow)}</span>
         </div>
         {entryScreen && (
@@ -1278,6 +1323,7 @@ export default function App() {
   const managedDocumentRef = useRef(false);
   const syncRootIdRef = useRef<NodeId | null>(null);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
+  const pendingFlowManifestRef = useRef<FlowManifest | null>(null);
 
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
   const [inspectorTab, setInspectorTab] = useState("Design");
@@ -1513,38 +1559,77 @@ export default function App() {
     }
   }, [applyConnectedRepo, repoDraft]);
 
-  const loadFlowManifest = useCallback(async () => {
-    try {
-      const res = await fetch("/api/flows");
-      const body = (await res.json()) as FlowManifest & { error?: string };
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const next: Partial<Record<FlowId, NodeId>> = {};
-      const nextRoutes: FlowRoutes = {};
-      const manifestFlows = Array.isArray(body.flows)
-        ? body.flows
-            .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
-            .map((flow) => ({ id: flow.id, label: flow.label }))
-        : [];
-      for (const flow of body.flows ?? []) {
-        if (flow.entryRootId) next[flow.id] = flow.entryRootId;
-        if (Array.isArray(flow.routes)) {
-          nextRoutes[flow.id] = flow.routes
-            .map((route) => route.rootId)
-            .filter((rootId): rootId is NodeId => typeof rootId === "string");
-        }
-      }
+  const applyFlowManifest = useCallback((body: FlowManifest) => {
+    const next: Partial<Record<FlowId, NodeId>> = {};
+    const nextRoutes: FlowRoutes = {};
+    const state = useDocumentStore.getState();
+    const screenRoots = Object.values(state.roots).filter(
+      (root) => root.id !== state.editingComponentId,
+    );
+    const hasRoutes = body.flows.some(
+      (flow) => Array.isArray(flow.routes) && flow.routes.length > 0,
+    );
+    const manifestFlows = Array.isArray(body.flows)
+      ? body.flows
+          .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
+          .map((flow) => ({
+            id: flow.id,
+            label: flow.label,
+            description: typeof flow.description === "string" ? flow.description : undefined,
+          }))
+      : [];
+    if (hasRoutes && screenRoots.length === 0) {
+      pendingFlowManifestRef.current = body;
       if (manifestFlows.length > 0) {
         setFlows(manifestFlows);
         setActiveFlow((current) =>
           manifestFlows.some((flow) => flow.id === current) ? current : manifestFlows[0].id,
         );
       }
-      setFlowEntrypoints(next);
-      setFlowRoutes(nextRoutes);
+      return;
+    }
+    for (const flow of body.flows ?? []) {
+      if (Array.isArray(flow.routes)) {
+        const routeIds = resolveFlowRouteIds(screenRoots, flow.routes);
+        nextRoutes[flow.id] = routeIds;
+        const entryId =
+          (flow.entryRootId && routeIds.find((rootId) => rootId === flow.entryRootId)) ??
+          (flow.entryName
+            ? resolveFlowRouteIds(screenRoots, [{ rootId: flow.entryRootId, name: flow.entryName }])[0]
+            : undefined);
+        if (entryId) next[flow.id] = entryId;
+      } else if (flow.entryRootId) {
+        next[flow.id] = flow.entryRootId;
+      }
+    }
+    pendingFlowManifestRef.current = null;
+    if (manifestFlows.length > 0) {
+      setFlows(manifestFlows);
+      setActiveFlow((current) =>
+        manifestFlows.some((flow) => flow.id === current) ? current : manifestFlows[0].id,
+      );
+    }
+    setFlowEntrypoints(next);
+    setFlowRoutes(nextRoutes);
+  }, []);
+
+  const loadFlowManifest = useCallback(async () => {
+    try {
+      const res = await fetch("/api/flows");
+      const body = (await res.json()) as FlowManifest & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      applyFlowManifest(body);
     } catch {
       // A missing flow manifest is fine; flows start from inferred screen order.
     }
-  }, []);
+  }, [applyFlowManifest]);
+
+  useEffect(() => {
+    if (!pendingFlowManifestRef.current) return;
+    const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+    if (screenRoots.length === 0) return;
+    applyFlowManifest(pendingFlowManifestRef.current);
+  }, [applyFlowManifest, editingComponentId, roots]);
 
   const persistFlowManifest = useCallback(
     async (
@@ -1566,11 +1651,13 @@ export default function App() {
           return {
             id: flow.id,
             label: flow.label,
+            description: flow.description,
             entryRootId: entry?.id,
             entryName: entry?.design?.name,
             routes: routeScreens.map((root, index) => ({
               rootId: root.id,
-              name: root.design?.name ?? `Screen ${index + 1}`,
+              name: flowScreenName(root, index),
+              screenKey: flowScreenKey(root, index),
             })),
           };
         }),
@@ -1830,6 +1917,40 @@ export default function App() {
       return next;
     });
   }, [flowEntrypoints, flowRoutes, persistFlowManifest]);
+
+  const renameFlow = useCallback(
+    (flowId: FlowId, label: string) => {
+      const nextLabel = label.trim();
+      if (!nextLabel) {
+        setStatus("Flow name required");
+        return false;
+      }
+      let nextFlows: FlowDefinition[] | null = null;
+      setFlows((current) => {
+        const currentFlow = current.find((flow) => flow.id === flowId);
+        if (!currentFlow || currentFlow.label === nextLabel) return current;
+        const duplicate = current.some(
+          (flow) => flow.id !== flowId && flow.label.toLowerCase() === nextLabel.toLowerCase(),
+        );
+        if (duplicate) {
+          setStatus("Flow name already exists");
+          return current;
+        }
+        nextFlows = current.map((flow) =>
+          flow.id === flowId ? { ...flow, label: nextLabel } : flow,
+        );
+        return nextFlows;
+      });
+      if (!nextFlows) return false;
+      void persistFlowManifest(nextFlows, flowEntrypoints, flowRoutes).then(
+        () => setStatus(`Renamed flow to ${nextLabel}`),
+        (error) =>
+          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+      return true;
+    },
+    [flowEntrypoints, flowRoutes, persistFlowManifest],
+  );
 
   const removeFlow = useCallback(
     (flow: FlowPanelItem) => {
@@ -2635,6 +2756,7 @@ export default function App() {
               onMoveRoute={moveScreenInFlow}
               onMoveRouteToIndex={moveScreenToFlowIndex}
               onAddFrame={addFrameToActiveFlow}
+              onRenameFlow={renameFlow}
             />
           ) : workspace === "Design System" ? (
             <DesignSystemWorkspace

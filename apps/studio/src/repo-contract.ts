@@ -8,7 +8,7 @@ export type FlowManifest = {
     label: string;
     entryRootId?: string;
     entryName?: string;
-    routes: Array<{ rootId: string; name: string }>;
+    routes: Array<{ rootId: string; name: string; screenKey?: string }>;
   }>;
 };
 

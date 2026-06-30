@@ -5,10 +5,12 @@ import {
   addFlowRoute,
   flowAvailableScreens,
   flowRouteScreens,
+  flowScreenKey,
   inferredFlowScreens,
   moveFlowRouteToIndex,
   removeFlowRoute,
   reorderFlowRoute,
+  resolveFlowRouteIds,
 } from "./flow-model";
 
 const screens = [
@@ -50,4 +52,29 @@ test("available screens exclude explicit routes or inferred fallback routes", ()
     "welcome",
     "login",
   ]);
+});
+
+test("flow route descriptors recover stale root ids from stable screen metadata", () => {
+  const reloaded = [
+    createNode("View", { id: "fresh-welcome", design: { name: "Welcome" } }),
+    createNode("View", { id: "fresh-login", design: { name: "Login" } }),
+  ];
+  assert.deepEqual(
+    resolveFlowRouteIds(reloaded, [
+      { rootId: "stale-welcome", screenKey: flowScreenKey(screens[0], 0), name: "Welcome" },
+      { rootId: "stale-login", name: "Login" },
+    ]),
+    ["fresh-welcome", "fresh-login"],
+  );
+});
+
+test("flow route descriptors recover unnamed screens from display order", () => {
+  const before = [createNode("View", { id: "old-root" })];
+  const after = [createNode("View", { id: "fresh-root" })];
+  assert.deepEqual(
+    resolveFlowRouteIds(after, [
+      { rootId: before[0].id, screenKey: flowScreenKey(before[0], 0), name: "Screen 1" },
+    ]),
+    ["fresh-root"],
+  );
 });

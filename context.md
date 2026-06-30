@@ -1,11 +1,26 @@
 # context.md — working contract & decisions
 
-> Live engineering context for the in-progress work. Source of truth for *requirements*
-> remains `_plan/PRD.md` / `_plan/BUILD.md`; this file records the **locked API contract**
-> for `packages/document` and `packages/styles` and the decisions behind it, so every
-> downstream package builds against a fixed interface.
+> Live engineering context for the in-progress work. The older `_plan/PRD.md` and
+> `_plan/BUILD.md` files are historical notes; current locked contracts are recorded
+> here so downstream packages build against fixed interfaces.
 >
 > Updated: 2026-06-20. Phase: **BUILD Phase 1 — document model + canvas shell.**
+
+## Current trunk note — Git connection contract
+
+`main` is now the branch-backed Studio line. The Git connection contract is:
+
+- A connected repository is resolved through `git rev-parse --show-toplevel`; all open,
+  import, sync, token, and flow paths must stay inside that repository.
+- RN Canvas owns sidecar metadata (`*.rncanvas.json`), generated screen/component files,
+  generated `theme.ts`, and `.rncanvas/flows.json` when the user explicitly syncs or edits
+  those project objects.
+- Source files remain branch/worktree truth. Sidecars reopen Studio with design metadata;
+  codegen writes the source projection next to the sidecar target.
+- Git status is read from the connected repo and surfaced as branch + relevant file
+  changes; repo-derived flows/screens are inferred from files and sidecars.
+- The pure path/status/manifest contract lives in `apps/studio/src/repo-contract.ts` with
+  regression tests in `repo-contract.test.ts`.
 
 ## Phase 1 execution order (approved)
 

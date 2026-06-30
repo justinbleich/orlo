@@ -6,6 +6,17 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import {
+  emptyFlowManifest,
+  parseFlowManifest,
+  parseGitStatus,
+  pathInRoot,
+  resolveExternalSourcePath as resolveExternalSourcePathInRoot,
+  resolveSidecarPath as resolveSidecarPathInRoot,
+  resolveTargetPath as resolveTargetPathInRoot,
+  serializeFlowManifest,
+  type FlowManifest,
+} from "./src/repo-contract";
 
 const execFileAsync = promisify(execFile);
 const pluginDir = dirname(fileURLToPath(import.meta.url));
@@ -43,18 +54,6 @@ type TokensSaveRequest = {
 
 type FlowManifestRequest = {
   manifest?: FlowManifest;
-};
-
-type FlowManifest = {
-  version: 1;
-  updatedAt?: string;
-  flows: Array<{
-    id: string;
-    label: string;
-    entryRootId?: string;
-    entryName?: string;
-    routes: Array<{ rootId: string; name: string }>;
-  }>;
 };
 
 type RepoRequest = {
@@ -119,12 +118,6 @@ type RepoContext = {
   truncated: boolean;
 };
 
-type GitFileStatus = {
-  path: string;
-  index: string;
-  workingTree: string;
-};
-
 type BrowserCommand = {
   id: string;
   type: string;
@@ -179,11 +172,6 @@ function safeComponentName(input = "Screen") {
   return /^[A-Z][A-Za-z0-9_$]*$/.test(name) ? name : "Screen";
 }
 
-function pathInRoot(root: string, path: string) {
-  const rel = relative(root, path);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 async function resolveRepoRoot(input?: string) {
   if (!input?.trim()) throw new Error("Enter a repository path");
   const root = resolve(isAbsolute(input) ? input : join(repoRoot, input));
@@ -207,47 +195,15 @@ async function selectFolderPath() {
 }
 
 function resolveTargetPath(screenName: string, targetPath?: string) {
-  const root = activeRepoRoot;
-  const base = targetPath?.trim()
-    ? isAbsolute(targetPath)
-      ? targetPath
-      : join(root, targetPath)
-    : join(root, "generated", `${screenName}.tsx`);
-  const tsxPath = resolve(base);
-  if (!pathInRoot(root, tsxPath)) {
-    throw new Error("Sync path must stay inside the connected repository");
-  }
-  if (extname(tsxPath) !== ".tsx") {
-    throw new Error("Code path must end in .tsx");
-  }
-  const sidecarPath = tsxPath.replace(/\.tsx$/, ".rncanvas.json");
-  return { tsxPath, sidecarPath };
+  return resolveTargetPathInRoot(activeRepoRoot, screenName, targetPath);
 }
 
 function resolveSidecarPath(input?: string) {
-  if (!input?.trim()) throw new Error("Enter a sidecar path");
-  const root = activeRepoRoot;
-  const sidecarPath = resolve(isAbsolute(input) ? input : join(root, input));
-  if (!pathInRoot(root, sidecarPath)) {
-    throw new Error("Sidecar path must stay inside the connected repository");
-  }
-  if (!sidecarPath.endsWith(".rncanvas.json")) {
-    throw new Error("Sidecar path must end in .rncanvas.json");
-  }
-  return sidecarPath;
+  return resolveSidecarPathInRoot(activeRepoRoot, input);
 }
 
 function resolveExternalSourcePath(input?: string) {
-  if (!input?.trim()) throw new Error("Enter a React Native source path");
-  const root = activeRepoRoot;
-  const sourcePath = resolve(isAbsolute(input) ? input : join(root, input));
-  if (!pathInRoot(root, sourcePath)) {
-    throw new Error("Source path must stay inside the connected repository");
-  }
-  if (![".tsx", ".jsx"].includes(extname(sourcePath))) {
-    throw new Error("Source path must end in .tsx or .jsx");
-  }
-  return sourcePath;
+  return resolveExternalSourcePathInRoot(activeRepoRoot, input);
 }
 
 async function runCodegen(
@@ -341,23 +297,7 @@ async function readGitStatus() {
     cwd: root,
     maxBuffer: 1024 * 1024,
   });
-  const lines = stdout.split("\n").filter(Boolean);
-  const branchLine = lines.find((line) => line.startsWith("## ")) ?? "##";
-  const files: GitFileStatus[] = [];
-  for (const line of lines) {
-    if (line.startsWith("## ")) continue;
-    const index = line[0] ?? " ";
-    const workingTree = line[1] ?? " ";
-    const rawPath = line.slice(3);
-    const path = rawPath.includes(" -> ") ? rawPath.split(" -> ").pop() ?? rawPath : rawPath;
-    files.push({ path, index, workingTree });
-  }
-  return {
-    repoPath: root,
-    branch: branchLine.replace(/^##\s*/, ""),
-    clean: files.length === 0,
-    files,
-  };
+  return parseGitStatus(root, stdout);
 }
 
 function displayBranchName(branchLine: string) {
@@ -393,24 +333,19 @@ function flowManifestPath() {
 async function readFlowManifest(): Promise<FlowManifest> {
   try {
     const raw = await readFile(flowManifestPath(), "utf8");
-    const parsed = JSON.parse(raw) as FlowManifest;
-    if (parsed.version === 1 && Array.isArray(parsed.flows)) return parsed;
+    return parseFlowManifest(raw);
   } catch {
     // No manifest yet is the normal first-run state.
   }
-  return { version: 1, flows: [] };
+  return emptyFlowManifest();
 }
 
 async function writeFlowManifest(manifest: FlowManifest) {
   const path = flowManifestPath();
   await mkdir(dirname(path), { recursive: true });
-  const next: FlowManifest = {
-    version: 1,
-    updatedAt: new Date().toISOString(),
-    flows: manifest.flows,
-  };
-  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`);
-  return next;
+  const next = serializeFlowManifest(manifest);
+  await writeFile(path, next.json);
+  return next.manifest;
 }
 
 const repoScanIgnoredDirs = new Set([

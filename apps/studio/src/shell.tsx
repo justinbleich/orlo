@@ -11,6 +11,7 @@ import {
   Component,
   FileText,
   Frame,
+  Hand,
   Image as ImageIcon,
   List,
   MousePointer2,
@@ -24,6 +25,7 @@ import {
   Trash2,
   Type,
   X,
+  ZoomIn,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -38,7 +40,7 @@ import {
 } from "@rn-canvas/document";
 import { Menu } from "@base-ui/react/menu";
 import { color, layout, radius, space, text } from "./studio-theme";
-import { useStudioStore } from "./studio-store";
+import { type CanvasTool, useStudioStore } from "./studio-store";
 import { cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
@@ -222,7 +224,9 @@ const railButton =
   "flex size-9 items-center justify-center rounded-sm border border-line bg-chrome-2 text-ink " +
   "transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line " +
   "disabled:cursor-not-allowed disabled:bg-chrome-2 disabled:text-ink-faint disabled:hover:bg-chrome-2";
-const railButtonActive = "border-accent-line bg-accent-soft text-accent hover:bg-accent-soft";
+const railButtonActive =
+  "border-accent bg-accent-soft text-accent shadow-[inset_0_0_0_1px_var(--accent-line)] " +
+  "hover:border-accent hover:bg-accent-soft";
 
 /**
  * tldraw owns frame placement; every creation tool *arms* a primitive, which the
@@ -231,33 +235,76 @@ const railButtonActive = "border-accent-line bg-accent-soft text-accent hover:bg
  * menu so the rail stays uncluttered.
  */
 export function ToolRail({
-  onSelect,
+  onCanvasTool,
   onAddFrame,
   canAddPrimitive,
 }: {
-  onSelect: () => void;
+  onCanvasTool: (tool: CanvasTool) => void;
   onAddFrame: () => void;
   canAddPrimitive: boolean;
 }) {
+  const canvasTool = useStudioStore((s) => s.canvasTool);
   const armedTool = useStudioStore((s) => s.armedTool);
+  const armedComponentId = useStudioStore((s) => s.armedComponentId);
   const setArmedTool = useStudioStore((s) => s.setArmedTool);
   const arm = (type: RNPrimitive) => setArmedTool(armedTool === type ? null : type);
+  const idle = armedTool === null && armedComponentId === null;
 
   const tools: (RailTool & { active?: boolean })[] = [
     {
       icon: MousePointer2,
       label: "Select",
       kbd: "V",
+      onClick: () => onCanvasTool("select"),
+      active: idle && canvasTool === "select",
+    },
+    {
+      icon: Hand,
+      label: "Hand",
+      kbd: "H",
+      onClick: () => onCanvasTool("hand"),
+      active: idle && canvasTool === "hand",
+    },
+    {
+      icon: ZoomIn,
+      label: "Zoom",
+      kbd: "Z",
+      onClick: () => onCanvasTool("zoom"),
+      active: idle && canvasTool === "zoom",
+    },
+    {
+      icon: Frame,
+      label: "Frame",
+      kbd: "F",
       onClick: () => {
         setArmedTool(null);
-        onSelect();
+        onAddFrame();
       },
-      active: armedTool === null,
     },
-    { icon: Frame, label: "Frame", kbd: "F", onClick: () => { setArmedTool(null); onAddFrame(); } },
-    { icon: Square, label: "View", kbd: "R", onClick: () => arm("View"), active: armedTool === "View", disabled: !canAddPrimitive },
-    { icon: Type, label: "Text", kbd: "T", onClick: () => arm("Text"), active: armedTool === "Text", disabled: !canAddPrimitive },
-    { icon: ImageIcon, label: "Image", kbd: "I", onClick: () => arm("Image"), active: armedTool === "Image", disabled: !canAddPrimitive },
+    {
+      icon: Square,
+      label: "View",
+      kbd: "R",
+      onClick: () => arm("View"),
+      active: armedTool === "View",
+      disabled: !canAddPrimitive,
+    },
+    {
+      icon: Type,
+      label: "Text",
+      kbd: "T",
+      onClick: () => arm("Text"),
+      active: armedTool === "Text",
+      disabled: !canAddPrimitive,
+    },
+    {
+      icon: ImageIcon,
+      label: "Image",
+      kbd: "I",
+      onClick: () => arm("Image"),
+      active: armedTool === "Image",
+      disabled: !canAddPrimitive,
+    },
   ];
   return (
     <nav
@@ -333,7 +380,9 @@ function InsertMenu({
                   onClick={() => onArm(item.type)}
                   className={cn(
                     "flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
-                    item.type === armedTool ? "text-accent" : "text-ink-dim",
+                    item.type === armedTool
+                      ? "bg-accent-soft text-accent"
+                      : "text-ink-dim",
                   )}
                 >
                   <Icon size={14} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />
@@ -347,10 +396,14 @@ function InsertMenu({
                 {componentList.map((comp) => (
                   <Menu.Item
                     key={comp.id}
-                    onClick={() => setArmedComponent(comp.id)}
+                    onClick={() =>
+                      setArmedComponent(comp.id === armedComponentId ? null : comp.id)
+                    }
                     className={cn(
                       "flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
-                      comp.id === armedComponentId ? "text-accent" : "text-ink-dim",
+                      comp.id === armedComponentId
+                        ? "bg-accent-soft text-accent"
+                        : "text-ink-dim",
                     )}
                   >
                     <Component size={14} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />

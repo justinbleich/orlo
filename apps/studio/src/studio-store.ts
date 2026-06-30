@@ -2,6 +2,8 @@ import { create } from "zustand";
 import type { NodeId, RNPrimitive } from "@rn-canvas/document";
 import type { LayoutReadyResult } from "@rn-canvas/render-web";
 
+export type CanvasTool = "select" | "hand" | "zoom";
+
 /**
  * Studio UI state that isn't part of the document — kept separate from the
  * document store so it never enters undo history or the sidecar. A standalone
@@ -9,6 +11,9 @@ import type { LayoutReadyResult } from "@rn-canvas/render-web";
  * without prop threading.
  */
 interface StudioState {
+  /** Active tldraw host navigation tool. Creation tools clear back to select. */
+  canvasTool: CanvasTool;
+  setCanvasTool(tool: CanvasTool): void;
   /** A creation tool armed from the rail; the next canvas drag draws this node. */
   armedTool: RNPrimitive | null;
   setArmedTool(tool: RNPrimitive | null): void;
@@ -28,10 +33,13 @@ interface StudioState {
 }
 
 export const useStudioStore = create<StudioState>((set) => ({
+  canvasTool: "select",
+  setCanvasTool: (canvasTool) => set({ canvasTool, armedTool: null, armedComponentId: null }),
   armedTool: null,
-  setArmedTool: (armedTool) => set({ armedTool, armedComponentId: null }),
+  setArmedTool: (armedTool) => set({ canvasTool: "select", armedTool, armedComponentId: null }),
   armedComponentId: null,
-  setArmedComponent: (armedComponentId) => set({ armedComponentId, armedTool: null }),
+  setArmedComponent: (armedComponentId) =>
+    set({ canvasTool: "select", armedComponentId, armedTool: null }),
   layouts: {},
   setLayout: (rootId, result) =>
     set((state) => ({ layouts: { ...state.layouts, [rootId]: result } })),

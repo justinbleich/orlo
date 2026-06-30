@@ -67,8 +67,13 @@ import {
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
-import { normalizeNodeSelection } from "./selection";
-import { useStudioStore } from "./studio-store";
+import {
+  firstSelectableChild,
+  nextLayerSelection,
+  normalizeNodeSelection,
+  parentLayerSelection,
+} from "./selection";
+import { type CanvasTool, useStudioStore } from "./studio-store";
 
 const shapeUtils = [FrameShapeUtil];
 const FRAME_TYPE = FrameShapeUtil.type;
@@ -1688,17 +1693,31 @@ export default function App() {
       const store = useDocumentStore.getState();
       const modifier = event.metaKey || event.ctrlKey;
 
-      // Single-key tool shortcuts (Figma-style, no modifier). V/Select disarms
-      // any active create-tool; F creates a new screen; R/T/I arm a primitive
-      // for the next canvas drag. Esc clears an armed tool.
+      // Single-key tool shortcuts (Figma/Paper-style, no modifier). V/H/Z switch
+      // host tools; F creates a screen; R/T/I arm primitives for the next drag.
+      // Esc clears an armed tool or walks up layer selection.
       if (!modifier && !event.altKey && !event.shiftKey && event.key.length === 1) {
         const studio = useStudioStore.getState();
         const k = event.key.toLowerCase();
         if (k === "v") {
           event.preventDefault();
-          studio.setArmedTool(null);
+          studio.setCanvasTool("select");
           editorRef.current?.setCurrentTool("select");
           setStatus("Select tool");
+          return;
+        }
+        if (k === "h") {
+          event.preventDefault();
+          studio.setCanvasTool("hand");
+          editorRef.current?.setCurrentTool("hand");
+          setStatus("Hand tool");
+          return;
+        }
+        if (k === "z") {
+          event.preventDefault();
+          studio.setCanvasTool("zoom");
+          editorRef.current?.setCurrentTool("zoom");
+          setStatus("Zoom tool");
           return;
         }
         if (k === "f") {
@@ -1735,6 +1754,52 @@ export default function App() {
           setStatus("Tool disarmed");
           return;
         }
+        const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
+        const currentId = store.selection[0];
+        if (focused && currentId) {
+          const next = parentLayerSelection(focused, currentId);
+          if (next !== currentId) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            store.setSelection([next]);
+            const node = findNode(focused, next);
+            setStatus(`Selected ${node?.design?.name ?? node?.type ?? "parent layer"}`);
+          }
+        }
+        return;
+      }
+
+      if (!modifier && !event.altKey && event.key === "Tab") {
+        const rootsList = Object.values(store.roots);
+        const focused = findRootContaining(rootsList, store.selection[0] ?? "") ?? rootsList[0];
+        if (focused) {
+          const currentId = store.selection[store.selection.length - 1];
+          const next = nextLayerSelection(focused, currentId, event.shiftKey ? -1 : 1, {
+            includeRoot: true,
+          });
+          if (next) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            store.setSelection([next]);
+            const node = findNode(focused, next);
+            setStatus(`Selected ${node?.design?.name ?? node?.type ?? "layer"}`);
+          }
+        }
+        return;
+      }
+
+      if (!modifier && !event.altKey && !event.shiftKey && event.key === "Enter") {
+        const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
+        const currentId = store.selection[0];
+        const next = focused && currentId ? firstSelectableChild(focused, currentId) : undefined;
+        if (focused && next) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          store.setSelection([next]);
+          const node = findNode(focused, next);
+          setStatus(`Selected ${node?.design?.name ?? node?.type ?? "child layer"}`);
+        }
+        return;
       }
 
       if (modifier && event.key.toLowerCase() === "z") {
@@ -1918,9 +1983,11 @@ export default function App() {
     store.setSelection([root.id]);
   }, []);
 
-  const selectTool = useCallback(() => {
-    editorRef.current?.setCurrentTool("select");
-    setStatus("Select tool active");
+  const setCanvasTool = useCallback((tool: CanvasTool) => {
+    useStudioStore.getState().setCanvasTool(tool);
+    editorRef.current?.setCurrentTool(tool);
+    const label = tool.charAt(0).toUpperCase() + tool.slice(1);
+    setStatus(`${label} tool active`);
   }, []);
 
   const syncRoot = useCallback(() => {
@@ -2342,7 +2409,7 @@ export default function App() {
           ) : (
             <>
               <ToolRail
-                onSelect={selectTool}
+                onCanvasTool={setCanvasTool}
                 onAddFrame={addFrame}
                 // A primitive can be armed whenever there's any screen to draw into —
                 // the target frame is resolved from the cursor, not a prior selection.

@@ -42,3 +42,39 @@ export function selectionRange(root: Node, anchorId: NodeId, targetId: NodeId): 
     order.slice(Math.min(anchor, target), Math.max(anchor, target) + 1),
   );
 }
+
+function selectableIds(node: Node, options: { includeRoot?: boolean } = {}): NodeId[] {
+  const ids: NodeId[] = [];
+  const visit = (current: Node, isRoot = false) => {
+    if ((options.includeRoot || !isRoot) && !current.design?.hidden && !current.design?.locked) {
+      ids.push(current.id);
+    }
+    for (const child of childrenOf(current)) visit(child);
+  };
+  visit(node, true);
+  return ids;
+}
+
+export function nextLayerSelection(
+  root: Node,
+  currentId: NodeId | undefined,
+  direction: -1 | 1,
+  options: { includeRoot?: boolean } = {},
+): NodeId | undefined {
+  const order = selectableIds(root, options);
+  if (order.length === 0) return undefined;
+  const index = currentId ? order.indexOf(currentId) : -1;
+  if (index < 0) return direction > 0 ? order[0] : order[order.length - 1];
+  return order[(index + direction + order.length) % order.length];
+}
+
+export function firstSelectableChild(root: Node, id: NodeId): NodeId | undefined {
+  const node = findNode(root, id);
+  return childrenOf(node)
+    .find((child) => !child.design?.hidden && !child.design?.locked)
+    ?.id;
+}
+
+export function parentLayerSelection(root: Node, id: NodeId): NodeId {
+  return getParent(root, id)?.id ?? root.id;
+}

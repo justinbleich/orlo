@@ -400,7 +400,8 @@ export function LayerOverlay({
       beginCreate(event);
       return;
     }
-    const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+    const additive = event.shiftKey;
+    const directSelect = event.metaKey || event.ctrlKey;
     const rawHit = hitTestLayout(result.layout, point);
     // Resolve instance internals to the placed instance so it acts atomically.
     const hit = rawHit ? resolveHit(rawHit) : undefined;
@@ -418,6 +419,12 @@ export function LayerOverlay({
     // selection and the frame itself are never co-selected, so building a
     // multi-node selection drops the root the frame started out as.
     const current = store.selection.filter((id) => id !== root.id);
+    if (directSelect) {
+      store.setSelection([hit.node.id]);
+      setInstanceKey(hit.instanceKey);
+      return;
+    }
+
     if (additive) {
       // Toggle membership; don't start a drag. Falling back to the frame when
       // the last node is removed keeps a frame focused for the overlay.

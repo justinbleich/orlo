@@ -7,6 +7,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  displayBranchName,
   emptyFlowManifest,
   parseFlowManifest,
   parseGitStatus,
@@ -15,6 +16,7 @@ import {
   resolveSidecarPath as resolveSidecarPathInRoot,
   resolveTargetPath as resolveTargetPathInRoot,
   serializeFlowManifest,
+  studioBranchName,
   type FlowManifest,
 } from "./src/repo-contract";
 
@@ -61,7 +63,7 @@ type RepoRequest = {
 };
 
 type RepoDesignSession = {
-  mode: "current-branch";
+  mode: "current-branch" | "studio-branch";
   branch: string;
   suggestedBranch: string;
   syncTarget: string;
@@ -300,30 +302,57 @@ async function readGitStatus() {
   return parseGitStatus(root, stdout);
 }
 
-function displayBranchName(branchLine: string) {
-  const name = branchLine.replace(/^##\s*/, "").split("...")[0]?.trim();
-  return name || "detached";
-}
-
-function studioBranchName(root: string) {
-  const repoSlug = basename(root)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "repo";
-  const date = new Date().toISOString().slice(0, 10);
-  return `studio/${repoSlug}-${date}`;
-}
-
 async function readDesignSession(root: string): Promise<RepoDesignSession> {
   const { branch } = await readGitStatus();
   const branchName = displayBranchName(branch);
+  const studioBranch = studioBranchName(root);
+  const onStudioBranch = branchName.startsWith("studio/");
   return {
-    mode: "current-branch",
+    mode: onStudioBranch ? "studio-branch" : "current-branch",
     branch: branchName,
-    suggestedBranch: studioBranchName(root),
+    suggestedBranch: onStudioBranch ? branchName : studioBranch,
     syncTarget: branchName === "detached" ? "detached worktree" : branchName,
     worktreePath: root,
   };
+}
+
+async function gitBranchExists(root: string, branch: string) {
+  try {
+    await execFileAsync("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], {
+      cwd: root,
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureStudioBranch(root: string) {
+  const status = await readGitStatus();
+  const currentBranch = displayBranchName(status.branch);
+  if (currentBranch.startsWith("studio/")) return currentBranch;
+
+  const branch = studioBranchName(root);
+  const args = (await gitBranchExists(root, branch))
+    ? ["switch", branch]
+    : ["switch", "-c", branch];
+  try {
+    await execFileAsync("git", args, { cwd: root, maxBuffer: 1024 * 1024 });
+  } catch (error) {
+    throw new Error(
+      `Could not open Studio branch ${branch}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return branch;
+}
+
+async function connectRepoRoot(path: string) {
+  activeRepoRoot = await resolveRepoRoot(path);
+  await ensureStudioBranch(activeRepoRoot);
+  return activeRepoRoot;
 }
 
 function flowManifestPath() {
@@ -653,6 +682,10 @@ export function simScreenshotPlugin(): Plugin {
   let nextCommandId = 1;
   let activeClient: { id: string; lastSeen: number } | null = null;
 
+  function browserBridgeActive(now = Date.now()) {
+    return !!activeClient && now - activeClient.lastSeen <= 2_000;
+  }
+
   return {
     name: "studio-node-api",
     configureServer(server) {
@@ -818,7 +851,7 @@ export function simScreenshotPlugin(): Plugin {
           return;
         }
         try {
-          activeRepoRoot = await resolveRepoRoot(await selectFolderPath());
+          await connectRepoRoot(await selectFolderPath());
           sendJson(res, 200, {
             repoPath: activeRepoRoot,
             defaultRepoPath: repoRoot,
@@ -847,7 +880,7 @@ export function simScreenshotPlugin(): Plugin {
             return;
           }
           const body = await readRequestJson<RepoRequest>(req);
-          activeRepoRoot = await resolveRepoRoot(body.repoPath);
+          await connectRepoRoot(body.repoPath);
           sendJson(res, 200, {
             repoPath: activeRepoRoot,
             defaultRepoPath: repoRoot,
@@ -903,6 +936,14 @@ export function simScreenshotPlugin(): Plugin {
         try {
           const body = await readRequestJson<{ type?: string; payload?: unknown }>(req);
           if (!body.type) throw new Error("Command type is required");
+          if (!browserBridgeActive()) {
+            sendJson(res, 503, {
+              ok: false,
+              error:
+                "Studio browser bridge is not connected. Open Studio in a browser before using live MCP tools.",
+            });
+            return;
+          }
           const id = String(nextCommandId++);
           commandQueue.push({ id, type: body.type, payload: body.payload ?? {} });
           const timeout = setTimeout(() => {
@@ -917,6 +958,37 @@ export function simScreenshotPlugin(): Plugin {
           sendJson(res, 400, {
             ok: false,
             error: error instanceof Error ? error.message : "Invalid MCP command",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/mcp/status", async (req, res) => {
+        if (req.method !== "GET") {
+          sendJson(res, 405, { error: "GET required" });
+          return;
+        }
+        const now = Date.now();
+        const active = browserBridgeActive(now);
+        try {
+          sendJson(res, 200, {
+            ok: true,
+            studioUrl: `http://localhost:${server.config.server.port ?? 5173}`,
+            repoPath: activeRepoRoot,
+            browserBridgeActive: active,
+            browserBridgeLastSeenMs: activeClient ? now - activeClient.lastSeen : null,
+            queuedCommands: commandQueue.length,
+            pendingCommands: pending.size,
+            git: await readGitStatus(),
+          });
+        } catch (error) {
+          sendJson(res, 200, {
+            ok: true,
+            repoPath: activeRepoRoot,
+            browserBridgeActive: active,
+            browserBridgeLastSeenMs: activeClient ? now - activeClient.lastSeen : null,
+            queuedCommands: commandQueue.length,
+            pendingCommands: pending.size,
+            gitError: error instanceof Error ? error.message : "Git status failed",
           });
         }
       });

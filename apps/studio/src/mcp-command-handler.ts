@@ -69,6 +69,21 @@ export const handleMcpCommand: BrowserCommandHandler = async (command) => {
   const payload = payloadOf(command.payload);
 
   switch (command.type) {
+    case "get_status": {
+      const store = useDocumentStore.getState();
+      const roots = Object.values(store.roots);
+      const focusedRoot = findRootContaining(roots, store.selection[0] ?? "");
+      return {
+        rootCount: roots.length,
+        rootIds: roots.map((root) => root.id),
+        selection: store.selection,
+        focusedRootId: focusedRoot?.id ?? null,
+        editingComponentId: store.editingComponentId ?? null,
+        tokenCount: Object.keys(store.tokens).length,
+        componentCount: Object.keys(store.components).length,
+      };
+    }
+
     case "get_tree":
       return useDocumentStore.getState().roots;
 
@@ -138,10 +153,17 @@ export const handleMcpCommand: BrowserCommandHandler = async (command) => {
         cacheBust: true,
         pixelRatio: 1,
       });
+      if (!dataUrl.startsWith("data:image/png;base64,")) {
+        throw new Error(
+          `Canvas screenshot capture returned unexpected data URL for ${root.id}`,
+        );
+      }
+      const data = dataUrl.replace(/^data:image\/png;base64,/, "");
+      if (!data) throw new Error(`Canvas screenshot capture returned no data for ${root.id}`);
       return {
         source: "canvas",
         mimeType: "image/png",
-        data: dataUrl.replace(/^data:image\/png;base64,/, ""),
+        data,
         width: surface.clientWidth,
         height: surface.clientHeight,
         rootId: root.id,

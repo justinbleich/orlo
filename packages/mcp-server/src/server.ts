@@ -14,6 +14,35 @@ export function createMcpServer(bridge: StudioCommandBridge = new StudioBridge()
   });
 
   server.registerTool(
+    "get_status",
+    {
+      description:
+        "Check Studio/MCP bridge readiness, active repository, queue state, and live document selection when Studio is connected.",
+      inputSchema: {},
+    },
+    async () => {
+      const serverStatus = bridge.status ? await bridge.status() : undefined;
+      const bridgeActive =
+        !!serverStatus &&
+        typeof serverStatus === "object" &&
+        "browserBridgeActive" in serverStatus &&
+        Boolean((serverStatus as { browserBridgeActive?: unknown }).browserBridgeActive);
+
+      if (!bridgeActive) return result(serverStatus ?? { browserBridgeActive: "unknown" });
+
+      try {
+        const documentStatus = await bridge.command({ type: "get_status", payload: {} });
+        return result({ ...(serverStatus as object), document: documentStatus });
+      } catch (error) {
+        return result({
+          ...(serverStatus as object),
+          documentError: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  );
+
+  server.registerTool(
     "get_tree",
     {
       description: "Read the canonical RN Canvas document tree from the live Studio.",
@@ -121,6 +150,11 @@ export function createMcpServer(bridge: StudioCommandBridge = new StudioBridge()
         height: number;
         rootId: string;
       }>({ type: "get_canvas_screenshot", payload });
+      if (!screenshot.data) {
+        throw new Error(
+          `Canvas screenshot returned no image data for root ${screenshot.rootId}`,
+        );
+      }
       return {
         content: [
           {

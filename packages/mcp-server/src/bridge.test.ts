@@ -36,3 +36,19 @@ test("StudioBridge surfaces command validation errors", async () => {
     /Invalid style/,
   );
 });
+
+test("StudioBridge reads direct MCP status without queueing a browser command", async () => {
+  let request: { input: string; init?: RequestInit } | undefined;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    request = { input: String(input), init };
+    return new Response(JSON.stringify({ ok: true, browserBridgeActive: false }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const value = await new StudioBridge("http://studio.test", 1_000, fetchImpl).status();
+
+  assert.deepEqual(value, { ok: true, browserBridgeActive: false });
+  assert.equal(request?.input, "http://studio.test/api/mcp/status");
+  assert.equal(request?.init?.method, "GET");
+});

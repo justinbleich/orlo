@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { join } from "node:path";
 import {
+  displayBranchName,
   emptyFlowManifest,
   parseFlowManifest,
   parseGitStatus,
@@ -10,6 +11,7 @@ import {
   resolveSidecarPath,
   resolveTargetPath,
   serializeFlowManifest,
+  studioBranchName,
 } from "./repo-contract";
 
 const repo = "/tmp/rn-canvas-repo";
@@ -84,4 +86,13 @@ test("parseGitStatus preserves branch metadata and normalizes renamed paths", ()
     { path: "app/Screen.tsx", index: "R", workingTree: " " },
     { path: "app/New.tsx", index: "?", workingTree: "?" },
   ]);
+});
+
+test("studio branch helpers normalize status metadata and repo names", () => {
+  assert.equal(displayBranchName("## main...origin/main [ahead 1]"), "main");
+  assert.equal(displayBranchName("##"), "detached");
+  assert.equal(
+    studioBranchName("/tmp/My Product App", new Date("2026-06-30T12:00:00.000Z")),
+    "studio/my-product-app-2026-06-30",
+  );
 });

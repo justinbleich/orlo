@@ -3,7 +3,7 @@ export type RepoPanelContext = {
   repoName: string;
   packageManager: string;
   designSession?: {
-    mode: "current-branch";
+    mode: "current-branch" | "studio-branch";
     branch: string;
     suggestedBranch: string;
     syncTarget: string;

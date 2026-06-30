@@ -1,4 +1,4 @@
-import { extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 export type FlowManifest = {
   version: 1;
@@ -24,6 +24,21 @@ export type GitStatus = {
   clean: boolean;
   files: GitFileStatus[];
 };
+
+export function displayBranchName(branchLine: string) {
+  const name = branchLine.replace(/^##\s*/, "").split("...")[0]?.trim();
+  return name || "detached";
+}
+
+export function studioBranchName(root: string, date = new Date()) {
+  const repoSlug =
+    basename(root)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "repo";
+  const stamp = date.toISOString().slice(0, 10);
+  return `studio/${repoSlug}-${stamp}`;
+}
 
 export function pathInRoot(root: string, path: string) {
   const rel = relative(resolve(root), resolve(path));

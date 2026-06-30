@@ -9,6 +9,16 @@ import { createMcpServer } from "./server";
 class FakeBridge implements StudioCommandBridge {
   commands: StudioCommand[] = [];
 
+  async status() {
+    return {
+      ok: true,
+      browserBridgeActive: true,
+      repoPath: "/repo",
+      queuedCommands: 0,
+      pendingCommands: 0,
+    };
+  }
+
   async command<T>(command: StudioCommand): Promise<T> {
     this.commands.push(command);
     switch (command.type) {
@@ -22,6 +32,13 @@ class FakeBridge implements StudioCommandBridge {
           width: 320,
           height: 120,
           rootId: sampleDocument.id,
+        } as T;
+      case "get_status":
+        return {
+          rootCount: 1,
+          rootIds: [sampleDocument.id],
+          selection: [sampleDocument.id],
+          focusedRootId: sampleDocument.id,
         } as T;
       default:
         return { accepted: true } as T;
@@ -54,11 +71,25 @@ test("registers the complete Phase 5 tool surface", async () => {
         "delete_frame",
         "get_canvas_screenshot",
         "get_code",
+        "get_status",
         "get_tree",
         "set_style",
         "update_node",
       ],
     );
+  });
+});
+
+test("get_status combines server bridge readiness and live document status", async () => {
+  await withClient(async (client) => {
+    const response = await client.callTool({ name: "get_status", arguments: {} });
+    const text = (response.content as Array<{ type: string; text?: string }>).find(
+      (item) => item.type === "text",
+    )?.text;
+    assert.ok(text);
+    const status = JSON.parse(text);
+    assert.equal(status.browserBridgeActive, true);
+    assert.equal(status.document.focusedRootId, sampleDocument.id);
   });
 });
 

@@ -11,6 +11,7 @@ export interface StudioCommandResult<T = unknown> {
 
 export interface StudioCommandBridge {
   command<T>(command: StudioCommand): Promise<T>;
+  status?(): Promise<unknown>;
 }
 
 export class StudioBridge implements StudioCommandBridge {
@@ -43,5 +44,27 @@ export class StudioBridge implements StudioCommandBridge {
       throw new Error(result.error ?? `Studio bridge failed with HTTP ${response.status}`);
     }
     return result.value as T;
+  }
+
+  async status(): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}/api/mcp/status`, {
+        method: "GET",
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (error) {
+      throw new Error(
+        `Studio bridge unavailable at ${this.baseUrl}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error ?? `Studio status failed with HTTP ${response.status}`);
+    }
+    return result;
   }
 }

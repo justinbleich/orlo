@@ -1147,6 +1147,7 @@ export default function App() {
   const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipCodeSyncRef = useRef(false);
   const skipNextPathSyncRef = useRef(false);
+  const managedDocumentRef = useRef(false);
   const syncRootIdRef = useRef<NodeId | null>(null);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
 
@@ -1314,8 +1315,9 @@ export default function App() {
       if (body.context) setRepoContext(body.context);
       else await loadRepoContext();
       skipNextPathSyncRef.current = true;
+      managedDocumentRef.current = false;
       const target = body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
-      setStatus(`Connected ${nextPath} · editing ${target}`);
+      setStatus(`Connected ${nextPath} · open a screen to edit ${target}`);
     },
     [loadRepoContext, refreshGitStatus, repoDraft],
   );
@@ -1930,6 +1932,10 @@ export default function App() {
 
   const requestCodegen = useCallback(
     async (mode: "preview" | "sync", source: "manual" | "auto" = "manual") => {
+      if (mode === "sync" && source === "auto" && !managedDocumentRef.current) {
+        setSyncState({ status: "idle" });
+        return null;
+      }
       const root = syncRoot();
       if (!root) {
         const message = "Select a screen before syncing.";
@@ -1961,6 +1967,7 @@ export default function App() {
         setCodegenResult(body);
         if (source === "manual") setActiveArtifactId("screen");
         if (mode === "sync") setSyncState({ status: "synced", path: body.targetPath });
+        if (mode === "sync") managedDocumentRef.current = true;
         if (mode === "sync") {
           void refreshGitStatus();
           void loadRepoContext();
@@ -2016,6 +2023,7 @@ export default function App() {
       }
       setTargetPath(opened.targetPath);
       setSidecarPath(opened.sidecarPath);
+      managedDocumentRef.current = true;
       setCodegenResult(null);
       setActiveArtifactId("screen");
       void loadRepoContext();
@@ -2056,6 +2064,7 @@ export default function App() {
       }
       setTargetPath(imported.sourcePath);
       setSidecarPath(imported.sidecarPath);
+      managedDocumentRef.current = true;
       setCodegenResult(null);
       setActiveArtifactId("screen");
       void loadRepoContext();
@@ -2087,6 +2096,10 @@ export default function App() {
   );
 
   const scheduleAutoSync = useCallback(() => {
+    if (!managedDocumentRef.current) {
+      setSyncState({ status: "idle" });
+      return;
+    }
     if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
     setSyncState({ status: "scheduled" });
     autoSyncTimerRef.current = setTimeout(() => {
@@ -2476,7 +2489,7 @@ export default function App() {
                           <span className="min-w-0 truncate text-ink">{repoContext.designSession.syncTarget}</span>
                         </div>
                         <div className="mt-1 flex min-w-0 justify-between gap-sm">
-                          <span className="text-ink-faint">Studio branch</span>
+                          <span className="text-ink-faint">Editing branch</span>
                           <span className="min-w-0 truncate">{repoContext.designSession.suggestedBranch}</span>
                         </div>
                       </div>

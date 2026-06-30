@@ -61,6 +61,7 @@ import {
   Section,
   StatusPill,
   TextField,
+  TooltipProvider,
   cn,
 } from "./studio-ui";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
@@ -904,7 +905,7 @@ function TokenBoardCard({ token }: { token: DesignToken }) {
           {usage.length}
         </button>
         <IconButton title="Delete token" onClick={deleteToken}>
-          <Trash2 size={13} aria-hidden="true" />
+          <Trash2 size={14} aria-hidden="true" />
         </IconButton>
       </div>
     </div>
@@ -1150,7 +1151,7 @@ export default function App() {
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
 
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
-  const [inspectorTab, setInspectorTab] = useState("Inspect");
+  const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
   const [flows, setFlows] = useState<FlowDefinition[]>(DEFAULT_FLOWS);
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
@@ -1224,7 +1225,7 @@ export default function App() {
   useEffect(() => startMcpBridge(handleMcpCommand), []);
 
   useEffect(() => {
-    if (inspectorTab === "Props") setInspectorTab("Inspect");
+    if (inspectorTab === "Props") setInspectorTab("Design");
   }, [inspectorTab]);
 
   useEffect(() => {
@@ -1579,7 +1580,7 @@ export default function App() {
     pendingFocusRootIdRef.current = rootId;
     useDocumentStore.getState().setSelection([rootId]);
     setWorkspace("Screen");
-    setInspectorTab("Inspect");
+    setInspectorTab("Design");
     setStatus("Opened screen");
   }, []);
 
@@ -2173,8 +2174,18 @@ export default function App() {
         ? `No app runtime detected · ${repoContext.packageManager}${syncTarget ? ` · ${syncTarget}` : ""}`
         : "Attach a repo";
   const repoGitCode = firstGitCode(gitStatus);
+  // Read-only context crumb mirroring the active workspace (and its object where known).
+  const workspaceContext =
+    workspace === "Component"
+      ? `Component · ${editingComponentName ?? "Untitled"}`
+      : workspace === "Flow"
+        ? `Flow · ${flowPanelItems.find((flow) => flow.id === activeFlow)?.label ?? "Untitled"}`
+        : workspace === "Design System"
+          ? "Design System"
+          : "Screen";
 
   return (
+    <TooltipProvider>
     <div
       style={{
         height: "100vh",
@@ -2186,35 +2197,37 @@ export default function App() {
     >
       {/* TOP BAR */}
       <header
-        className="studio-chrome flex items-center gap-lg border-b border-line bg-chrome px-xl"
+        className="studio-chrome flex items-center gap-md border-b border-line bg-chrome px-xl"
         style={{
-          flex: "0 0 64px",
-          height: 64,
+          flex: `0 0 ${layout.topbar}px`,
+          height: layout.topbar,
         }}
       >
-        <div className="flex min-w-0 flex-col">
-          <div className="flex min-w-0 items-center gap-xs">
-            <strong className="min-w-0 truncate text-xl font-semibold text-ink">
-              {repoName}
-            </strong>
-            {repoGitCode && (
-              <span
-                title="Repository has changes"
-                aria-label="Repository has changes"
-                className="flex size-1 shrink-0 rounded-full bg-accent"
-              />
-            )}
-            <IconButton
-              title={repoContext ? "Change connected repo" : "Connect repo"}
-              onClick={openRepoSettings}
-            >
-              <FolderOpen size={14} aria-hidden="true" />
-            </IconButton>
-          </div>
-          <span className="truncate text-xs text-ink-faint" title={repoContext?.repoPath}>
-            {repoSubtitle}
-          </span>
+        <div className="flex min-w-0 items-center gap-xs">
+          <strong
+            className="min-w-0 truncate text-base font-semibold text-ink"
+            title={repoContext?.repoPath ? `${repoSubtitle} · ${repoContext.repoPath}` : repoSubtitle}
+          >
+            {repoName}
+          </strong>
+          {repoGitCode && (
+            <span
+              title="Repository has changes"
+              aria-label="Repository has changes"
+              className="flex size-1 shrink-0 rounded-full bg-accent"
+            />
+          )}
+          <IconButton
+            title={repoContext ? "Change connected repo" : "Connect repo"}
+            onClick={openRepoSettings}
+          >
+            <FolderOpen size={14} aria-hidden="true" />
+          </IconButton>
         </div>
+        <span className="h-4 w-px shrink-0 bg-line-soft" aria-hidden="true" />
+        <span className="min-w-0 truncate text-xs text-ink-faint" title={workspaceContext}>
+          {workspaceContext}
+        </span>
         <div className="ml-auto flex min-w-0 items-center gap-sm">
           <StatusPill
             tone={gitTone}
@@ -2234,6 +2247,7 @@ export default function App() {
             disabled={!undoAvailable}
             onClick={undoLatest}
             title="Undo"
+            kbd="⌘Z"
           >
             <Undo2 size={16} aria-hidden="true" />
           </IconButton>
@@ -2241,6 +2255,7 @@ export default function App() {
             disabled={!redoAvailable}
             onClick={redoLatest}
             title="Redo"
+            kbd="⌘⇧Z"
           >
             <Redo2 size={16} aria-hidden="true" />
           </IconButton>
@@ -2254,7 +2269,7 @@ export default function App() {
             }}
             disabled={codegenBusy || !focusedRoot}
           >
-            <Play size={15} aria-hidden="true" />
+            <Play size={14} aria-hidden="true" />
           </IconButton>
           <Button
             variant="primary"
@@ -2363,13 +2378,13 @@ export default function App() {
                   overrides={overrides}
                 />
               </div>
-              <div className="studio-chrome flex flex-none items-center gap-md border-t border-line bg-chrome px-md py-xs text-sm">
-                <span className="eyebrow">AI Implementation Simulator</span>
-                <div className="h-px flex-1 bg-line-soft" aria-hidden="true" />
-                <span className="truncate text-ink-dim">{status}</span>
-              </div>
             </>
           )}
+          {/* Shared status strip — consistent across all workspaces so the canvas
+              frame keeps a stable height as the workspace changes. */}
+          <div className="studio-chrome flex h-7 flex-none items-center gap-sm border-t border-line bg-chrome px-md text-xs text-ink-dim">
+            <span className="truncate">{status}</span>
+          </div>
         </div>
 
         {/* RIGHT COLUMN: canvas/code inspector. Optional native preview is on demand. */}
@@ -2388,7 +2403,7 @@ export default function App() {
             <div style={{ padding: space.md, paddingBottom: 0 }}>
               <div className="mb-xs flex items-center gap-xs">
                 <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
-                {inspectorTab !== "Inspect" && (
+                {inspectorTab !== "Design" && (
                   <span className="text-2xs font-semibold text-ink-faint">
                     {inspectorTab}
                   </span>
@@ -2396,14 +2411,14 @@ export default function App() {
               </div>
               {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
               <Tabs
-                tabs={["Inspect", "Code", "History"]}
+                tabs={["Design", "Code", "History"]}
                 active={inspectorTab}
                 onSelect={setInspectorTab}
                 variant="underline"
               />
             </div>
             <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-              {inspectorTab === "Inspect" ? (
+              {inspectorTab === "Design" ? (
                 <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
                   <Inspector rootId={focusedRootId} />
                 </ErrorBoundary>
@@ -2651,5 +2666,6 @@ export default function App() {
         </div>
       </div>
     </div>
+    </TooltipProvider>
   );
 }

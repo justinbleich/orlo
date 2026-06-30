@@ -39,7 +39,7 @@ import {
 import { Menu } from "@base-ui/react/menu";
 import { color, layout, radius, space, text } from "./studio-theme";
 import { useStudioStore } from "./studio-store";
-import { cn, PanelAction, PanelRow, PanelSection, PanelStaticRow } from "./studio-ui";
+import { cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
 import { TokensPanel } from "./TokensPanel";
@@ -206,7 +206,7 @@ export function Tabs({
   );
 }
 
-type RailTool = { icon: LucideIcon; label: string; onClick: () => void; disabled?: boolean };
+type RailTool = { icon: LucideIcon; label: string; onClick: () => void; disabled?: boolean; kbd?: string };
 type InsertItem = { icon: LucideIcon; label: string; type: RNPrimitive };
 
 /** Semantic primitives that live behind the Insert menu rather than the rail —
@@ -247,16 +247,17 @@ export function ToolRail({
     {
       icon: MousePointer2,
       label: "Select",
+      kbd: "V",
       onClick: () => {
         setArmedTool(null);
         onSelect();
       },
       active: armedTool === null,
     },
-    { icon: Frame, label: "Frame", onClick: () => { setArmedTool(null); onAddFrame(); } },
-    { icon: Square, label: "View", onClick: () => arm("View"), active: armedTool === "View", disabled: !canAddPrimitive },
-    { icon: Type, label: "Text", onClick: () => arm("Text"), active: armedTool === "Text", disabled: !canAddPrimitive },
-    { icon: ImageIcon, label: "Image", onClick: () => arm("Image"), active: armedTool === "Image", disabled: !canAddPrimitive },
+    { icon: Frame, label: "Frame", kbd: "F", onClick: () => { setArmedTool(null); onAddFrame(); } },
+    { icon: Square, label: "View", kbd: "R", onClick: () => arm("View"), active: armedTool === "View", disabled: !canAddPrimitive },
+    { icon: Type, label: "Text", kbd: "T", onClick: () => arm("Text"), active: armedTool === "Text", disabled: !canAddPrimitive },
+    { icon: ImageIcon, label: "Image", kbd: "I", onClick: () => arm("Image"), active: armedTool === "Image", disabled: !canAddPrimitive },
   ];
   return (
     <nav
@@ -270,18 +271,18 @@ export function ToolRail({
       {tools.map((t) => {
         const Icon = t.icon;
         return (
-          <button
-            key={t.label}
-            type="button"
-            title={t.label}
-            aria-label={t.label}
-            aria-pressed={t.active}
-            onClick={t.onClick}
-            disabled={t.disabled}
-            className={cn(railButton, t.active && railButtonActive)}
-          >
-            <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
-          </button>
+          <Tooltip key={t.label} label={t.label} kbd={t.kbd} side="top">
+            <button
+              type="button"
+              aria-label={t.label}
+              aria-pressed={t.active}
+              onClick={t.onClick}
+              disabled={t.disabled}
+              className={cn(railButton, t.active && railButtonActive)}
+            >
+              <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          </Tooltip>
         );
       })}
       <div className="mx-xs h-5 w-px bg-line" aria-hidden="true" />
@@ -335,7 +336,7 @@ function InsertMenu({
                     item.type === armedTool ? "text-accent" : "text-ink-dim",
                   )}
                 >
-                  <Icon size={15} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />
+                  <Icon size={14} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />
                   {item.label}
                 </Menu.Item>
               );
@@ -352,7 +353,7 @@ function InsertMenu({
                       comp.id === armedComponentId ? "text-accent" : "text-ink-dim",
                     )}
                   >
-                    <Component size={15} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />
+                    <Component size={14} strokeWidth={1.75} aria-hidden="true" className="text-ink-faint" />
                     {comp.name}
                   </Menu.Item>
                 ))}
@@ -535,14 +536,14 @@ export function LeftPanel({
             disabled={!canMakeComponent}
             title="Create component"
           >
-            <Component size={15} aria-hidden="true" />
+            <Component size={14} aria-hidden="true" />
           </PanelAction>
           <PanelAction
             onClick={deleteSelected}
             disabled={!canDeleteLayer}
             title="Delete layer"
           >
-            <Trash2 size={15} aria-hidden="true" />
+            <Trash2 size={14} aria-hidden="true" />
           </PanelAction>
         </div>
       </div>
@@ -602,7 +603,7 @@ export function LeftPanel({
           onClick={() => onWorkspaceChange("Screen")}
           className={cn("flex size-8 items-center justify-center rounded-sm", activeItem)}
         >
-          <Frame size={15} aria-hidden="true" />
+          <Frame size={14} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -610,12 +611,12 @@ export function LeftPanel({
           onClick={onOpenChanges}
           className="flex size-8 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
         >
-          <MoveVertical size={15} aria-hidden="true" />
+          <MoveVertical size={14} aria-hidden="true" />
         </button>
         <div className="flex-1" />
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-md overflow-y-auto p-md">
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto px-md [&>*]:border-b [&>*]:border-line-soft [&>*]:py-md [&>*:last-child]:border-b-0">
         <PanelSection
           title="Flows"
           count={flowItems.length + repoFlowGroups.length}
@@ -638,14 +639,14 @@ export function LeftPanel({
                     title={`Confirm remove ${flow.label}`}
                     className="text-amber opacity-100"
                   >
-                    <Trash2 size={15} aria-hidden="true" />
+                    <Trash2 size={14} aria-hidden="true" />
                   </PanelAction>
                   <PanelAction
                     onClick={onCancelRemoveFlow}
                     title="Cancel remove flow"
                     className="opacity-100"
                   >
-                    <X size={15} aria-hidden="true" />
+                    <X size={14} aria-hidden="true" />
                   </PanelAction>
                 </>
               ) : (
@@ -654,7 +655,7 @@ export function LeftPanel({
                   title={`Remove ${flow.label}`}
                   className={rowAction}
                 >
-                  <Trash2 size={15} aria-hidden="true" />
+                  <Trash2 size={14} aria-hidden="true" />
                 </PanelAction>
               )}
             >
@@ -730,7 +731,7 @@ export function LeftPanel({
                       title="Delete screen"
                       className={rowAction}
                     >
-                      <Trash2 size={15} aria-hidden="true" />
+                      <Trash2 size={14} aria-hidden="true" />
                     </PanelAction>
                   )}
                 >
@@ -796,7 +797,7 @@ export function LeftPanel({
                         title="Delete component"
                         className={rowAction}
                       >
-                        <Trash2 size={15} aria-hidden="true" />
+                        <Trash2 size={14} aria-hidden="true" />
                       </PanelAction>
                     </>
                   )}

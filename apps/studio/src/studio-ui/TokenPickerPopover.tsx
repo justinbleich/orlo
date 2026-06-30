@@ -136,7 +136,7 @@ function PickerBody({
               "transition-colors hover:bg-raised hover:text-ink",
             )}
           >
-            <Link2Off size={11} aria-hidden="true" />
+            <Link2Off size={12} aria-hidden="true" />
             Unlink
           </button>
         </div>
@@ -305,7 +305,7 @@ function TokensTab({
             "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line disabled:hover:text-ink-dim",
           )}
         >
-          <Plus size={11} aria-hidden="true" />
+          <Plus size={12} aria-hidden="true" />
           <span>Create token from value</span>
         </button>
       )}
@@ -349,7 +349,7 @@ function ColorSwatchGrid({
             />
             {active && (
               <span className="absolute inset-0 flex items-center justify-center text-white mix-blend-difference">
-                <Check size={11} strokeWidth={2.5} aria-hidden="true" />
+                <Check size={12} strokeWidth={2.5} aria-hidden="true" />
               </span>
             )}
           </button>
@@ -389,7 +389,7 @@ function NumberChipList({
           >
             <span className="flex-1 truncate text-left font-mono">{token.name}</span>
             <span className="shrink-0 tabular-nums text-ink-faint">{token.value}</span>
-            {active && <Check size={11} strokeWidth={2.5} className="text-accent" aria-hidden="true" />}
+            {active && <Check size={12} strokeWidth={2.5} className="text-accent" aria-hidden="true" />}
           </button>
         );
       })}

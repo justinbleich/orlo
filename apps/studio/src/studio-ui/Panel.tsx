@@ -26,7 +26,7 @@ export function PanelSection({
     <div className="flex min-w-0 flex-1 items-start gap-xs">
       {collapsible && (
         <ChevronDown
-          size={13}
+          size={12}
           strokeWidth={2.25}
           aria-hidden="true"
           className="mt-0.5 shrink-0 text-ink-faint transition-transform group-data-[panel-open]:rotate-0 -rotate-90"
@@ -133,7 +133,7 @@ export function PanelRow({
           className,
         )}
       >
-        {Icon && <Icon size={13} aria-hidden="true" className="shrink-0" />}
+        {Icon && <Icon size={14} aria-hidden="true" className="shrink-0" />}
         {children}
       </button>
       {action}
@@ -161,7 +161,7 @@ export function PanelStaticRow({
         className,
       )}
     >
-      {Icon && <Icon size={13} aria-hidden="true" className="shrink-0" />}
+      {Icon && <Icon size={14} aria-hidden="true" className="shrink-0" />}
       {children}
     </div>
   );

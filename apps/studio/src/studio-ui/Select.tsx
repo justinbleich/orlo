@@ -40,7 +40,7 @@ export function Select<T extends string>({
           }
         </BaseSelect.Value>
         <BaseSelect.Icon className="shrink-0 text-ink-faint">
-          <ChevronsUpDown size={13} aria-hidden="true" />
+          <ChevronsUpDown size={14} aria-hidden="true" />
         </BaseSelect.Icon>
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
@@ -64,7 +64,7 @@ export function Select<T extends string>({
               >
                 <BaseSelect.ItemText>{option.label}</BaseSelect.ItemText>
                 <BaseSelect.ItemIndicator className="text-accent">
-                  <Check size={13} aria-hidden="true" />
+                  <Check size={14} aria-hidden="true" />
                 </BaseSelect.ItemIndicator>
               </BaseSelect.Item>
             ))}

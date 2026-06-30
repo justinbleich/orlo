@@ -554,29 +554,29 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         <Section title="Arrange">
           <div className="flex items-center gap-xs">
             <IconButton title="Align left" onClick={() => arrange("horizontal", "start")}>
-              <AlignStartVertical size={15} aria-hidden="true" />
+              <AlignStartVertical size={14} aria-hidden="true" />
             </IconButton>
             <IconButton title="Align horizontal centers" onClick={() => arrange("horizontal", "center")}>
-              <AlignCenterVertical size={15} aria-hidden="true" />
+              <AlignCenterVertical size={14} aria-hidden="true" />
             </IconButton>
             <IconButton title="Align right" onClick={() => arrange("horizontal", "end")}>
-              <AlignEndVertical size={15} aria-hidden="true" />
+              <AlignEndVertical size={14} aria-hidden="true" />
             </IconButton>
             <IconButton title="Distribute horizontally" onClick={() => distribute("horizontal")} disabled={canArrangeAbsolute ? nodes.length < 3 : parentMainAxis !== "horizontal"}>
-              <AlignHorizontalSpaceBetween size={15} aria-hidden="true" />
+              <AlignHorizontalSpaceBetween size={14} aria-hidden="true" />
             </IconButton>
             <div className="mx-2xs h-5 w-px bg-line" aria-hidden="true" />
             <IconButton title="Align top" onClick={() => arrange("vertical", "start")}>
-              <AlignStartHorizontal size={15} aria-hidden="true" />
+              <AlignStartHorizontal size={14} aria-hidden="true" />
             </IconButton>
             <IconButton title="Align vertical centers" onClick={() => arrange("vertical", "center")}>
-              <AlignCenterHorizontal size={15} aria-hidden="true" />
+              <AlignCenterHorizontal size={14} aria-hidden="true" />
             </IconButton>
             <IconButton title="Align bottom" onClick={() => arrange("vertical", "end")}>
-              <AlignEndHorizontal size={15} aria-hidden="true" />
+              <AlignEndHorizontal size={14} aria-hidden="true" />
             </IconButton>
             <IconButton title="Distribute vertically" onClick={() => distribute("vertical")} disabled={canArrangeAbsolute ? nodes.length < 3 : parentMainAxis !== "vertical"}>
-              <AlignVerticalSpaceBetween size={15} aria-hidden="true" />
+              <AlignVerticalSpaceBetween size={14} aria-hidden="true" />
             </IconButton>
           </div>
         </Section>
@@ -908,7 +908,7 @@ function SelectionHeader({
     <div className="flex flex-col gap-sm border-b border-line px-md py-md">
       <div className="flex items-center gap-sm">
         <span className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-chrome-2 text-ink-dim">
-          <Icon size={15} aria-hidden="true" />
+          <Icon size={14} aria-hidden="true" />
         </span>
         {multi ? (
           <span className="flex h-7 min-w-0 flex-1 items-center px-sm text-sm font-medium text-ink">
@@ -1284,7 +1284,7 @@ function AddPropertyMenu({ onAdd }: { onAdd: (name: string, values?: string[]) =
   return (
     <Menu.Root>
       <Menu.Trigger className="flex items-center justify-center gap-xs rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-xs text-ink-dim transition-colors hover:bg-raised hover:text-ink">
-        <Plus size={13} aria-hidden="true" /> Add a variant property
+        <Plus size={14} aria-hidden="true" /> Add a variant property
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner side="bottom" align="start" sideOffset={6} className="z-50">
@@ -1338,7 +1338,7 @@ function PropertyEditor({
       <div className="flex items-center gap-xs">
         <span className="flex-1 text-xs font-medium text-ink">{property.name}</span>
         <IconButton title={`Remove ${property.name}`} onClick={onRemove}>
-          <Trash2 size={13} aria-hidden="true" />
+          <Trash2 size={14} aria-hidden="true" />
         </IconButton>
       </div>
       <div className="flex flex-wrap items-center gap-2xs">
@@ -1362,7 +1362,7 @@ function PropertyEditor({
                 onClick={() => onRemoveValue(value)}
                 className="text-ink-faint hover:text-ink"
               >
-                <X size={10} aria-hidden="true" />
+                <X size={12} aria-hidden="true" />
               </button>
             )}
           </span>
@@ -1670,7 +1670,7 @@ function PropertiesControls({
               "disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
-            <Plus size={13} aria-hidden="true" />
+            <Plus size={14} aria-hidden="true" />
           </Menu.Trigger>
           <Menu.Portal>
             <Menu.Positioner side="bottom" align="end" sideOffset={6} className="z-50">
@@ -1847,7 +1847,7 @@ function PropertyRow({
           {VALUE_TYPE_LABEL[prop.valueType] ?? prop.valueType}
         </span>
         <IconButton title={`Delete ${prop.name}`} onClick={onRemove}>
-          <Trash2 size={13} aria-hidden="true" />
+          <Trash2 size={14} aria-hidden="true" />
         </IconButton>
       </div>
       <div className="flex flex-wrap items-center gap-2xs">

@@ -176,6 +176,7 @@ type RepoContext = RepoPanelContext;
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
 type FlowDefinition = { id: FlowId; label: string; description?: string };
+type ActiveRepoScreen = { path: string; sidecarPath?: string; rootId: NodeId };
 
 type FlowManifest = {
   version: 1;
@@ -222,7 +223,7 @@ const DEVICE_SAFE_AREA = { top: 64, bottom: 48, side: 16 } as const;
  * A blank full-bleed mobile screen: device-sized, top-aligned column, white,
  * no card border/radius. The starting point for authoring a real screen.
  */
-function createScreenFrame(children: Node[] = []): Node {
+function createScreenFrame(children: Node[] = [], name?: string): Node {
   return createNode("View", {
     style: {
       width: DEVICE_FRAME.width,
@@ -234,6 +235,7 @@ function createScreenFrame(children: Node[] = []): Node {
       paddingBottom: DEVICE_SAFE_AREA.bottom,
       gap: 12,
     },
+    design: name ? { name } : undefined,
     children,
   });
 }
@@ -438,6 +440,15 @@ function flowDescription(flows: FlowDefinition[], id: FlowId) {
     flows.find((flow) => flow.id === id)?.description ??
     "Prototype route order for this screen group."
   );
+}
+
+function nextScreenName(roots: Iterable<Node>) {
+  const taken = new Set(
+    Array.from(roots, (root) => root.design?.name).filter((name): name is string => !!name),
+  );
+  let index = 1;
+  while (taken.has(`Screen ${index}`)) index += 1;
+  return `Screen ${index}`;
 }
 
 function FlowScreenPreview({
@@ -1349,6 +1360,7 @@ export default function App() {
   const [repoError, setRepoError] = useState<string | null>(null);
   const [repoBusy, setRepoBusy] = useState(false);
   const [repoContext, setRepoContext] = useState<RepoContext | null>(null);
+  const [activeRepoScreen, setActiveRepoScreen] = useState<ActiveRepoScreen | null>(null);
   const [canvasCanUndo, setCanvasCanUndo] = useState(false);
   const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
@@ -1391,6 +1403,11 @@ export default function App() {
   const pathSyncSignatureRef = useRef(`${screenName}|${targetPath}`);
   screenNameRef.current = screenName;
   targetPathRef.current = targetPath;
+
+  useEffect(() => {
+    if (!activeRepoScreen || !focusedRootId || focusedRootId === activeRepoScreen.rootId) return;
+    setActiveRepoScreen(null);
+  }, [activeRepoScreen, focusedRootId]);
 
   const canUndo = useDocumentStore((s) => s.past.length > 0);
   const canRedo = useDocumentStore((s) => s.future.length > 0);
@@ -1491,6 +1508,7 @@ export default function App() {
       else await loadRepoContext();
       skipNextPathSyncRef.current = true;
       managedDocumentRef.current = false;
+      setActiveRepoScreen(null);
       const target = body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
       setStatus(`Connected ${nextPath} · open a screen to edit ${target}`);
     },
@@ -1728,11 +1746,13 @@ export default function App() {
 
     const store = useDocumentStore.getState();
     if (Object.keys(store.roots).length === 0) {
-      const seed = createScreenFrame([
-        createNode("Text", { props: { text: "Hello RN Canvas" } }),
-      ]);
+      const seed = createScreenFrame(
+        [createNode("Text", { props: { text: "Hello RN Canvas" } })],
+        nextScreenName(Object.values(store.roots)),
+      );
       skipTokenWriteRef.current = true; // seed load — don't write theme.ts
       skipCodeSyncRef.current = true; // seed load — don't write generated files
+      setActiveRepoScreen(null);
       store.loadRoots({ [seed.id]: seed }, [seed.id]);
     }
     syncShapes(editor);
@@ -2309,9 +2329,10 @@ export default function App() {
   }, [roots]);
 
   const addFrame = useCallback(() => {
-    const root = createScreenFrame();
     const store = useDocumentStore.getState();
+    const root = createScreenFrame([], nextScreenName(Object.values(store.roots)));
     pendingFocusRootIdRef.current = root.id;
+    setActiveRepoScreen(null);
     store.addRoot(root);
     store.setSelection([root.id]);
     return root;
@@ -2443,6 +2464,11 @@ export default function App() {
       }
       setTargetPath(opened.targetPath);
       setSidecarPath(opened.sidecarPath);
+      setActiveRepoScreen({
+        path: opened.targetPath,
+        sidecarPath: opened.sidecarPath,
+        rootId: opened.root.id,
+      });
       managedDocumentRef.current = true;
       setCodegenResult(null);
       setActiveArtifactId("screen");
@@ -2484,6 +2510,11 @@ export default function App() {
       }
       setTargetPath(imported.sourcePath);
       setSidecarPath(imported.sidecarPath);
+      setActiveRepoScreen({
+        path: imported.sourcePath,
+        sidecarPath: imported.sidecarPath,
+        rootId: imported.root.id,
+      });
       managedDocumentRef.current = true;
       setCodegenResult(null);
       setActiveArtifactId("screen");
@@ -2732,9 +2763,10 @@ export default function App() {
           onDesignSystemViewChange={setActiveDesignSystemView}
           onOpenChanges={openChangesPanel}
           onOpenRepoScreen={openRepoScreen}
+          onFocusCanvasScreen={() => setActiveRepoScreen(null)}
           gitStatus={gitStatus}
-          targetPath={targetPath}
           sidecarPath={sidecarPath}
+          activeRepoScreen={activeRepoScreen}
           repoContext={repoContext}
         />
 

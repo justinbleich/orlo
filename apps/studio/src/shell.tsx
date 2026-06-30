@@ -455,9 +455,10 @@ export function LeftPanel({
   onDesignSystemViewChange,
   onOpenChanges,
   onOpenRepoScreen = () => {},
+  onFocusCanvasScreen = () => {},
   gitStatus,
-  targetPath,
   sidecarPath,
+  activeRepoScreen,
   repoContext,
 }: {
   workspace: WorkspaceMode;
@@ -474,9 +475,10 @@ export function LeftPanel({
   onDesignSystemViewChange: (view: DesignSystemView) => void;
   onOpenChanges: () => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
+  onFocusCanvasScreen: () => void;
   gitStatus: PanelGitStatus;
-  targetPath: string;
   sidecarPath: string;
+  activeRepoScreen?: { path: string; sidecarPath?: string; rootId: NodeId } | null;
   repoContext?: RepoPanelContext | null;
 }) {
   const roots = useDocumentStore((state) => state.roots);
@@ -605,23 +607,27 @@ export function LeftPanel({
 
   const activeItem = "bg-accent-soft text-accent";
   const rowAction = "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100";
-  const screenGitCode = gitCodeForPath(gitStatus, targetPath) ?? gitCodeForPath(gitStatus, sidecarPath);
   const sidecarGitCode = gitCodeForPath(gitStatus, sidecarPath);
   const themeGitCode = gitCodeForPath(gitStatus, "generated/theme.ts");
   const repoGitCode = firstGitCode(gitStatus);
   const repoScreens = repoContext?.screens ?? [];
   const repoAssets = repoContext?.assets ?? [];
   function isActiveRepoScreen(screen: RepoPanelScreen) {
-    return screen.path === targetPath || screen.sidecarPath === sidecarPath;
+    return (
+      workspace === "Screen" &&
+      !!activeRepoScreen &&
+      (screen.path === activeRepoScreen.path ||
+        (!!screen.sidecarPath && screen.sidecarPath === activeRepoScreen.sidecarPath))
+    );
   }
 
-  const activeRepoScreen = repoScreens.find(isActiveRepoScreen);
+  const activeRepoScreenItem = repoScreens.find(isActiveRepoScreen);
   const repoScreenCandidates = repoScreens;
   const repoFlowGroups = repoFlowItemsForContext(repoContext);
   const visibleAssets = repoAssets.slice(0, 4);
   const canvasScreens = rootList.filter((root) => root.id !== editingComponentId);
-  const canvasOnlyScreens = activeRepoScreen
-    ? canvasScreens.filter((root) => root.id !== focusedRoot?.id)
+  const canvasOnlyScreens = activeRepoScreenItem
+    ? canvasScreens.filter((root) => root.id !== activeRepoScreen?.rootId)
     : canvasScreens;
   const changedFiles = gitStatus.status === "ready" ? gitStatus.files : [];
   const flowItems = flows.map((flow, index) => ({
@@ -771,9 +777,10 @@ export function LeftPanel({
             return (
               <div key={root.id} className="flex flex-col gap-xs">
                 <PanelRow
-                  icon={Square}
+                  icon={FileText}
                   disabled={locked}
                   onClick={() => {
+                    onFocusCanvasScreen();
                     setSelection([root.id]);
                     onWorkspaceChange("Screen");
                   }}
@@ -793,7 +800,7 @@ export function LeftPanel({
                   <span className="min-w-0 flex-1 truncate">
                     {root.design?.name ?? `Screen ${index + 1}`}
                   </span>
-                  <GitBadge code={screenGitCode} title={`${screenGitCode ?? ""} ${targetPath}`} />
+                  <GitBadge />
                 </PanelRow>
                 {root.id === focusedRoot?.id && layerAccordion(root)}
               </div>

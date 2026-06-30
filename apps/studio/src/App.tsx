@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
   FileCode2,
   FileJson2,
   FolderOpen,
+  Plus,
   Play,
   RefreshCw,
   Redo2,
   Save,
   Trash2,
   Undo2,
+  X,
 } from "lucide-react";
 import {
   Tldraw,
@@ -67,6 +71,15 @@ import {
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
+import {
+  addFlowRoute,
+  flowAvailableScreens,
+  flowRouteScreens,
+  moveFlowRouteToIndex,
+  removeFlowRoute,
+  reorderFlowRoute,
+  type FlowRoutes,
+} from "./flow-model";
 import {
   firstSelectableChild,
   nextLayerSelection,
@@ -423,24 +436,6 @@ function flowDescription(flows: FlowDefinition[], id: FlowId) {
   );
 }
 
-function flowScreens(roots: Node[], flow: FlowId): Node[] {
-  if (flow === "onboarding") return roots;
-  const lowered = (root: Node) => (root.design?.name ?? "").toLowerCase();
-  const auth = roots.filter((root) =>
-    /auth|login|sign|create|verify|welcome/.test(lowered(root)),
-  );
-  const main = roots.filter((root) => !auth.includes(root));
-  if (flow === "auth") return auth.length ? auth : roots.slice(0, 1);
-  return main.length ? main : roots;
-}
-
-function orderedFlowScreens(screens: Node[], entryRootId?: NodeId): Node[] {
-  if (!entryRootId) return screens;
-  const entry = screens.find((root) => root.id === entryRootId);
-  if (!entry) return screens;
-  return [entry, ...screens.filter((root) => root.id !== entryRootId)];
-}
-
 function FlowScreenPreview({
   root,
   components,
@@ -476,9 +471,14 @@ function FlowWorkspace({
   repoFlows,
   activeFlow,
   entryRootId,
+  routeIds,
   onSelectScreen,
   onOpenRepoScreen,
   onEntryRootChange,
+  onAddRoute,
+  onRemoveRoute,
+  onMoveRoute,
+  onMoveRouteToIndex,
   onAddFrame,
 }: {
   roots: Node[];
@@ -487,9 +487,14 @@ function FlowWorkspace({
   repoFlows: RepoFlowPanelItem[];
   activeFlow: FlowId;
   entryRootId?: NodeId;
+  routeIds?: NodeId[];
   onSelectScreen: (rootId: NodeId) => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   onEntryRootChange: (rootId: NodeId) => void;
+  onAddRoute: (rootId: NodeId) => void;
+  onRemoveRoute: (rootId: NodeId) => void;
+  onMoveRoute: (rootId: NodeId, offset: -1 | 1) => void;
+  onMoveRouteToIndex: (rootId: NodeId, targetIndex: number) => void;
   onAddFrame: () => void;
 }) {
   const screens = roots.filter(
@@ -497,8 +502,10 @@ function FlowWorkspace({
       !useDocumentStore.getState().editingComponentId ||
       root.id !== useDocumentStore.getState().editingComponentId,
   );
-  const routeScreens = orderedFlowScreens(flowScreens(screens, activeFlow), entryRootId);
-  const entryScreen = routeScreens[0];
+  const routeScreens = flowRouteScreens(screens, activeFlow, routeIds);
+  const availableScreens = flowAvailableScreens(screens, activeFlow, routeIds);
+  const entryScreen =
+    (entryRootId && routeScreens.find((root) => root.id === entryRootId)) ?? routeScreens[0];
   const screenLabels = new Map(
     screens.map((root, index) => [root.id, root.design?.name ?? `Screen ${index + 1}`]),
   );
@@ -506,11 +513,34 @@ function FlowWorkspace({
     screenLabels.get(root.id) ?? root.design?.name ?? `Screen ${fallbackIndex + 1}`;
   const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
   const flowViewportRef = useRef<HTMLDivElement | null>(null);
+  const [draggedRouteId, setDraggedRouteId] = useState<NodeId | null>(null);
   const repoFlow = repoFlows.find((flow) => flow.id === activeFlow);
 
   useEffect(() => {
     if (flowViewportRef.current) flowViewportRef.current.scrollLeft = 0;
-  }, [activeFlow, entryRootId]);
+  }, [activeFlow, entryRootId, routeIds]);
+
+  const dragProps = (rootId: NodeId, index: number) => ({
+    draggable: true,
+    onDragStart: (event: React.DragEvent) => {
+      setDraggedRouteId(rootId);
+      event.dataTransfer.effectAllowed = "move";
+    },
+    onDragOver: (event: React.DragEvent) => {
+      if (draggedRouteId && draggedRouteId !== rootId) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }
+    },
+    onDrop: (event: React.DragEvent) => {
+      event.preventDefault();
+      if (draggedRouteId && draggedRouteId !== rootId) {
+        onMoveRouteToIndex(draggedRouteId, index);
+      }
+      setDraggedRouteId(null);
+    },
+    onDragEnd: () => setDraggedRouteId(null),
+  });
 
   if (repoFlow) {
     const entry = repoFlow.screens[0];
@@ -629,7 +659,14 @@ function FlowWorkspace({
           <div className="overflow-auto p-2xl">
             <div className="flex min-w-max items-start gap-2xl">
               {routeScreens.map((root, index) => (
-                <div key={root.id} className="relative flex flex-col items-center gap-sm">
+                <div
+                  key={root.id}
+                  {...dragProps(root.id, index)}
+                  className={cn(
+                    "relative flex cursor-grab flex-col items-center gap-sm rounded-sm p-2xs active:cursor-grabbing",
+                    draggedRouteId && draggedRouteId !== root.id && "outline outline-1 outline-accent-line",
+                  )}
+                >
                   {index > 0 && (
                     <div
                       className="absolute -left-2xl top-28 h-px w-2xl bg-accent-line"
@@ -651,6 +688,34 @@ function FlowWorkspace({
                   >
                     <FlowScreenPreview root={root} components={components} />
                   </button>
+                  <div className="flex h-7 items-center gap-2xs">
+                    <button
+                      type="button"
+                      onClick={() => onMoveRoute(root.id, -1)}
+                      disabled={index === 0}
+                      title="Move earlier"
+                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ArrowLeft size={13} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onMoveRoute(root.id, 1)}
+                      disabled={index === routeScreens.length - 1}
+                      title="Move later"
+                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ArrowRight size={13} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveRoute(root.id)}
+                      title="Remove from flow"
+                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+                    >
+                      <X size={13} aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
               ))}
               {routeScreens.length === 0 && (
@@ -665,11 +730,11 @@ function FlowWorkspace({
               <div>
                 <div className="eyebrow">Navigator</div>
                 <div className="mt-xs text-sm font-semibold text-ink">
-                  Prototype route graph
+                  Route order
                 </div>
                 <p className="m-0 mt-xs text-xs text-ink-faint">
-                  Route order follows the selected entrypoint. Router adapters can map this
-                  graph to React Navigation, Expo Router, or a custom stack later.
+                  Add screens to this flow and arrange the sequence. Entry marks the first
+                  screen a runtime adapter should open.
                 </p>
               </div>
               {entryScreen && (
@@ -686,7 +751,11 @@ function FlowWorkspace({
                 {routeScreens.map((root, index) => (
                   <div
                     key={root.id}
-                    className="flex h-8 items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+                    {...dragProps(root.id, index)}
+                    className={cn(
+                      "flex h-8 cursor-grab items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink active:cursor-grabbing",
+                      draggedRouteId && draggedRouteId !== root.id && "ring-1 ring-accent-line",
+                    )}
                   >
                     <button
                       type="button"
@@ -713,10 +782,64 @@ function FlowWorkspace({
                         Set entry
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => onMoveRoute(root.id, -1)}
+                      disabled={index === 0}
+                      title="Move earlier"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ArrowLeft size={12} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onMoveRoute(root.id, 1)}
+                      disabled={index === routeScreens.length - 1}
+                      title="Move later"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ArrowRight size={12} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveRoute(root.id)}
+                      title="Remove from flow"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
+                    >
+                      <X size={12} aria-hidden="true" />
+                    </button>
                   </div>
                 ))}
                 {routeScreens.length === 0 && (
                   <p className="m-0 text-xs text-ink-faint">No screens in this flow yet.</p>
+                )}
+              </div>
+              <div className="flex flex-col gap-xs">
+                <div className="eyebrow">Available Screens</div>
+                {availableScreens.map((root, index) => (
+                  <div
+                    key={root.id}
+                    className="flex h-8 items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onSelectScreen(root.id)}
+                      className="min-w-0 flex-1 truncate text-left"
+                    >
+                      {labelFor(root, index)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onAddRoute(root.id)}
+                      title="Add to flow"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
+                    >
+                      <Plus size={12} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+                {availableScreens.length === 0 && (
+                  <p className="m-0 text-xs text-ink-faint">All screens are in this flow.</p>
                 )}
               </div>
             </div>
@@ -1162,6 +1285,7 @@ export default function App() {
   const [flows, setFlows] = useState<FlowDefinition[]>(DEFAULT_FLOWS);
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
   const [flowEntrypoints, setFlowEntrypoints] = useState<Partial<Record<FlowId, NodeId>>>({});
+  const [flowRoutes, setFlowRoutes] = useState<FlowRoutes>({});
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
@@ -1204,9 +1328,9 @@ export default function App() {
     return flows.map((flow) => ({
       id: flow.id,
       label: flow.label,
-      screenCount: flowScreens(screenRoots, flow.id).length,
+      screenCount: flowRouteScreens(screenRoots, flow.id, flowRoutes[flow.id]).length,
     }));
-  }, [editingComponentId, flows, roots]);
+  }, [editingComponentId, flowRoutes, flows, roots]);
   const repoFlowItems = useMemo(
     () => repoFlowItemsForContext(repoContext),
     [repoContext],
@@ -1395,6 +1519,7 @@ export default function App() {
       const body = (await res.json()) as FlowManifest & { error?: string };
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       const next: Partial<Record<FlowId, NodeId>> = {};
+      const nextRoutes: FlowRoutes = {};
       const manifestFlows = Array.isArray(body.flows)
         ? body.flows
             .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
@@ -1402,6 +1527,11 @@ export default function App() {
         : [];
       for (const flow of body.flows ?? []) {
         if (flow.entryRootId) next[flow.id] = flow.entryRootId;
+        if (Array.isArray(flow.routes)) {
+          nextRoutes[flow.id] = flow.routes
+            .map((route) => route.rootId)
+            .filter((rootId): rootId is NodeId => typeof rootId === "string");
+        }
       }
       if (manifestFlows.length > 0) {
         setFlows(manifestFlows);
@@ -1410,6 +1540,7 @@ export default function App() {
         );
       }
       setFlowEntrypoints(next);
+      setFlowRoutes(nextRoutes);
     } catch {
       // A missing flow manifest is fine; flows start from inferred screen order.
     }
@@ -1419,16 +1550,19 @@ export default function App() {
     async (
       nextFlows: FlowDefinition[] = flows,
       entrypoints: Partial<Record<FlowId, NodeId>> = flowEntrypoints,
+      routesByFlow: FlowRoutes = flowRoutes,
+      screenRootsOverride?: Node[],
     ) => {
-      const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+      const screenRoots =
+        screenRootsOverride ??
+        Object.values(roots).filter((root) => root.id !== editingComponentId);
       const manifest: FlowManifest = {
         version: 1,
         flows: nextFlows.map((flow) => {
-          const routeScreens = orderedFlowScreens(
-            flowScreens(screenRoots, flow.id),
-            entrypoints[flow.id],
-          );
-          const entry = routeScreens[0];
+          const routeScreens = flowRouteScreens(screenRoots, flow.id, routesByFlow[flow.id]);
+          const entry =
+            (entrypoints[flow.id] && routeScreens.find((root) => root.id === entrypoints[flow.id])) ??
+            routeScreens[0];
           return {
             id: flow.id,
             label: flow.label,
@@ -1451,7 +1585,7 @@ export default function App() {
       void refreshGitStatus();
       void loadRepoContext();
     },
-    [editingComponentId, flowEntrypoints, flows, loadRepoContext, refreshGitStatus, roots],
+    [editingComponentId, flowEntrypoints, flowRoutes, flows, loadRepoContext, refreshGitStatus, roots],
   );
 
   useEffect(() => {
@@ -1599,14 +1733,77 @@ export default function App() {
   const setFlowEntryRoot = useCallback((rootId: NodeId) => {
     setFlowEntrypoints((current) => {
       const next = { ...current, [activeFlow]: rootId };
-      void persistFlowManifest(flows, next).then(
+      void persistFlowManifest(flows, next, flowRoutes).then(
         () => setStatus("Updated flow entrypoint"),
         (error) =>
           setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
       return next;
     });
-  }, [activeFlow, flows, persistFlowManifest]);
+  }, [activeFlow, flowRoutes, flows, persistFlowManifest]);
+
+  const updateFlowRoutes = useCallback(
+    (updater: (current: NodeId[] | undefined, screens: Node[]) => NodeId[], status: string) => {
+      const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+      setFlowRoutes((current) => {
+        const nextRoutes = { ...current, [activeFlow]: updater(current[activeFlow], screenRoots) };
+        void persistFlowManifest(flows, flowEntrypoints, nextRoutes).then(
+          () => setStatus(status),
+          (error) =>
+            setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+        );
+        return nextRoutes;
+      });
+    },
+    [activeFlow, editingComponentId, flowEntrypoints, flows, persistFlowManifest, roots],
+  );
+
+  const addScreenToFlow = useCallback(
+    (rootId: NodeId) => {
+      updateFlowRoutes(
+        (current, screenRoots) => addFlowRoute(screenRoots, activeFlow, current, rootId),
+        "Added screen to flow",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
+
+  const removeScreenFromFlow = useCallback(
+    (rootId: NodeId) => {
+      updateFlowRoutes(
+        (current, screenRoots) => removeFlowRoute(screenRoots, activeFlow, current, rootId),
+        "Removed screen from flow",
+      );
+      setFlowEntrypoints((current) => {
+        if (current[activeFlow] !== rootId) return current;
+        const next = { ...current };
+        delete next[activeFlow];
+        return next;
+      });
+    },
+    [activeFlow, updateFlowRoutes],
+  );
+
+  const moveScreenInFlow = useCallback(
+    (rootId: NodeId, offset: -1 | 1) => {
+      updateFlowRoutes(
+        (current, screenRoots) => reorderFlowRoute(screenRoots, activeFlow, current, rootId, offset),
+        "Updated flow order",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
+
+  const moveScreenToFlowIndex = useCallback(
+    (rootId: NodeId, targetIndex: number) => {
+      updateFlowRoutes(
+        (current, screenRoots) =>
+          moveFlowRouteToIndex(screenRoots, activeFlow, current, rootId, targetIndex),
+        "Updated flow order",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
 
   const addFlow = useCallback(() => {
     setFlows((current) => {
@@ -1620,7 +1817,9 @@ export default function App() {
         description: "Prototype route order for this screen group.",
       };
       const next = [...current, nextFlow];
-      void persistFlowManifest(next, flowEntrypoints).then(
+      const nextRoutes = { ...flowRoutes, [nextFlow.id]: [] };
+      setFlowRoutes(nextRoutes);
+      void persistFlowManifest(next, flowEntrypoints, nextRoutes).then(
         () => setStatus(`Added ${label}`),
         (error) =>
           setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
@@ -1630,7 +1829,7 @@ export default function App() {
       setWorkspace("Flow");
       return next;
     });
-  }, [flowEntrypoints, persistFlowManifest]);
+  }, [flowEntrypoints, flowRoutes, persistFlowManifest]);
 
   const removeFlow = useCallback(
     (flow: FlowPanelItem) => {
@@ -1639,7 +1838,8 @@ export default function App() {
         return;
       }
       const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
-      const screenCount = flow.screenCount ?? flowScreens(screenRoots, flow.id).length;
+      const screenCount =
+        flow.screenCount ?? flowRouteScreens(screenRoots, flow.id, flowRoutes[flow.id]).length;
       if (screenCount > 1 && pendingRemoveFlowId !== flow.id) {
         setPendingRemoveFlowId(flow.id);
         setStatus(`Confirm removal of ${flow.label}`);
@@ -1647,7 +1847,9 @@ export default function App() {
       }
       const nextFlows = flows.filter((item) => item.id !== flow.id);
       const nextEntrypoints = { ...flowEntrypoints };
+      const nextRoutes = { ...flowRoutes };
       delete nextEntrypoints[flow.id];
+      delete nextRoutes[flow.id];
       const nextActiveFlow = activeFlow === flow.id ? nextFlows[0]?.id : activeFlow;
       if (!nextActiveFlow) {
         setStatus("Keep at least one flow.");
@@ -1655,15 +1857,25 @@ export default function App() {
       }
       setFlows(nextFlows);
       setFlowEntrypoints(nextEntrypoints);
+      setFlowRoutes(nextRoutes);
       setPendingRemoveFlowId(null);
       setActiveFlow(nextActiveFlow);
-      void persistFlowManifest(nextFlows, nextEntrypoints).then(
+      void persistFlowManifest(nextFlows, nextEntrypoints, nextRoutes).then(
         () => setStatus(`Removed ${flow.label}`),
         (error) =>
           setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
     },
-    [activeFlow, editingComponentId, flowEntrypoints, flows, pendingRemoveFlowId, persistFlowManifest, roots],
+    [
+      activeFlow,
+      editingComponentId,
+      flowEntrypoints,
+      flowRoutes,
+      flows,
+      pendingRemoveFlowId,
+      persistFlowManifest,
+      roots,
+    ],
   );
 
   // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
@@ -1981,7 +2193,27 @@ export default function App() {
     pendingFocusRootIdRef.current = root.id;
     store.addRoot(root);
     store.setSelection([root.id]);
+    return root;
   }, []);
+
+  const addFrameToActiveFlow = useCallback(() => {
+    const root = addFrame();
+    const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
+      (item) => item.id !== useDocumentStore.getState().editingComponentId,
+    );
+    setFlowRoutes((current) => {
+      const nextRoutes = {
+        ...current,
+        [activeFlow]: addFlowRoute(screenRoots, activeFlow, current[activeFlow], root.id),
+      };
+      void persistFlowManifest(flows, flowEntrypoints, nextRoutes, screenRoots).then(
+        () => setStatus("Added screen to flow"),
+        (error) =>
+          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+      return nextRoutes;
+    });
+  }, [activeFlow, addFrame, flowEntrypoints, flows, persistFlowManifest]);
 
   const setCanvasTool = useCallback((tool: CanvasTool) => {
     useStudioStore.getState().setCanvasTool(tool);
@@ -2394,10 +2626,15 @@ export default function App() {
               repoFlows={repoFlowItems}
               activeFlow={activeFlow}
               entryRootId={flowEntrypoints[activeFlow]}
+              routeIds={flowRoutes[activeFlow]}
               onSelectScreen={selectScreenFromWorkspace}
               onOpenRepoScreen={openRepoScreen}
               onEntryRootChange={setFlowEntryRoot}
-              onAddFrame={addFrame}
+              onAddRoute={addScreenToFlow}
+              onRemoveRoute={removeScreenFromFlow}
+              onMoveRoute={moveScreenInFlow}
+              onMoveRouteToIndex={moveScreenToFlowIndex}
+              onAddFrame={addFrameToActiveFlow}
             />
           ) : workspace === "Design System" ? (
             <DesignSystemWorkspace

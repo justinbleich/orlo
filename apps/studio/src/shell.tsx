@@ -620,7 +620,9 @@ export function LeftPanel({
   const repoFlowGroups = repoFlowItemsForContext(repoContext);
   const visibleAssets = repoAssets.slice(0, 4);
   const canvasScreens = rootList.filter((root) => root.id !== editingComponentId);
-  const canvasOnlyScreens = activeRepoScreen ? [] : canvasScreens;
+  const canvasOnlyScreens = activeRepoScreen
+    ? canvasScreens.filter((root) => root.id !== focusedRoot?.id)
+    : canvasScreens;
   const changedFiles = gitStatus.status === "ready" ? gitStatus.files : [];
   const flowItems = flows.map((flow, index) => ({
     ...flow,

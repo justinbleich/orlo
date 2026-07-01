@@ -38,6 +38,15 @@ import {
 } from "@rn-canvas/document";
 import { FrameRenderer } from "@rn-canvas/render-web";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
+import { CodePanel } from "./CodePanel";
+import {
+  codeArtifacts,
+  gitFileStatusLabel,
+  type CodeArtifact,
+  type CodegenResult,
+  type GitFileStatus,
+  type GitStatus,
+} from "./code-artifacts";
 import { Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { color, layout, radius, space, text } from "./studio-theme";
@@ -134,43 +143,11 @@ const asFrame = (s: EditorShape) => s as unknown as FrameShape;
 type CreatePartial = Parameters<Editor["createShape"]>[0];
 type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
-type CodegenResult = {
-  screenName: string;
-  code: string;
-  sidecar: string;
-  targetPath: string;
-  sidecarPath: string;
-  components?: { name: string; fileName: string; code: string }[];
-  componentPaths?: string[];
-  theme?: { fileName: string; code: string };
-  themePath?: string;
-  wrote?: boolean;
-};
-
-type CodeArtifact = {
-  id: string;
-  label: string;
-  path: string;
-  kind: "tsx" | "json" | "theme";
-  code: string;
-};
-
 type SyncState =
   | { status: "idle" }
   | { status: "scheduled" }
   | { status: "syncing" }
   | { status: "synced"; path: string }
-  | { status: "error"; message: string };
-
-type GitFileStatus = {
-  path: string;
-  index: string;
-  workingTree: string;
-};
-
-type GitStatus =
-  | { status: "loading" }
-  | { status: "ready"; repoPath: string; branch: string; clean: boolean; files: GitFileStatus[] }
   | { status: "error"; message: string };
 
 type RepoContext = RepoPanelContext;
@@ -240,55 +217,6 @@ function createScreenFrame(children: Node[] = [], name?: string): Node {
     design: name ? { name } : undefined,
     children,
   });
-}
-
-function codeArtifacts(result: CodegenResult | null): CodeArtifact[] {
-  if (!result) return [];
-  const artifacts: CodeArtifact[] = [
-    {
-      id: "screen",
-      label: result.targetPath.split("/").pop() ?? result.targetPath,
-      path: result.targetPath,
-      kind: "tsx",
-      code: result.code,
-    },
-    {
-      id: "document",
-      label: result.sidecarPath.split("/").pop() ?? result.sidecarPath,
-      path: result.sidecarPath,
-      kind: "json",
-      code: result.sidecar,
-    },
-  ];
-  if (result.theme) {
-    artifacts.push({
-      id: "theme",
-      label: result.theme.fileName,
-      path: result.themePath ?? result.theme.fileName,
-      kind: "theme",
-      code: result.theme.code,
-    });
-  }
-  result.components?.forEach((component, index) => {
-    artifacts.push({
-      id: `component-${index}-${component.name}`,
-      label: component.fileName,
-      path: result.componentPaths?.[index] ?? `components/${component.fileName}`,
-      kind: "tsx",
-      code: component.code,
-    });
-  });
-  return artifacts;
-}
-
-function gitFileStatusLabel(file: GitFileStatus): string {
-  const code = `${file.index}${file.workingTree}`;
-  if (code === "??") return "Untracked";
-  if (file.workingTree === "M" || file.index === "M") return "Modified";
-  if (file.workingTree === "D" || file.index === "D") return "Deleted";
-  if (file.workingTree === "A" || file.index === "A") return "Added";
-  if (file.workingTree === "R" || file.index === "R") return "Renamed";
-  return code.trim() || "Changed";
 }
 
 function gitSummary(status: GitStatus): string {
@@ -1365,11 +1293,18 @@ export default function App() {
   const reconcilingShapesRef = useRef(false);
   const codegenBusyRef = useRef(false);
   const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Edits made while a codegen is in flight set this so a trailing sync runs once
+  // the current one finishes — the latest canvas state always reaches disk/the view.
+  const rerunRequestedRef = useRef(false);
+  const scheduleAutoSyncRef = useRef<() => void>(() => {});
   const skipCodeSyncRef = useRef(false);
   const skipNextPathSyncRef = useRef(false);
   const managedDocumentRef = useRef(false);
   const syncRootIdRef = useRef<NodeId | null>(null);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
+  // Set when a document is freshly opened so the code view populates live without a
+  // manual Preview (auto-sync only fires on subsequent edits).
+  const pendingPreviewRef = useRef(false);
   const pendingFlowManifestRef = useRef<FlowManifest | null>(null);
 
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
@@ -1386,6 +1321,13 @@ export default function App() {
   const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
   const [sidecarPath, setSidecarPath] = useState("generated/Screen.rncanvas.json");
   const [codegenResult, setCodegenResult] = useState<CodegenResult | null>(null);
+  // Committed (HEAD) content per output path — the diff baseline. Auto-sync writes
+  // live to disk, so the meaningful diff is against the last commit, not a snapshot.
+  const [headByPath, setHeadByPath] = useState<Record<string, string>>({});
+  const [branchInfo, setBranchInfo] = useState<{ current: string; branches: string[] }>({
+    current: "",
+    branches: [],
+  });
   const [activeArtifactId, setActiveArtifactId] = useState("screen");
   const [codegenError, setCodegenError] = useState<string | null>(null);
   const [codegenBusy, setCodegenBusy] = useState(false);
@@ -2470,7 +2412,11 @@ export default function App() {
         setStatus(message);
         return null;
       }
-      if (codegenBusyRef.current) return null;
+      if (codegenBusyRef.current) {
+        // A codegen is in flight — remember to run once more so this newer edit lands.
+        if (source === "auto") rerunRequestedRef.current = true;
+        return null;
+      }
       codegenBusyRef.current = true;
       setCodegenBusy(true);
       setCodegenError(null);
@@ -2513,6 +2459,10 @@ export default function App() {
       } finally {
         codegenBusyRef.current = false;
         setCodegenBusy(false);
+        if (rerunRequestedRef.current) {
+          rerunRequestedRef.current = false;
+          scheduleAutoSyncRef.current();
+        }
       }
     },
     [loadRepoContext, refreshGitStatus, syncRoot],
@@ -2565,6 +2515,7 @@ export default function App() {
       );
       managedDocumentRef.current = true;
       setCodegenResult(null);
+      pendingPreviewRef.current = true;
       setActiveArtifactId("screen");
       void loadRepoContext();
       setStatus(`Opened ${opened.sidecarPath}`);
@@ -2618,6 +2569,7 @@ export default function App() {
       );
       managedDocumentRef.current = true;
       setCodegenResult(null);
+      pendingPreviewRef.current = true;
       setActiveArtifactId("screen");
       void loadRepoContext();
       setStatus(`Imported ${imported.sourcePath}`);
@@ -2657,12 +2609,14 @@ export default function App() {
     autoSyncTimerRef.current = setTimeout(() => {
       autoSyncTimerRef.current = null;
       if (codegenBusyRef.current) {
-        scheduleAutoSync();
+        // Don't drop this edit — the in-flight codegen will re-run when it finishes.
+        rerunRequestedRef.current = true;
         return;
       }
       void requestCodegen("sync", "auto");
     }, 900);
   }, [requestCodegen]);
+  scheduleAutoSyncRef.current = scheduleAutoSync;
 
   useEffect(() => {
     let lastRoots = useDocumentStore.getState().roots;
@@ -2713,6 +2667,115 @@ export default function App() {
     if (!Object.keys(useDocumentStore.getState().roots).length) return;
     scheduleAutoSync();
   }, [screenName, targetPath, scheduleAutoSync]);
+
+  // Populate the code view live once a freshly-opened document's roots + paths have
+  // settled — no manual Preview needed. Auto-sync keeps it current on later edits.
+  useEffect(() => {
+    if (!pendingPreviewRef.current) return;
+    if (!Object.keys(useDocumentStore.getState().roots).length) return;
+    pendingPreviewRef.current = false;
+    void requestCodegen("preview");
+  }, [roots, screenName, targetPath, requestCodegen]);
+
+  const refreshHeads = useCallback(async (list: CodeArtifact[]) => {
+    if (list.length === 0) {
+      setHeadByPath({});
+      return;
+    }
+    const entries = await Promise.all(
+      list.map(async (artifact) => {
+        try {
+          const res = await fetch("/api/git/head-file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: artifact.path }),
+          });
+          const body = await res.json();
+          return [artifact.path, res.ok && body.exists ? (body.content as string) : null] as const;
+        } catch {
+          return [artifact.path, null] as const;
+        }
+      }),
+    );
+    const map: Record<string, string> = {};
+    for (const [path, content] of entries) if (content != null) map[path] = content;
+    setHeadByPath(map);
+  }, []);
+
+  const refreshBranches = useCallback(async () => {
+    try {
+      const res = await fetch("/api/git/branches");
+      const body = await res.json();
+      if (res.ok) setBranchInfo({ current: body.current ?? "", branches: body.branches ?? [] });
+    } catch {
+      /* branches unavailable — leave prior value */
+    }
+  }, []);
+
+  // Refresh the HEAD diff baseline whenever the generated artifacts change.
+  useEffect(() => {
+    void refreshHeads(artifacts);
+  }, [artifacts, refreshHeads]);
+
+  useEffect(() => {
+    void refreshBranches();
+  }, [refreshBranches, repoPath]);
+
+  const switchBranch = useCallback(
+    async (branch: string, create = false) => {
+      setRepoError(null);
+      try {
+        const res = await fetch("/api/git/switch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ branch, create }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? "Branch switch failed");
+        await refreshGitStatus();
+        await refreshBranches();
+        void loadRepoContext();
+        // The working tree now reflects the new branch — reload the open document.
+        void openSidecar();
+      } catch (e) {
+        setRepoError(e instanceof Error ? e.message : "Branch switch failed");
+      }
+    },
+    [loadRepoContext, openSidecar, refreshBranches, refreshGitStatus],
+  );
+
+  const commitChanges = useCallback(
+    async (message: string) => {
+      setRepoError(null);
+      try {
+        const res = await fetch("/api/git/commit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, paths: codeArtifacts(codegenResult).map((a) => a.path) }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? "Commit failed");
+        await refreshGitStatus();
+        await refreshBranches();
+        void refreshHeads(codeArtifacts(codegenResult));
+      } catch (e) {
+        setRepoError(e instanceof Error ? e.message : "Commit failed");
+      }
+    },
+    [codegenResult, refreshBranches, refreshGitStatus, refreshHeads],
+  );
+
+  const openPullRequest = useCallback(async () => {
+    setRepoError(null);
+    try {
+      const res = await fetch("/api/git/pr-url");
+      const body = await res.json();
+      if (body.url) window.open(body.url, "_blank", "noopener");
+      else setRepoError("No origin remote to open a pull request against.");
+    } catch (e) {
+      setRepoError(e instanceof Error ? e.message : "Could not resolve pull request URL");
+    }
+  }, []);
 
   const syncLabel =
     syncState.status === "scheduled"
@@ -3008,291 +3071,43 @@ export default function App() {
                   <Inspector rootId={focusedRootId} />
                 </ErrorBoundary>
               ) : inspectorTab === "Code" ? (
-                <div
-                  style={{
-                    padding: space.md,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: space.md,
-                    overflow: "auto",
-                    width: "100%",
-                  }}
-                >
-                  <Eyebrow>Code</Eyebrow>
-                  <Section title="Workspace">
-                    <div className="flex gap-xs">
-                      <Button
-                        className="flex-1"
-                        variant="primary"
-                        disabled={repoBusy || codegenBusy}
-                        onClick={() => void connectDemoRepo()}
-                      >
-                        <Play size={14} aria-hidden="true" /> Open demo
-                      </Button>
-                      <Button
-                        className="flex-1"
-                        disabled={repoBusy || codegenBusy}
-                        onClick={() => void selectRepoFolder()}
-                      >
-                        <FolderOpen size={14} aria-hidden="true" /> Select folder
-                      </Button>
-                    </div>
-                    <Field label="Workspace folder" stacked>
-                      <TextField
-                        value={repoDraft}
-                        onChange={setRepoDraft}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void connectRepo();
-                          else if (e.key === "Escape") setRepoDraft(repoPath);
-                        }}
-                        placeholder="/path/to/app"
-                        spellCheck={false}
-                      />
-                    </Field>
-                    <div className="flex gap-xs">
-                      <Button
-                        className="flex-1"
-                        disabled={repoBusy || codegenBusy || !repoDraft.trim()}
-                        onClick={() => void connectRepo()}
-                      >
-                        Open path
-                      </Button>
-                    </div>
-                    <div className="flex min-w-0 justify-between gap-sm text-xs">
-                      <span className="text-ink-faint">Folder</span>
-                      <span className="min-w-0 truncate text-ink" title={repoContext?.repoPath ?? repoPath}>
-                        {workspaceFolderLabel}
-                      </span>
-                    </div>
-                    {repoError && (
-                      <p className="m-0 text-xs text-amber">
-                        {repoError}
-                      </p>
-                    )}
-                  </Section>
-                  <Section
-                    title="Version Control"
-                    action={
-                      <IconButton
-                        title="Refresh Git status"
-                        onClick={() => void refreshGitStatus()}
-                      >
-                        <RefreshCw size={14} aria-hidden="true" />
-                      </IconButton>
-                    }
-                  >
-                    <div className="flex min-w-0 justify-between gap-sm text-xs">
-                      <span className="text-ink-faint">Branch</span>
-                      <span className="min-w-0 truncate text-ink" title={branchLabel}>
-                        {branchLabel}
-                      </span>
-                    </div>
-                    <div className="flex min-w-0 justify-between gap-sm text-xs">
-                      <span className="text-ink-faint">Changes</span>
-                      <span className="inline-flex min-w-0 items-center gap-xs text-ink" title={gitLabel}>
-                        {repoGitCode && (
-                          <span
-                            aria-hidden="true"
-                            className="size-1.5 shrink-0 rounded-full bg-accent"
-                          />
-                        )}
-                        <span className="min-w-0 truncate">{scopedChangeLabel}</span>
-                      </span>
-                    </div>
-                    <div className="flex min-w-0 justify-between gap-sm text-xs">
-                      <span className="text-ink-faint">Git repo</span>
-                      <span
-                        className="min-w-0 truncate text-ink"
-                        title={repoContext?.gitRootPath ?? (gitStatus.status === "ready" ? gitStatus.repoPath : repoPath)}
-                      >
-                        {gitRepoLabel}
-                      </span>
-                    </div>
-                    {repoContext?.designSession && (
-                      <>
-                        <div className="flex min-w-0 justify-between gap-sm text-xs">
-                          <span className="text-ink-faint">Writes to</span>
-                          <span className="min-w-0 truncate text-ink" title={repoContext.designSession.syncTarget}>
-                            {repoContext.designSession.syncTarget}
-                          </span>
-                        </div>
-                        <div className="flex min-w-0 justify-between gap-sm text-xs">
-                          <span className="text-ink-faint">Suggested branch</span>
-                          <span
-                            className="min-w-0 truncate text-ink-dim"
-                            title={repoContext.designSession.suggestedBranch}
-                          >
-                            {repoContext.designSession.suggestedBranch}
-                          </span>
-                        </div>
-                      </>
-                    )}
-                  </Section>
-                  <Section title="Document">
-                    <Field label="Sidecar" stacked>
-                      <TextField
-                        value={sidecarPath}
-                        onChange={setSidecarPath}
-                      />
-                    </Field>
-                    <div className="flex gap-xs">
-                      <Button
-                        className="flex-1"
-                        disabled={codegenBusy}
-                        onClick={() => void openSidecar()}
-                      >
-                        <FolderOpen size={14} aria-hidden="true" /> Open
-                      </Button>
-                      <Button
-                        className="flex-1"
-                        disabled={codegenBusy}
-                        onClick={() => void importSource()}
-                      >
-                        <RefreshCw size={14} aria-hidden="true" /> Import
-                      </Button>
-                    </div>
-                  </Section>
-                  <Section title="Output">
-                    <Field label="Screen" stacked>
-                      <TextField
-                        value={screenName}
-                        onChange={setScreenName}
-                        onBlur={() => void requestCodegen("preview")}
-                      />
-                    </Field>
-                    <Field label="Code path" stacked>
-                      <TextField
-                        value={targetPath}
-                        onChange={setTargetPath}
-                      />
-                    </Field>
-                    <div className="flex gap-xs">
-                      <Button
-                        className="flex-1"
-                        disabled={codegenBusy || !focusedRoot}
-                        onClick={() => void requestCodegen("preview")}
-                      >
-                        <FileCode2 size={14} aria-hidden="true" /> Preview
-                      </Button>
-                      <Button
-                        variant="primary"
-                        className="flex-1"
-                        disabled={codegenBusy || !focusedRoot}
-                        onClick={() => void requestCodegen("sync")}
-                      >
-                        <Save size={14} aria-hidden="true" /> Sync
-                      </Button>
-                    </div>
-                  </Section>
-                  {codegenError && (
-                    <p className="m-0 rounded-sm border border-amber/40 bg-amber/10 px-sm py-xs text-xs text-amber">
-                      {codegenError}
-                    </p>
-                  )}
-                  <div className="flex flex-col gap-xs rounded-sm border border-line bg-chrome-2 p-sm">
-                    <div className="flex items-center gap-sm">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-ink">Repository</div>
-                        <div className="text-xs text-ink-faint">{gitLabel}</div>
-                        {repoPath && (
-                          <div
-                            title={repoPath}
-                            className="truncate text-xs text-ink-faint"
-                          >
-                            {repoPath}
-                          </div>
-                        )}
-                      </div>
-                      <IconButton
-                        title="Refresh Git status"
-                        onClick={() => void refreshGitStatus()}
-                      >
-                        <RefreshCw size={14} aria-hidden="true" />
-                      </IconButton>
-                    </div>
-                    {gitStatus.status === "ready" && !gitStatus.clean && (
-                      <div className="flex flex-col gap-xs">
-                        {gitStatus.files.slice(0, 8).map((file) => (
-                          <div
-                            key={`${file.index}${file.workingTree}-${file.path}`}
-                            className="flex items-center gap-xs text-xs text-ink-dim"
-                          >
-                            <span className="shrink-0 uppercase text-ink-faint">
-                              {gitFileStatusLabel(file)}
-                            </span>
-                            <span
-                              className="min-w-0 flex-1 truncate"
-                              title={file.path}
-                            >
-                              {file.path}
-                            </span>
-                          </div>
-                        ))}
-                        {gitStatus.files.length > 8 && (
-                          <div className="text-xs text-ink-faint">
-                            +{gitStatus.files.length - 8} more
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {gitStatus.status === "error" && (
-                      <p className="m-0 text-xs text-amber">
-                        {gitStatus.message}
-                      </p>
-                    )}
-                  </div>
-                  {codegenResult ? (
-                    <div className="flex min-h-0 flex-col gap-sm">
-                      <p className="m-0 text-xs text-ink-faint">
-                        {codegenResult.wrote ? "Synced" : "Previewing"} {artifacts.length}{" "}
-                        {artifacts.length === 1 ? "file" : "files"}.
-                      </p>
-                      <div className="flex flex-col gap-xs">
-                        {artifacts.map((artifact) => {
-                          const active = artifact.id === activeArtifact?.id;
-                          const Icon = artifact.kind === "json" ? FileJson2 : FileCode2;
-                          return (
-                            <button
-                              key={artifact.id}
-                              type="button"
-                              onClick={() => setActiveArtifactId(artifact.id)}
-                              className={cn(
-                                "flex h-7 w-full items-center gap-xs rounded-sm border px-sm text-left text-xs transition-colors",
-                                active
-                                  ? "border-accent-line bg-accent-soft text-accent"
-                                  : "border-line bg-chrome-2 text-ink-dim hover:bg-raised hover:text-ink",
-                              )}
-                            >
-                              <Icon size={14} aria-hidden="true" />
-                              <span className="min-w-0 flex-1 truncate">
-                                {artifact.label}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {activeArtifact && (
-                        <div className="flex min-h-[260px] flex-1 flex-col">
-                          <div className="flex items-center gap-xs rounded-t-sm border border-line border-b-0 bg-chrome-2 px-sm py-xs text-xs text-ink">
-                            <span className="min-w-0 flex-1 truncate">
-                              {activeArtifact.path}
-                            </span>
-                            <span className="uppercase text-ink-faint">
-                              {activeArtifact.kind}
-                            </span>
-                          </div>
-                          <pre className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-b-sm border border-line bg-canvas p-md text-xs leading-[1.55] text-ink-dim">
-                            {activeArtifact.code}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="rounded-sm border border-line bg-chrome-2 p-md text-sm text-ink-faint">
-                      Preview or sync to inspect code-linked files.
-                    </div>
-                  )}
-                </div>
+                <CodePanel
+                  repoBusy={repoBusy}
+                  codegenBusy={codegenBusy}
+                  repoDraft={repoDraft}
+                  setRepoDraft={setRepoDraft}
+                  repoPath={repoPath}
+                  repoContext={repoContext}
+                  workspaceFolderLabel={workspaceFolderLabel}
+                  gitRepoLabel={gitRepoLabel}
+                  repoError={repoError}
+                  onOpenDemo={() => void connectDemoRepo()}
+                  onSelectFolder={() => void selectRepoFolder()}
+                  onConnectPath={() => void connectRepo()}
+                  gitStatus={gitStatus}
+                  branchInfo={branchInfo}
+                  scopedChangeLabel={scopedChangeLabel}
+                  onRefreshGit={() => void refreshGitStatus()}
+                  onSwitchBranch={(branch, create) => void switchBranch(branch, create)}
+                  onCommit={(message) => void commitChanges(message)}
+                  onOpenPr={() => void openPullRequest()}
+                  onForceSync={() => void requestCodegen("sync")}
+                  sidecarPath={sidecarPath}
+                  setSidecarPath={setSidecarPath}
+                  onOpenSidecar={() => void openSidecar()}
+                  onImportSource={() => void importSource()}
+                  screenName={screenName}
+                  setScreenName={setScreenName}
+                  targetPath={targetPath}
+                  setTargetPath={setTargetPath}
+                  canCodegen={Boolean(focusedRoot)}
+                  codegenError={codegenError}
+                  codegenResult={codegenResult}
+                  artifacts={artifacts}
+                  activeArtifactId={activeArtifactId}
+                  setActiveArtifactId={setActiveArtifactId}
+                  headByPath={headByPath}
+                />
               ) : (
                 <ChangesTimeline
                   gitStatus={gitStatus}

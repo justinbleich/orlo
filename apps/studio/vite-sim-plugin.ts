@@ -371,6 +371,75 @@ async function ensureStudioBranch(root: string) {
   return branch;
 }
 
+/** Contents of a repo-relative path at HEAD (the diff baseline). Missing = new file. */
+async function readHeadFile(repoRelPath: string) {
+  const root = activeRepoRoot;
+  const gitRoot = await resolveGitRoot(root);
+  const gitRel = relative(gitRoot, resolve(root, repoRelPath)).split(sep).join("/");
+  try {
+    const { stdout } = await execFileAsync("git", ["show", `HEAD:${gitRel}`], {
+      cwd: gitRoot,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { content: stdout, exists: true };
+  } catch {
+    return { content: "", exists: false };
+  }
+}
+
+async function listBranches() {
+  const gitRoot = await resolveGitRoot(activeRepoRoot);
+  const { stdout } = await execFileAsync(
+    "git",
+    ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    { cwd: gitRoot, maxBuffer: 1024 * 1024 },
+  );
+  const branches = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  const status = await readGitStatus();
+  return { current: displayBranchName(status.branch), branches };
+}
+
+async function switchBranch(branch: string, create: boolean) {
+  if (!branch?.trim()) throw new Error("Branch name required");
+  const gitRoot = await resolveGitRoot(activeRepoRoot);
+  const args = create ? ["switch", "-c", branch] : ["switch", branch];
+  await execFileAsync("git", args, { cwd: gitRoot, maxBuffer: 1024 * 1024 });
+  return readGitStatus();
+}
+
+async function commitPaths(message: string, paths: string[]) {
+  const root = activeRepoRoot;
+  const gitRoot = await resolveGitRoot(root);
+  const absPaths = paths.filter(Boolean).map((path) => resolve(root, path));
+  const addArgs = absPaths.length > 0 ? ["add", "--", ...absPaths] : ["add", "-A", "--", root];
+  await execFileAsync("git", addArgs, { cwd: gitRoot, maxBuffer: 1024 * 1024 });
+  await execFileAsync("git", ["commit", "-m", message.trim() || "Update design"], {
+    cwd: gitRoot,
+    maxBuffer: 1024 * 1024,
+  });
+  return readGitStatus();
+}
+
+/** GitHub compare URL for the current branch, if an origin remote exists. */
+async function remoteCompareUrl() {
+  const gitRoot = await resolveGitRoot(activeRepoRoot);
+  try {
+    const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], {
+      cwd: gitRoot,
+      maxBuffer: 1024 * 1024,
+    });
+    const status = await readGitStatus();
+    const branch = displayBranchName(status.branch);
+    const httpsUrl = stdout
+      .trim()
+      .replace(/^git@([^:]+):/, "https://$1/")
+      .replace(/\.git$/, "");
+    return { url: `${httpsUrl}/compare/${encodeURIComponent(branch)}?expand=1`, branch };
+  } catch {
+    return { url: null, branch: null };
+  }
+}
+
 async function connectRepoRoot(path: string) {
   activeRepoRoot = await resolveRepoRoot(path);
   await ensureStudioBranch(activeRepoRoot);
@@ -956,6 +1025,80 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Git status failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/git/head-file", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<{ path?: string }>(req);
+          if (!body.path) throw new Error("Missing path");
+          sendJson(res, 200, await readHeadFile(body.path));
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Git show failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/git/branches", async (req, res) => {
+        if (req.method !== "GET") {
+          sendJson(res, 405, { error: "GET required" });
+          return;
+        }
+        try {
+          sendJson(res, 200, await listBranches());
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Branch list failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/git/switch", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<{ branch?: string; create?: boolean }>(req);
+          sendJson(res, 200, await switchBranch(body.branch ?? "", Boolean(body.create)));
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Branch switch failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/git/commit", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<{ message?: string; paths?: string[] }>(req);
+          sendJson(res, 200, await commitPaths(body.message ?? "", body.paths ?? []));
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Commit failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/git/pr-url", async (req, res) => {
+        if (req.method !== "GET") {
+          sendJson(res, 405, { error: "GET required" });
+          return;
+        }
+        try {
+          sendJson(res, 200, await remoteCompareUrl());
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "PR URL failed",
           });
         }
       });

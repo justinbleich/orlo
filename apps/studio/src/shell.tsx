@@ -8,6 +8,8 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  ChevronDown,
+  ChevronRight,
   Component,
   FileText,
   Frame,
@@ -28,6 +30,7 @@ import {
   ZoomIn,
   type LucideIcon,
 } from "lucide-react";
+import { useState } from "react";
 import {
   childrenOf,
   findNode,
@@ -135,6 +138,10 @@ function firstGitCodeForScreens(gitStatus: PanelGitStatus, screens: RepoPanelScr
 function firstGitCode(gitStatus: PanelGitStatus): string | undefined {
   if (gitStatus.status !== "ready") return undefined;
   return gitStatus.files.map(gitStatusCode).find(Boolean);
+}
+
+function layerCount(node: { children?: Array<{ children?: unknown[] }> }): number {
+  return node.children?.reduce((total, child) => total + 1 + layerCount(child), 0) ?? 0;
 }
 
 function shortPathLabel(path: string) {
@@ -496,6 +503,8 @@ export function LeftPanel({
   const addToken = useDocumentStore((state) => state.addToken);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
   const setArmedComponent = useStudioStore((state) => state.setArmedComponent);
+  const [collapsedLayerRoots, setCollapsedLayerRoots] = useState<Record<NodeId, boolean>>({});
+  const [collapsedRepoFlows, setCollapsedRepoFlows] = useState<Record<string, boolean>>({});
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -567,42 +576,62 @@ export function LeftPanel({
   }
 
   function layerAccordion(root: typeof rootList[number]) {
+    const collapsed = collapsedLayerRoots[root.id] ?? false;
+    const count = layerCount(root);
     return (
       <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
-        <div className="eyebrow px-xs pt-2xs">Layers</div>
-        <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
-          <DocumentTree node={root} rootId={root.id} selectedIds={selection} />
-        </div>
-        <div className="flex gap-xs">
-          <PanelAction
-            onClick={() => moveSelected(reverse ? 1 : -1)}
-            disabled={reverse ? !canMoveAfter : !canMoveBefore}
-            title={horizontal ? "Move left" : "Move up"}
-          >
-            {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
-          </PanelAction>
-          <PanelAction
-            onClick={() => moveSelected(reverse ? -1 : 1)}
-            disabled={reverse ? !canMoveBefore : !canMoveAfter}
-            title={horizontal ? "Move right" : "Move down"}
-          >
-            {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
-          </PanelAction>
-          <PanelAction
-            onClick={createComponent}
-            disabled={!canMakeComponent}
-            title="Create component"
-          >
-            <Component size={14} aria-hidden="true" />
-          </PanelAction>
-          <PanelAction
-            onClick={deleteSelected}
-            disabled={!canDeleteLayer}
-            title="Delete layer"
-          >
-            <Trash2 size={14} aria-hidden="true" />
-          </PanelAction>
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setCollapsedLayerRoots((current) => ({
+              ...current,
+              [root.id]: !collapsed,
+            }));
+          }}
+          aria-expanded={!collapsed}
+          className="group flex h-7 min-w-0 items-center gap-xs rounded-sm px-xs text-left text-2xs font-semibold uppercase tracking-[0.12em] text-ink-faint transition-colors hover:bg-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line"
+        >
+          {collapsed ? <ChevronRight size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
+          <span className="min-w-0 flex-1 truncate">Layers</span>
+          <span className="tabular-nums">{count}</span>
+        </button>
+        {!collapsed && (
+          <>
+            <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
+              <DocumentTree node={root} rootId={root.id} selectedIds={selection} />
+            </div>
+            <div className="flex gap-xs">
+              <PanelAction
+                onClick={() => moveSelected(reverse ? 1 : -1)}
+                disabled={reverse ? !canMoveAfter : !canMoveBefore}
+                title={horizontal ? "Move left" : "Move up"}
+              >
+                {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
+              </PanelAction>
+              <PanelAction
+                onClick={() => moveSelected(reverse ? -1 : 1)}
+                disabled={reverse ? !canMoveBefore : !canMoveAfter}
+                title={horizontal ? "Move right" : "Move down"}
+              >
+                {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
+              </PanelAction>
+              <PanelAction
+                onClick={createComponent}
+                disabled={!canMakeComponent}
+                title="Create component"
+              >
+                <Component size={14} aria-hidden="true" />
+              </PanelAction>
+              <PanelAction
+                onClick={deleteSelected}
+                disabled={!canDeleteLayer}
+                title="Delete layer"
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </PanelAction>
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -774,39 +803,59 @@ export function LeftPanel({
                 <GitBadge code={flow.gitCode} title={sidecarPath} />
             </PanelRow>
           ))}
-          {repoFlowGroups.map((flow) => (
-            <div key={flow.id} className="flex flex-col gap-xs">
-              <PanelRow
-                icon={Route}
-                onClick={() => openFlow(flow.id)}
-                active={flow.screens.some(isActiveRepoScreen)}
-                title={`Show ${flow.name} flow`}
-              >
-                <span className="min-w-0 flex-1 truncate">{flow.name}</span>
-                <span className="text-2xs tabular-nums text-ink-faint">{flow.screens.length}</span>
-                <GitBadge code={firstGitCodeForScreens(gitStatus, flow.screens)} title={`${flow.name} has changes`} />
-              </PanelRow>
-              <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
-                {flow.screens.map((screen) => {
-                  const gitCode = gitCodeForScreen(gitStatus, screen);
-                  return (
-                    <div key={`${flow.id}:${screen.path}`} className="flex flex-col gap-xs">
-                      <PanelRow
-                        icon={FileText}
-                        onClick={() => onOpenRepoScreen(screen)}
-                        active={isActiveRepoScreen(screen)}
-                        title={`Open ${screen.path}`}
-                        className="text-xs"
-                      >
-                        <span className="min-w-0 flex-1 truncate">{displayScreenName(screen)}</span>
-                        <GitBadge code={gitCode} title={screen.path} />
-                      </PanelRow>
-                    </div>
-                  );
-                })}
+          {repoFlowGroups.map((flow) => {
+            const collapsed = collapsedRepoFlows[flow.id] ?? false;
+            const hasActiveScreen = flow.screens.some(isActiveRepoScreen);
+            return (
+              <div key={flow.id} className="flex flex-col gap-xs">
+                <PanelRow
+                  icon={Route}
+                  onClick={() => openFlow(flow.id)}
+                  active={hasActiveScreen}
+                  title={`Show ${flow.name} flow`}
+                  action={(
+                    <PanelAction
+                      onClick={() => {
+                        setCollapsedRepoFlows((current) => ({
+                          ...current,
+                          [flow.id]: !collapsed,
+                        }));
+                      }}
+                      aria-expanded={!collapsed}
+                      title={collapsed ? `Expand ${flow.name}` : `Collapse ${flow.name}`}
+                    >
+                      {collapsed ? <ChevronRight size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+                    </PanelAction>
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{flow.name}</span>
+                  <span className="text-2xs tabular-nums text-ink-faint">{flow.screens.length}</span>
+                  <GitBadge code={firstGitCodeForScreens(gitStatus, flow.screens)} title={`${flow.name} has changes`} />
+                </PanelRow>
+                {!collapsed && (
+                  <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
+                    {flow.screens.map((screen) => {
+                      const gitCode = gitCodeForScreen(gitStatus, screen);
+                      return (
+                        <div key={`${flow.id}:${screen.path}`} className="flex flex-col gap-xs">
+                          <PanelRow
+                            icon={FileText}
+                            onClick={() => onOpenRepoScreen(screen)}
+                            active={isActiveRepoScreen(screen)}
+                            title={`Open ${screen.path}`}
+                            className="text-xs"
+                          >
+                            <span className="min-w-0 flex-1 truncate">{displayScreenName(screen)}</span>
+                            <GitBadge code={gitCode} title={screen.path} />
+                          </PanelRow>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </PanelSection>
 
         <PanelSection

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  Flag,
   FileCode2,
   FileJson2,
   FolderOpen,
@@ -596,7 +597,7 @@ function FlowWorkspace({
           </div>
           {entry && (
             <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-              Entry <span className="font-medium text-ink">{displayScreenName(entry)}</span>
+              Start <span className="font-medium text-ink">{displayScreenName(entry)}</span>
             </div>
           )}
         </div>
@@ -616,7 +617,7 @@ function FlowWorkspace({
                       <span>{displayScreenName(screen)}</span>
                       {index === 0 && (
                         <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                          Entry
+                          Start
                         </span>
                       )}
                     </div>
@@ -702,9 +703,12 @@ function FlowWorkspace({
         </div>
         {entryScreen && (
           <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-            Entry <span className="font-medium text-ink">{entryLabel}</span>
+            Start <span className="font-medium text-ink">{entryLabel}</span>
           </div>
         )}
+        <div className="rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
+          Routes <span className="font-medium tabular-nums text-ink">{routeScreens.length}</span>
+        </div>
         <div className="ml-auto flex items-center gap-xs">
           <IconButton title="Add screen" onClick={onAddFrame}>
             <PlusIcon />
@@ -734,7 +738,7 @@ function FlowWorkspace({
                     <span>{labelFor(root, index)}</span>
                     {root.id === entryScreen?.id && (
                       <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                        Entry
+                        Start
                       </span>
                     )}
                   </div>
@@ -746,6 +750,15 @@ function FlowWorkspace({
                     <FlowScreenPreview root={root} components={components} />
                   </button>
                   <div className="flex h-7 items-center gap-2xs">
+                    <button
+                      type="button"
+                      onClick={() => onEntryRootChange(root.id)}
+                      disabled={root.id === entryScreen?.id}
+                      title={root.id === entryScreen?.id ? "Start screen" : "Set as start"}
+                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-default disabled:bg-accent-soft disabled:text-accent"
+                    >
+                      <Flag size={12} aria-hidden="true" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => onMoveRoute(root.id, -1)}
@@ -776,8 +789,18 @@ function FlowWorkspace({
                 </div>
               ))}
               {routeScreens.length === 0 && (
-                <div className="rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
-                  Add a screen to start mapping the flow.
+                <div className="flex flex-col items-start gap-sm rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
+                  <span>Add a screen to start mapping the flow.</span>
+                  {availableScreens[0] && (
+                    <button
+                      type="button"
+                      onClick={() => onAddRoute(availableScreens[0].id)}
+                      className="inline-flex h-7 items-center gap-xs rounded-sm border border-line bg-raised px-sm text-xs font-medium text-ink-dim transition-colors hover:bg-chrome-2 hover:text-ink"
+                    >
+                      <Plus size={12} aria-hidden="true" />
+                      Add {labelFor(availableScreens[0], 0)}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -787,17 +810,17 @@ function FlowWorkspace({
               <div>
                 <div className="eyebrow">Navigator</div>
                 <div className="mt-xs text-sm font-semibold text-ink">
-                  Route order
+                  Route order ({routeScreens.length})
                 </div>
                 <p className="m-0 mt-xs text-xs text-ink-faint">
-                  Add screens to this flow and arrange the sequence. Entry marks the first
+                  Add screens to this flow and arrange the sequence. Start marks the first
                   screen a runtime adapter should open.
                 </p>
               </div>
               {entryScreen && (
                 <div className="rounded-sm bg-raised p-sm">
                   <div className="text-2xs font-semibold uppercase tracking-[0.08em] text-ink-faint">
-                    Entry point
+                    Start screen
                   </div>
                   <div className="mt-xs truncate text-sm font-medium text-ink">
                     {entryLabel}
@@ -828,7 +851,7 @@ function FlowWorkspace({
                     </button>
                     {root.id === entryScreen?.id ? (
                       <span className="shrink-0 text-2xs font-semibold text-accent">
-                        Entry
+                        Start
                       </span>
                     ) : (
                       <button
@@ -836,7 +859,7 @@ function FlowWorkspace({
                         onClick={() => onEntryRootChange(root.id)}
                         className="shrink-0 rounded-pill px-xs py-px text-2xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
                       >
-                        Set entry
+                        Set start
                       </button>
                     )}
                     <button
@@ -888,7 +911,7 @@ function FlowWorkspace({
                     <button
                       type="button"
                       onClick={() => onAddRoute(root.id)}
-                      title="Add to flow"
+                      title={`Add ${labelFor(root, index)} to flow`}
                       className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
                     >
                       <Plus size={12} aria-hidden="true" />
@@ -1857,11 +1880,23 @@ export default function App() {
   }, [activeFlow, flowRoutes, flows, persistFlowManifest]);
 
   const updateFlowRoutes = useCallback(
-    (updater: (current: NodeId[] | undefined, screens: Node[]) => NodeId[], status: string) => {
+    (
+      updater: (current: NodeId[] | undefined, screens: Node[]) => NodeId[],
+      status: string,
+      entrypointUpdater?: (
+        current: Partial<Record<FlowId, NodeId>>,
+        nextRouteIds: NodeId[],
+      ) => Partial<Record<FlowId, NodeId>>,
+    ) => {
       const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
       setFlowRoutes((current) => {
-        const nextRoutes = { ...current, [activeFlow]: updater(current[activeFlow], screenRoots) };
-        void persistFlowManifest(flows, flowEntrypoints, nextRoutes).then(
+        const nextRouteIds = updater(current[activeFlow], screenRoots);
+        const nextRoutes = { ...current, [activeFlow]: nextRouteIds };
+        const nextEntrypoints = entrypointUpdater
+          ? entrypointUpdater(flowEntrypoints, nextRouteIds)
+          : flowEntrypoints;
+        if (nextEntrypoints !== flowEntrypoints) setFlowEntrypoints(nextEntrypoints);
+        void persistFlowManifest(flows, nextEntrypoints, nextRoutes).then(
           () => setStatus(status),
           (error) =>
             setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
@@ -1887,13 +1922,15 @@ export default function App() {
       updateFlowRoutes(
         (current, screenRoots) => removeFlowRoute(screenRoots, activeFlow, current, rootId),
         "Removed screen from flow",
+        (current, nextRouteIds) => {
+          if (current[activeFlow] !== rootId) return current;
+          const next = { ...current };
+          const fallbackEntry = nextRouteIds[0];
+          if (fallbackEntry) next[activeFlow] = fallbackEntry;
+          else delete next[activeFlow];
+          return next;
+        },
       );
-      setFlowEntrypoints((current) => {
-        if (current[activeFlow] !== rootId) return current;
-        const next = { ...current };
-        delete next[activeFlow];
-        return next;
-      });
     },
     [activeFlow, updateFlowRoutes],
   );

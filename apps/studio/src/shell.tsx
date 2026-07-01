@@ -30,7 +30,7 @@ import {
   ZoomIn,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   childrenOf,
   findNode,
@@ -64,6 +64,33 @@ type PanelGitStatus =
   | { status: "loading" }
   | { status: "ready"; files: GitFileStatus[]; clean: boolean }
   | { status: "error"; message: string };
+
+const LEFT_PANEL_COLLAPSE_STORAGE_KEY = "rn-canvas:left-panel-collapse";
+
+type LeftPanelCollapseState = {
+  layers: Record<string, boolean>;
+  repoFlows: Record<string, boolean>;
+};
+
+function readLeftPanelCollapseState(): LeftPanelCollapseState {
+  if (typeof window === "undefined") return { layers: {}, repoFlows: {} };
+  try {
+    const raw = window.localStorage.getItem(LEFT_PANEL_COLLAPSE_STORAGE_KEY);
+    if (!raw) return { layers: {}, repoFlows: {} };
+    const parsed = JSON.parse(raw) as Partial<LeftPanelCollapseState>;
+    return {
+      layers: parsed.layers && typeof parsed.layers === "object" ? parsed.layers : {},
+      repoFlows: parsed.repoFlows && typeof parsed.repoFlows === "object" ? parsed.repoFlows : {},
+    };
+  } catch {
+    return { layers: {}, repoFlows: {} };
+  }
+}
+
+function writeLeftPanelCollapseState(state: LeftPanelCollapseState) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LEFT_PANEL_COLLAPSE_STORAGE_KEY, JSON.stringify(state));
+}
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
@@ -142,6 +169,11 @@ function firstGitCode(gitStatus: PanelGitStatus): string | undefined {
 
 function layerCount(node: { children?: Array<{ children?: unknown[] }> }): number {
   return node.children?.reduce((total, child) => total + 1 + layerCount(child), 0) ?? 0;
+}
+
+function layerCollapseKey(root: { id: NodeId; design?: { name?: string } }) {
+  const name = root.design?.name?.trim().toLowerCase();
+  return name ? `name:${name}` : `id:${root.id}`;
 }
 
 function shortPathLabel(path: string) {
@@ -503,8 +535,12 @@ export function LeftPanel({
   const addToken = useDocumentStore((state) => state.addToken);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
   const setArmedComponent = useStudioStore((state) => state.setArmedComponent);
-  const [collapsedLayerRoots, setCollapsedLayerRoots] = useState<Record<NodeId, boolean>>({});
-  const [collapsedRepoFlows, setCollapsedRepoFlows] = useState<Record<string, boolean>>({});
+  const [collapsedLayerRoots, setCollapsedLayerRoots] = useState<Record<string, boolean>>(
+    () => readLeftPanelCollapseState().layers,
+  );
+  const [collapsedRepoFlows, setCollapsedRepoFlows] = useState<Record<string, boolean>>(
+    () => readLeftPanelCollapseState().repoFlows,
+  );
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -534,6 +570,13 @@ export function LeftPanel({
     canDeleteLayer &&
     selectedNode?.type !== "ComponentInstance";
   const componentList = Object.values(components);
+
+  useEffect(() => {
+    writeLeftPanelCollapseState({
+      layers: collapsedLayerRoots,
+      repoFlows: collapsedRepoFlows,
+    });
+  }, [collapsedLayerRoots, collapsedRepoFlows]);
 
   function createComponent() {
     if (!focusedRoot || !selectedId || !selectedNode) return;
@@ -576,7 +619,8 @@ export function LeftPanel({
   }
 
   function layerAccordion(root: typeof rootList[number]) {
-    const collapsed = collapsedLayerRoots[root.id] ?? false;
+    const collapseKey = layerCollapseKey(root);
+    const collapsed = collapsedLayerRoots[collapseKey] ?? false;
     const count = layerCount(root);
     return (
       <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
@@ -585,7 +629,7 @@ export function LeftPanel({
           onClick={() => {
             setCollapsedLayerRoots((current) => ({
               ...current,
-              [root.id]: !collapsed,
+              [collapseKey]: !collapsed,
             }));
           }}
           aria-expanded={!collapsed}
@@ -679,8 +723,14 @@ export function LeftPanel({
       root,
       label: root.design?.name ?? `Screen ${index + 1}`,
       active: root.id === focusedRoot?.id && workspace === "Screen",
-      gitCode: undefined as string | undefined,
-      gitTitle: undefined as string | undefined,
+      gitCode:
+        root.id === focusedRoot?.id && workspace === "Screen" && !activeRepoScreen
+          ? sidecarGitCode
+          : undefined,
+      gitTitle:
+        root.id === focusedRoot?.id && workspace === "Screen" && !activeRepoScreen
+          ? sidecarPath
+          : undefined,
     }));
   const repoScreenEntries = repoScreens.map((screen) => {
     const gitCode = gitCodeForScreen(gitStatus, screen);
@@ -699,7 +749,10 @@ export function LeftPanel({
     screenLabelCounts.set(item.label, (screenLabelCounts.get(item.label) ?? 0) + 1);
   }
   const screenItems = [
-    ...canvasScreenEntries.map((item) => ({ ...item, detail: undefined as string | undefined })),
+    ...canvasScreenEntries.map((item) => ({
+      ...item,
+      detail: item.gitTitle ? shortPathLabel(item.gitTitle) : undefined,
+    })),
     ...repoScreenEntries.map((item) => ({
       ...item,
       detail: screenLabelCounts.get(item.label)! > 1 ? item.screen.path : undefined,

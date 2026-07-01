@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
+  Flag,
   FileCode2,
   FileJson2,
   FolderOpen,
+  Plus,
   Play,
   RefreshCw,
   Redo2,
   Save,
   Trash2,
   Undo2,
+  X,
 } from "lucide-react";
 import {
   Tldraw,
@@ -67,6 +72,18 @@ import {
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
+import {
+  addFlowRoute,
+  flowAvailableScreens,
+  flowRouteScreens,
+  flowScreenKey,
+  flowScreenName,
+  moveFlowRouteToIndex,
+  removeFlowRoute,
+  reorderFlowRoute,
+  resolveFlowRouteIds,
+  type FlowRoutes,
+} from "./flow-model";
 import {
   firstSelectableChild,
   nextLayerSelection,
@@ -160,15 +177,18 @@ type RepoContext = RepoPanelContext;
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
 type FlowDefinition = { id: FlowId; label: string; description?: string };
+type ActiveRepoScreen = { path: string; sidecarPath?: string; rootId: NodeId };
+type LoadedRepoScreens = Record<string, ActiveRepoScreen>;
 
 type FlowManifest = {
   version: 1;
   flows: Array<{
     id: FlowId;
     label: string;
+    description?: string;
     entryRootId?: NodeId;
     entryName?: string;
-    routes: Array<{ rootId: NodeId; name: string }>;
+    routes: Array<{ rootId: NodeId; name: string; screenKey?: string }>;
   }>;
 };
 
@@ -205,7 +225,7 @@ const DEVICE_SAFE_AREA = { top: 64, bottom: 48, side: 16 } as const;
  * A blank full-bleed mobile screen: device-sized, top-aligned column, white,
  * no card border/radius. The starting point for authoring a real screen.
  */
-function createScreenFrame(children: Node[] = []): Node {
+function createScreenFrame(children: Node[] = [], name?: string): Node {
   return createNode("View", {
     style: {
       width: DEVICE_FRAME.width,
@@ -217,6 +237,7 @@ function createScreenFrame(children: Node[] = []): Node {
       paddingBottom: DEVICE_SAFE_AREA.bottom,
       gap: 12,
     },
+    design: name ? { name } : undefined,
     children,
   });
 }
@@ -423,22 +444,13 @@ function flowDescription(flows: FlowDefinition[], id: FlowId) {
   );
 }
 
-function flowScreens(roots: Node[], flow: FlowId): Node[] {
-  if (flow === "onboarding") return roots;
-  const lowered = (root: Node) => (root.design?.name ?? "").toLowerCase();
-  const auth = roots.filter((root) =>
-    /auth|login|sign|create|verify|welcome/.test(lowered(root)),
+function nextScreenName(roots: Iterable<Node>) {
+  const taken = new Set(
+    Array.from(roots, (root) => root.design?.name).filter((name): name is string => !!name),
   );
-  const main = roots.filter((root) => !auth.includes(root));
-  if (flow === "auth") return auth.length ? auth : roots.slice(0, 1);
-  return main.length ? main : roots;
-}
-
-function orderedFlowScreens(screens: Node[], entryRootId?: NodeId): Node[] {
-  if (!entryRootId) return screens;
-  const entry = screens.find((root) => root.id === entryRootId);
-  if (!entry) return screens;
-  return [entry, ...screens.filter((root) => root.id !== entryRootId)];
+  let index = 1;
+  while (taken.has(`Screen ${index}`)) index += 1;
+  return `Screen ${index}`;
 }
 
 function FlowScreenPreview({
@@ -476,10 +488,16 @@ function FlowWorkspace({
   repoFlows,
   activeFlow,
   entryRootId,
+  routeIds,
   onSelectScreen,
   onOpenRepoScreen,
   onEntryRootChange,
+  onAddRoute,
+  onRemoveRoute,
+  onMoveRoute,
+  onMoveRouteToIndex,
   onAddFrame,
+  onRenameFlow,
 }: {
   roots: Node[];
   components: ComponentRegistry;
@@ -487,30 +505,84 @@ function FlowWorkspace({
   repoFlows: RepoFlowPanelItem[];
   activeFlow: FlowId;
   entryRootId?: NodeId;
+  routeIds?: NodeId[];
   onSelectScreen: (rootId: NodeId) => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   onEntryRootChange: (rootId: NodeId) => void;
+  onAddRoute: (rootId: NodeId) => void;
+  onRemoveRoute: (rootId: NodeId) => void;
+  onMoveRoute: (rootId: NodeId, offset: -1 | 1) => void;
+  onMoveRouteToIndex: (rootId: NodeId, targetIndex: number) => void;
   onAddFrame: () => void;
+  onRenameFlow: (flowId: FlowId, label: string) => boolean;
 }) {
   const screens = roots.filter(
     (root) =>
       !useDocumentStore.getState().editingComponentId ||
       root.id !== useDocumentStore.getState().editingComponentId,
   );
-  const routeScreens = orderedFlowScreens(flowScreens(screens, activeFlow), entryRootId);
-  const entryScreen = routeScreens[0];
+  const routeScreens = flowRouteScreens(screens, activeFlow, routeIds);
+  const availableScreens = flowAvailableScreens(screens, activeFlow, routeIds);
+  const entryScreen =
+    (entryRootId && routeScreens.find((root) => root.id === entryRootId)) ?? routeScreens[0];
   const screenLabels = new Map(
-    screens.map((root, index) => [root.id, root.design?.name ?? `Screen ${index + 1}`]),
+    screens.map((root, index) => [root.id, flowScreenName(root, index)]),
   );
   const labelFor = (root: Node, fallbackIndex: number) =>
-    screenLabels.get(root.id) ?? root.design?.name ?? `Screen ${fallbackIndex + 1}`;
+    screenLabels.get(root.id) ?? flowScreenName(root, fallbackIndex);
   const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
   const flowViewportRef = useRef<HTMLDivElement | null>(null);
+  const [draggedRouteId, setDraggedRouteId] = useState<NodeId | null>(null);
   const repoFlow = repoFlows.find((flow) => flow.id === activeFlow);
+  const activeFlowDefinition = flows.find((flow) => flow.id === activeFlow);
+  const activeFlowLabel = activeFlowDefinition?.label ?? flowLabel(flows, activeFlow);
+  const [flowNameDraft, setFlowNameDraft] = useState(activeFlowLabel);
+  const skipNextFlowNameCommitRef = useRef(false);
 
   useEffect(() => {
     if (flowViewportRef.current) flowViewportRef.current.scrollLeft = 0;
-  }, [activeFlow, entryRootId]);
+  }, [activeFlow, entryRootId, routeIds]);
+
+  useEffect(() => {
+    setFlowNameDraft(activeFlowLabel);
+  }, [activeFlow, activeFlowLabel]);
+
+  const resetFlowNameDraft = () => setFlowNameDraft(activeFlowLabel);
+
+  const commitFlowNameDraft = () => {
+    if (skipNextFlowNameCommitRef.current) {
+      skipNextFlowNameCommitRef.current = false;
+      return;
+    }
+    const nextLabel = flowNameDraft.trim();
+    if (!nextLabel || nextLabel === activeFlowLabel) {
+      resetFlowNameDraft();
+      return;
+    }
+    if (!onRenameFlow(activeFlow, nextLabel)) resetFlowNameDraft();
+  };
+
+  const dragProps = (rootId: NodeId, index: number) => ({
+    draggable: true,
+    onDragStart: (event: React.DragEvent) => {
+      setDraggedRouteId(rootId);
+      event.dataTransfer.effectAllowed = "move";
+    },
+    onDragOver: (event: React.DragEvent) => {
+      if (draggedRouteId && draggedRouteId !== rootId) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }
+    },
+    onDrop: (event: React.DragEvent) => {
+      event.preventDefault();
+      if (draggedRouteId && draggedRouteId !== rootId) {
+        onMoveRouteToIndex(draggedRouteId, index);
+      }
+      setDraggedRouteId(null);
+    },
+    onDragEnd: () => setDraggedRouteId(null),
+  });
 
   if (repoFlow) {
     const entry = repoFlow.screens[0];
@@ -525,7 +597,7 @@ function FlowWorkspace({
           </div>
           {entry && (
             <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-              Entry <span className="font-medium text-ink">{displayScreenName(entry)}</span>
+              Start <span className="font-medium text-ink">{displayScreenName(entry)}</span>
             </div>
           )}
         </div>
@@ -545,7 +617,7 @@ function FlowWorkspace({
                       <span>{displayScreenName(screen)}</span>
                       {index === 0 && (
                         <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                          Entry
+                          Start
                         </span>
                       )}
                     </div>
@@ -609,15 +681,34 @@ function FlowWorkspace({
   return (
     <div className="studio-chrome flex h-full flex-col bg-canvas">
       <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold text-ink">{flowLabel(flows, activeFlow)}</span>
+        <div className="flex min-w-0 flex-col">
+          <TextField
+            aria-label="Flow name"
+            value={flowNameDraft}
+            onChange={setFlowNameDraft}
+            onBlur={commitFlowNameDraft}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") {
+                skipNextFlowNameCommitRef.current = true;
+                resetFlowNameDraft();
+                event.currentTarget.blur();
+              }
+            }}
+            className="h-7 max-w-64 border-transparent bg-transparent px-2xs text-sm font-semibold text-ink shadow-none hover:border-line hover:bg-raised focus-visible:border-accent-line focus-visible:bg-chrome-2"
+          />
           <span className="text-xs text-ink-faint">{flowDescription(flows, activeFlow)}</span>
         </div>
         {entryScreen && (
           <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-            Entry <span className="font-medium text-ink">{entryLabel}</span>
+            Start <span className="font-medium text-ink">{entryLabel}</span>
           </div>
         )}
+        <div className="rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
+          Routes <span className="font-medium tabular-nums text-ink">{routeScreens.length}</span>
+        </div>
         <div className="ml-auto flex items-center gap-xs">
           <IconButton title="Add screen" onClick={onAddFrame}>
             <PlusIcon />
@@ -629,7 +720,14 @@ function FlowWorkspace({
           <div className="overflow-auto p-2xl">
             <div className="flex min-w-max items-start gap-2xl">
               {routeScreens.map((root, index) => (
-                <div key={root.id} className="relative flex flex-col items-center gap-sm">
+                <div
+                  key={root.id}
+                  {...dragProps(root.id, index)}
+                  className={cn(
+                    "relative flex cursor-grab flex-col items-center gap-sm rounded-sm p-2xs active:cursor-grabbing",
+                    draggedRouteId && draggedRouteId !== root.id && "outline outline-1 outline-accent-line",
+                  )}
+                >
                   {index > 0 && (
                     <div
                       className="absolute -left-2xl top-28 h-px w-2xl bg-accent-line"
@@ -640,7 +738,7 @@ function FlowWorkspace({
                     <span>{labelFor(root, index)}</span>
                     {root.id === entryScreen?.id && (
                       <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                        Entry
+                        Start
                       </span>
                     )}
                   </div>
@@ -651,11 +749,58 @@ function FlowWorkspace({
                   >
                     <FlowScreenPreview root={root} components={components} />
                   </button>
+                  <div className="flex h-7 items-center gap-2xs">
+                    <button
+                      type="button"
+                      onClick={() => onEntryRootChange(root.id)}
+                      disabled={root.id === entryScreen?.id}
+                      title={root.id === entryScreen?.id ? "Start screen" : "Set as start"}
+                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-default disabled:bg-accent-soft disabled:text-accent"
+                    >
+                      <Flag size={12} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onMoveRoute(root.id, -1)}
+                      disabled={index === 0}
+                      title="Move earlier"
+                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ArrowLeft size={13} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onMoveRoute(root.id, 1)}
+                      disabled={index === routeScreens.length - 1}
+                      title="Move later"
+                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ArrowRight size={13} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveRoute(root.id)}
+                      title="Remove from flow"
+                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+                    >
+                      <X size={13} aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
               ))}
               {routeScreens.length === 0 && (
-                <div className="rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
-                  Add a screen to start mapping the flow.
+                <div className="flex flex-col items-start gap-sm rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
+                  <span>Add a screen to start mapping the flow.</span>
+                  {availableScreens[0] && (
+                    <button
+                      type="button"
+                      onClick={() => onAddRoute(availableScreens[0].id)}
+                      className="inline-flex h-7 items-center gap-xs rounded-sm border border-line bg-raised px-sm text-xs font-medium text-ink-dim transition-colors hover:bg-chrome-2 hover:text-ink"
+                    >
+                      <Plus size={12} aria-hidden="true" />
+                      Add {labelFor(availableScreens[0], 0)}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -665,17 +810,17 @@ function FlowWorkspace({
               <div>
                 <div className="eyebrow">Navigator</div>
                 <div className="mt-xs text-sm font-semibold text-ink">
-                  Prototype route graph
+                  Route order ({routeScreens.length})
                 </div>
                 <p className="m-0 mt-xs text-xs text-ink-faint">
-                  Route order follows the selected entrypoint. Router adapters can map this
-                  graph to React Navigation, Expo Router, or a custom stack later.
+                  Add screens to this flow and arrange the sequence. Start marks the first
+                  screen a runtime adapter should open.
                 </p>
               </div>
               {entryScreen && (
                 <div className="rounded-sm bg-raised p-sm">
                   <div className="text-2xs font-semibold uppercase tracking-[0.08em] text-ink-faint">
-                    Entry point
+                    Start screen
                   </div>
                   <div className="mt-xs truncate text-sm font-medium text-ink">
                     {entryLabel}
@@ -686,7 +831,11 @@ function FlowWorkspace({
                 {routeScreens.map((root, index) => (
                   <div
                     key={root.id}
-                    className="flex h-8 items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+                    {...dragProps(root.id, index)}
+                    className={cn(
+                      "flex h-8 cursor-grab items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink active:cursor-grabbing",
+                      draggedRouteId && draggedRouteId !== root.id && "ring-1 ring-accent-line",
+                    )}
                   >
                     <button
                       type="button"
@@ -702,7 +851,7 @@ function FlowWorkspace({
                     </button>
                     {root.id === entryScreen?.id ? (
                       <span className="shrink-0 text-2xs font-semibold text-accent">
-                        Entry
+                        Start
                       </span>
                     ) : (
                       <button
@@ -710,13 +859,67 @@ function FlowWorkspace({
                         onClick={() => onEntryRootChange(root.id)}
                         className="shrink-0 rounded-pill px-xs py-px text-2xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
                       >
-                        Set entry
+                        Set start
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => onMoveRoute(root.id, -1)}
+                      disabled={index === 0}
+                      title="Move earlier"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ArrowLeft size={12} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onMoveRoute(root.id, 1)}
+                      disabled={index === routeScreens.length - 1}
+                      title="Move later"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ArrowRight size={12} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveRoute(root.id)}
+                      title="Remove from flow"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
+                    >
+                      <X size={12} aria-hidden="true" />
+                    </button>
                   </div>
                 ))}
                 {routeScreens.length === 0 && (
                   <p className="m-0 text-xs text-ink-faint">No screens in this flow yet.</p>
+                )}
+              </div>
+              <div className="flex flex-col gap-xs">
+                <div className="eyebrow">Available Screens</div>
+                {availableScreens.map((root, index) => (
+                  <div
+                    key={root.id}
+                    className="flex h-8 items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onSelectScreen(root.id)}
+                      className="min-w-0 flex-1 truncate text-left"
+                    >
+                      {labelFor(root, index)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onAddRoute(root.id)}
+                      title={`Add ${labelFor(root, index)} to flow`}
+                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
+                    >
+                      <Plus size={12} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+                {availableScreens.length === 0 && (
+                  <p className="m-0 text-xs text-ink-faint">All screens are in this flow.</p>
                 )}
               </div>
             </div>
@@ -1155,6 +1358,7 @@ export default function App() {
   const managedDocumentRef = useRef(false);
   const syncRootIdRef = useRef<NodeId | null>(null);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
+  const pendingFlowManifestRef = useRef<FlowManifest | null>(null);
 
   const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
   const [inspectorTab, setInspectorTab] = useState("Design");
@@ -1162,6 +1366,7 @@ export default function App() {
   const [flows, setFlows] = useState<FlowDefinition[]>(DEFAULT_FLOWS);
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
   const [flowEntrypoints, setFlowEntrypoints] = useState<Partial<Record<FlowId, NodeId>>>({});
+  const [flowRoutes, setFlowRoutes] = useState<FlowRoutes>({});
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
@@ -1179,6 +1384,8 @@ export default function App() {
   const [repoError, setRepoError] = useState<string | null>(null);
   const [repoBusy, setRepoBusy] = useState(false);
   const [repoContext, setRepoContext] = useState<RepoContext | null>(null);
+  const [activeRepoScreen, setActiveRepoScreen] = useState<ActiveRepoScreen | null>(null);
+  const [loadedRepoScreens, setLoadedRepoScreens] = useState<LoadedRepoScreens>({});
   const [canvasCanUndo, setCanvasCanUndo] = useState(false);
   const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
@@ -1204,9 +1411,9 @@ export default function App() {
     return flows.map((flow) => ({
       id: flow.id,
       label: flow.label,
-      screenCount: flowScreens(screenRoots, flow.id).length,
+      screenCount: flowRouteScreens(screenRoots, flow.id, flowRoutes[flow.id]).length,
     }));
-  }, [editingComponentId, flows, roots]);
+  }, [editingComponentId, flowRoutes, flows, roots]);
   const repoFlowItems = useMemo(
     () => repoFlowItemsForContext(repoContext),
     [repoContext],
@@ -1221,6 +1428,15 @@ export default function App() {
   const pathSyncSignatureRef = useRef(`${screenName}|${targetPath}`);
   screenNameRef.current = screenName;
   targetPathRef.current = targetPath;
+
+  useEffect(() => {
+    if (!activeRepoScreen || roots[activeRepoScreen.rootId]) return;
+    setActiveRepoScreen(null);
+  }, [activeRepoScreen, roots]);
+
+  function markPendingRepoOpen(rootId: NodeId) {
+    pendingFocusRootIdRef.current = rootId;
+  }
 
   const canUndo = useDocumentStore((s) => s.past.length > 0);
   const canRedo = useDocumentStore((s) => s.future.length > 0);
@@ -1321,6 +1537,8 @@ export default function App() {
       else await loadRepoContext();
       skipNextPathSyncRef.current = true;
       managedDocumentRef.current = false;
+      setActiveRepoScreen(null);
+      setLoadedRepoScreens({});
       const target = body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
       setStatus(`Connected ${nextPath} · open a screen to edit ${target}`);
     },
@@ -1389,54 +1607,105 @@ export default function App() {
     }
   }, [applyConnectedRepo, repoDraft]);
 
-  const loadFlowManifest = useCallback(async () => {
-    try {
-      const res = await fetch("/api/flows");
-      const body = (await res.json()) as FlowManifest & { error?: string };
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const next: Partial<Record<FlowId, NodeId>> = {};
-      const manifestFlows = Array.isArray(body.flows)
-        ? body.flows
-            .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
-            .map((flow) => ({ id: flow.id, label: flow.label }))
-        : [];
-      for (const flow of body.flows ?? []) {
-        if (flow.entryRootId) next[flow.id] = flow.entryRootId;
-      }
+  const applyFlowManifest = useCallback((body: FlowManifest) => {
+    const next: Partial<Record<FlowId, NodeId>> = {};
+    const nextRoutes: FlowRoutes = {};
+    const state = useDocumentStore.getState();
+    const screenRoots = Object.values(state.roots).filter(
+      (root) => root.id !== state.editingComponentId,
+    );
+    const hasRoutes = body.flows.some(
+      (flow) => Array.isArray(flow.routes) && flow.routes.length > 0,
+    );
+    const manifestFlows = Array.isArray(body.flows)
+      ? body.flows
+          .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
+          .map((flow) => ({
+            id: flow.id,
+            label: flow.label,
+            description: typeof flow.description === "string" ? flow.description : undefined,
+          }))
+      : [];
+    if (hasRoutes && screenRoots.length === 0) {
+      pendingFlowManifestRef.current = body;
       if (manifestFlows.length > 0) {
         setFlows(manifestFlows);
         setActiveFlow((current) =>
           manifestFlows.some((flow) => flow.id === current) ? current : manifestFlows[0].id,
         );
       }
-      setFlowEntrypoints(next);
+      return;
+    }
+    for (const flow of body.flows ?? []) {
+      if (Array.isArray(flow.routes)) {
+        const routeIds = resolveFlowRouteIds(screenRoots, flow.routes);
+        nextRoutes[flow.id] = routeIds;
+        const entryId =
+          (flow.entryRootId && routeIds.find((rootId) => rootId === flow.entryRootId)) ??
+          (flow.entryName
+            ? resolveFlowRouteIds(screenRoots, [{ rootId: flow.entryRootId, name: flow.entryName }])[0]
+            : undefined);
+        if (entryId) next[flow.id] = entryId;
+      } else if (flow.entryRootId) {
+        next[flow.id] = flow.entryRootId;
+      }
+    }
+    pendingFlowManifestRef.current = null;
+    if (manifestFlows.length > 0) {
+      setFlows(manifestFlows);
+      setActiveFlow((current) =>
+        manifestFlows.some((flow) => flow.id === current) ? current : manifestFlows[0].id,
+      );
+    }
+    setFlowEntrypoints(next);
+    setFlowRoutes(nextRoutes);
+  }, []);
+
+  const loadFlowManifest = useCallback(async () => {
+    try {
+      const res = await fetch("/api/flows");
+      const body = (await res.json()) as FlowManifest & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      applyFlowManifest(body);
     } catch {
       // A missing flow manifest is fine; flows start from inferred screen order.
     }
-  }, []);
+  }, [applyFlowManifest]);
+
+  useEffect(() => {
+    if (!pendingFlowManifestRef.current) return;
+    const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+    if (screenRoots.length === 0) return;
+    applyFlowManifest(pendingFlowManifestRef.current);
+  }, [applyFlowManifest, editingComponentId, roots]);
 
   const persistFlowManifest = useCallback(
     async (
       nextFlows: FlowDefinition[] = flows,
       entrypoints: Partial<Record<FlowId, NodeId>> = flowEntrypoints,
+      routesByFlow: FlowRoutes = flowRoutes,
+      screenRootsOverride?: Node[],
     ) => {
-      const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+      const screenRoots =
+        screenRootsOverride ??
+        Object.values(roots).filter((root) => root.id !== editingComponentId);
       const manifest: FlowManifest = {
         version: 1,
         flows: nextFlows.map((flow) => {
-          const routeScreens = orderedFlowScreens(
-            flowScreens(screenRoots, flow.id),
-            entrypoints[flow.id],
-          );
-          const entry = routeScreens[0];
+          const routeScreens = flowRouteScreens(screenRoots, flow.id, routesByFlow[flow.id]);
+          const entry =
+            (entrypoints[flow.id] && routeScreens.find((root) => root.id === entrypoints[flow.id])) ??
+            routeScreens[0];
           return {
             id: flow.id,
             label: flow.label,
+            description: flow.description,
             entryRootId: entry?.id,
             entryName: entry?.design?.name,
             routes: routeScreens.map((root, index) => ({
               rootId: root.id,
-              name: root.design?.name ?? `Screen ${index + 1}`,
+              name: flowScreenName(root, index),
+              screenKey: flowScreenKey(root, index),
             })),
           };
         }),
@@ -1451,7 +1720,7 @@ export default function App() {
       void refreshGitStatus();
       void loadRepoContext();
     },
-    [editingComponentId, flowEntrypoints, flows, loadRepoContext, refreshGitStatus, roots],
+    [editingComponentId, flowEntrypoints, flowRoutes, flows, loadRepoContext, refreshGitStatus, roots],
   );
 
   useEffect(() => {
@@ -1507,11 +1776,13 @@ export default function App() {
 
     const store = useDocumentStore.getState();
     if (Object.keys(store.roots).length === 0) {
-      const seed = createScreenFrame([
-        createNode("Text", { props: { text: "Hello RN Canvas" } }),
-      ]);
+      const seed = createScreenFrame(
+        [createNode("Text", { props: { text: "Hello RN Canvas" } })],
+        nextScreenName(Object.values(store.roots)),
+      );
       skipTokenWriteRef.current = true; // seed load — don't write theme.ts
       skipCodeSyncRef.current = true; // seed load — don't write generated files
+      setActiveRepoScreen(null);
       store.loadRoots({ [seed.id]: seed }, [seed.id]);
     }
     syncShapes(editor);
@@ -1599,14 +1870,91 @@ export default function App() {
   const setFlowEntryRoot = useCallback((rootId: NodeId) => {
     setFlowEntrypoints((current) => {
       const next = { ...current, [activeFlow]: rootId };
-      void persistFlowManifest(flows, next).then(
+      void persistFlowManifest(flows, next, flowRoutes).then(
         () => setStatus("Updated flow entrypoint"),
         (error) =>
           setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
       return next;
     });
-  }, [activeFlow, flows, persistFlowManifest]);
+  }, [activeFlow, flowRoutes, flows, persistFlowManifest]);
+
+  const updateFlowRoutes = useCallback(
+    (
+      updater: (current: NodeId[] | undefined, screens: Node[]) => NodeId[],
+      status: string,
+      entrypointUpdater?: (
+        current: Partial<Record<FlowId, NodeId>>,
+        nextRouteIds: NodeId[],
+      ) => Partial<Record<FlowId, NodeId>>,
+    ) => {
+      const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+      setFlowRoutes((current) => {
+        const nextRouteIds = updater(current[activeFlow], screenRoots);
+        const nextRoutes = { ...current, [activeFlow]: nextRouteIds };
+        const nextEntrypoints = entrypointUpdater
+          ? entrypointUpdater(flowEntrypoints, nextRouteIds)
+          : flowEntrypoints;
+        if (nextEntrypoints !== flowEntrypoints) setFlowEntrypoints(nextEntrypoints);
+        void persistFlowManifest(flows, nextEntrypoints, nextRoutes).then(
+          () => setStatus(status),
+          (error) =>
+            setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+        );
+        return nextRoutes;
+      });
+    },
+    [activeFlow, editingComponentId, flowEntrypoints, flows, persistFlowManifest, roots],
+  );
+
+  const addScreenToFlow = useCallback(
+    (rootId: NodeId) => {
+      updateFlowRoutes(
+        (current, screenRoots) => addFlowRoute(screenRoots, activeFlow, current, rootId),
+        "Added screen to flow",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
+
+  const removeScreenFromFlow = useCallback(
+    (rootId: NodeId) => {
+      updateFlowRoutes(
+        (current, screenRoots) => removeFlowRoute(screenRoots, activeFlow, current, rootId),
+        "Removed screen from flow",
+        (current, nextRouteIds) => {
+          if (current[activeFlow] !== rootId) return current;
+          const next = { ...current };
+          const fallbackEntry = nextRouteIds[0];
+          if (fallbackEntry) next[activeFlow] = fallbackEntry;
+          else delete next[activeFlow];
+          return next;
+        },
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
+
+  const moveScreenInFlow = useCallback(
+    (rootId: NodeId, offset: -1 | 1) => {
+      updateFlowRoutes(
+        (current, screenRoots) => reorderFlowRoute(screenRoots, activeFlow, current, rootId, offset),
+        "Updated flow order",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
+
+  const moveScreenToFlowIndex = useCallback(
+    (rootId: NodeId, targetIndex: number) => {
+      updateFlowRoutes(
+        (current, screenRoots) =>
+          moveFlowRouteToIndex(screenRoots, activeFlow, current, rootId, targetIndex),
+        "Updated flow order",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
 
   const addFlow = useCallback(() => {
     setFlows((current) => {
@@ -1620,7 +1968,9 @@ export default function App() {
         description: "Prototype route order for this screen group.",
       };
       const next = [...current, nextFlow];
-      void persistFlowManifest(next, flowEntrypoints).then(
+      const nextRoutes = { ...flowRoutes, [nextFlow.id]: [] };
+      setFlowRoutes(nextRoutes);
+      void persistFlowManifest(next, flowEntrypoints, nextRoutes).then(
         () => setStatus(`Added ${label}`),
         (error) =>
           setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
@@ -1630,7 +1980,41 @@ export default function App() {
       setWorkspace("Flow");
       return next;
     });
-  }, [flowEntrypoints, persistFlowManifest]);
+  }, [flowEntrypoints, flowRoutes, persistFlowManifest]);
+
+  const renameFlow = useCallback(
+    (flowId: FlowId, label: string) => {
+      const nextLabel = label.trim();
+      if (!nextLabel) {
+        setStatus("Flow name required");
+        return false;
+      }
+      let nextFlows: FlowDefinition[] | null = null;
+      setFlows((current) => {
+        const currentFlow = current.find((flow) => flow.id === flowId);
+        if (!currentFlow || currentFlow.label === nextLabel) return current;
+        const duplicate = current.some(
+          (flow) => flow.id !== flowId && flow.label.toLowerCase() === nextLabel.toLowerCase(),
+        );
+        if (duplicate) {
+          setStatus("Flow name already exists");
+          return current;
+        }
+        nextFlows = current.map((flow) =>
+          flow.id === flowId ? { ...flow, label: nextLabel } : flow,
+        );
+        return nextFlows;
+      });
+      if (!nextFlows) return false;
+      void persistFlowManifest(nextFlows, flowEntrypoints, flowRoutes).then(
+        () => setStatus(`Renamed flow to ${nextLabel}`),
+        (error) =>
+          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+      return true;
+    },
+    [flowEntrypoints, flowRoutes, persistFlowManifest],
+  );
 
   const removeFlow = useCallback(
     (flow: FlowPanelItem) => {
@@ -1639,7 +2023,8 @@ export default function App() {
         return;
       }
       const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
-      const screenCount = flow.screenCount ?? flowScreens(screenRoots, flow.id).length;
+      const screenCount =
+        flow.screenCount ?? flowRouteScreens(screenRoots, flow.id, flowRoutes[flow.id]).length;
       if (screenCount > 1 && pendingRemoveFlowId !== flow.id) {
         setPendingRemoveFlowId(flow.id);
         setStatus(`Confirm removal of ${flow.label}`);
@@ -1647,7 +2032,9 @@ export default function App() {
       }
       const nextFlows = flows.filter((item) => item.id !== flow.id);
       const nextEntrypoints = { ...flowEntrypoints };
+      const nextRoutes = { ...flowRoutes };
       delete nextEntrypoints[flow.id];
+      delete nextRoutes[flow.id];
       const nextActiveFlow = activeFlow === flow.id ? nextFlows[0]?.id : activeFlow;
       if (!nextActiveFlow) {
         setStatus("Keep at least one flow.");
@@ -1655,15 +2042,25 @@ export default function App() {
       }
       setFlows(nextFlows);
       setFlowEntrypoints(nextEntrypoints);
+      setFlowRoutes(nextRoutes);
       setPendingRemoveFlowId(null);
       setActiveFlow(nextActiveFlow);
-      void persistFlowManifest(nextFlows, nextEntrypoints).then(
+      void persistFlowManifest(nextFlows, nextEntrypoints, nextRoutes).then(
         () => setStatus(`Removed ${flow.label}`),
         (error) =>
           setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
     },
-    [activeFlow, editingComponentId, flowEntrypoints, flows, pendingRemoveFlowId, persistFlowManifest, roots],
+    [
+      activeFlow,
+      editingComponentId,
+      flowEntrypoints,
+      flowRoutes,
+      flows,
+      pendingRemoveFlowId,
+      persistFlowManifest,
+      roots,
+    ],
   );
 
   // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
@@ -1976,12 +2373,33 @@ export default function App() {
   }, [roots]);
 
   const addFrame = useCallback(() => {
-    const root = createScreenFrame();
     const store = useDocumentStore.getState();
+    const root = createScreenFrame([], nextScreenName(Object.values(store.roots)));
     pendingFocusRootIdRef.current = root.id;
+    setActiveRepoScreen(null);
     store.addRoot(root);
     store.setSelection([root.id]);
+    return root;
   }, []);
+
+  const addFrameToActiveFlow = useCallback(() => {
+    const root = addFrame();
+    const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
+      (item) => item.id !== useDocumentStore.getState().editingComponentId,
+    );
+    setFlowRoutes((current) => {
+      const nextRoutes = {
+        ...current,
+        [activeFlow]: addFlowRoute(screenRoots, activeFlow, current[activeFlow], root.id),
+      };
+      void persistFlowManifest(flows, flowEntrypoints, nextRoutes, screenRoots).then(
+        () => setStatus("Added screen to flow"),
+        (error) =>
+          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+      return nextRoutes;
+    });
+  }, [activeFlow, addFrame, flowEntrypoints, flows, persistFlowManifest]);
 
   const setCanvasTool = useCallback((tool: CanvasTool) => {
     useStudioStore.getState().setCanvasTool(tool);
@@ -2059,7 +2477,7 @@ export default function App() {
     [loadRepoContext, refreshGitStatus, syncRoot],
   );
 
-  const openSidecar = useCallback(async (path = sidecarPath) => {
+  const openSidecar = useCallback(async (path = sidecarPath, mode: "replace" | "merge" = "replace") => {
     setCodegenBusy(true);
     setCodegenError(null);
     try {
@@ -2076,12 +2494,17 @@ export default function App() {
       skipTokenWriteRef.current = true;
       skipCodeSyncRef.current = true;
       skipNextPathSyncRef.current = true;
-      useDocumentStore.getState().loadRoots(
-        { [opened.root.id]: opened.root },
-        [opened.root.id],
-        opened.components,
-        opened.tokens,
-      );
+      const state = useDocumentStore.getState();
+      const nextRoots =
+        mode === "merge"
+          ? { ...state.roots, [opened.root.id]: opened.root }
+          : { [opened.root.id]: opened.root };
+      const nextComponents =
+        mode === "merge" ? { ...state.components, ...(opened.components ?? {}) } : opened.components;
+      const nextTokens =
+        mode === "merge" ? { ...state.tokens, ...(opened.tokens ?? {}) } : opened.tokens;
+      markPendingRepoOpen(opened.root.id);
+      state.loadRoots(nextRoots, [opened.root.id], nextComponents, nextTokens);
       resetCanvasHistory();
       setScreenName(opened.screenName);
       if (opened.repoPath) {
@@ -2090,6 +2513,15 @@ export default function App() {
       }
       setTargetPath(opened.targetPath);
       setSidecarPath(opened.sidecarPath);
+      const repoScreen = {
+        path: opened.targetPath,
+        sidecarPath: opened.sidecarPath,
+        rootId: opened.root.id,
+      };
+      setActiveRepoScreen(repoScreen);
+      setLoadedRepoScreens((current) =>
+        mode === "merge" ? { ...current, [opened.targetPath]: repoScreen } : { [opened.targetPath]: repoScreen },
+      );
       managedDocumentRef.current = true;
       setCodegenResult(null);
       setActiveArtifactId("screen");
@@ -2104,7 +2536,7 @@ export default function App() {
     }
   }, [loadRepoContext, resetCanvasHistory, sidecarPath]);
 
-  const importSource = useCallback(async (path = targetPath) => {
+  const importSource = useCallback(async (path = targetPath, mode: "replace" | "merge" = "replace") => {
     setCodegenBusy(true);
     setCodegenError(null);
     try {
@@ -2119,10 +2551,13 @@ export default function App() {
       skipTokenWriteRef.current = true; // imported document load — not a token edit
       skipCodeSyncRef.current = true; // imported document load — not a canvas edit
       skipNextPathSyncRef.current = true;
-      useDocumentStore.getState().loadRoots(
-        { [imported.root.id]: imported.root },
-        [imported.root.id],
-      );
+      const state = useDocumentStore.getState();
+      const nextRoots =
+        mode === "merge"
+          ? { ...state.roots, [imported.root.id]: imported.root }
+          : { [imported.root.id]: imported.root };
+      markPendingRepoOpen(imported.root.id);
+      state.loadRoots(nextRoots, [imported.root.id]);
       resetCanvasHistory();
       setScreenName(imported.screenName);
       if (imported.repoPath) {
@@ -2131,6 +2566,15 @@ export default function App() {
       }
       setTargetPath(imported.sourcePath);
       setSidecarPath(imported.sidecarPath);
+      const repoScreen = {
+        path: imported.sourcePath,
+        sidecarPath: imported.sidecarPath,
+        rootId: imported.root.id,
+      };
+      setActiveRepoScreen(repoScreen);
+      setLoadedRepoScreens((current) =>
+        mode === "merge" ? { ...current, [imported.sourcePath]: repoScreen } : { [imported.sourcePath]: repoScreen },
+      );
       managedDocumentRef.current = true;
       setCodegenResult(null);
       setActiveArtifactId("screen");
@@ -2154,10 +2598,10 @@ export default function App() {
     (screen: NonNullable<RepoContext>["screens"][number]) => {
       setWorkspace("Screen");
       if (screen.sidecarPath) {
-        void openSidecar(screen.sidecarPath);
+        void openSidecar(screen.sidecarPath, "merge");
         return;
       }
-      void importSource(screen.path);
+      void importSource(screen.path, "merge");
     },
     [importSource, openSidecar],
   );
@@ -2379,9 +2823,11 @@ export default function App() {
           onDesignSystemViewChange={setActiveDesignSystemView}
           onOpenChanges={openChangesPanel}
           onOpenRepoScreen={openRepoScreen}
+          onFocusCanvasScreen={() => setActiveRepoScreen(null)}
           gitStatus={gitStatus}
-          targetPath={targetPath}
           sidecarPath={sidecarPath}
+          activeRepoScreen={activeRepoScreen}
+          loadedRepoScreens={loadedRepoScreens}
           repoContext={repoContext}
         />
 
@@ -2394,10 +2840,16 @@ export default function App() {
               repoFlows={repoFlowItems}
               activeFlow={activeFlow}
               entryRootId={flowEntrypoints[activeFlow]}
+              routeIds={flowRoutes[activeFlow]}
               onSelectScreen={selectScreenFromWorkspace}
               onOpenRepoScreen={openRepoScreen}
               onEntryRootChange={setFlowEntryRoot}
-              onAddFrame={addFrame}
+              onAddRoute={addScreenToFlow}
+              onRemoveRoute={removeScreenFromFlow}
+              onMoveRoute={moveScreenInFlow}
+              onMoveRouteToIndex={moveScreenToFlowIndex}
+              onAddFrame={addFrameToActiveFlow}
+              onRenameFlow={renameFlow}
             />
           ) : workspace === "Design System" ? (
             <DesignSystemWorkspace

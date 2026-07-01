@@ -8,6 +8,8 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  ChevronDown,
+  ChevronRight,
   Component,
   FileText,
   Frame,
@@ -28,6 +30,7 @@ import {
   ZoomIn,
   type LucideIcon,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   childrenOf,
   findNode,
@@ -61,6 +64,33 @@ type PanelGitStatus =
   | { status: "loading" }
   | { status: "ready"; files: GitFileStatus[]; clean: boolean }
   | { status: "error"; message: string };
+
+const LEFT_PANEL_COLLAPSE_STORAGE_KEY = "rn-canvas:left-panel-collapse";
+
+type LeftPanelCollapseState = {
+  layers: Record<string, boolean>;
+  repoFlows: Record<string, boolean>;
+};
+
+function readLeftPanelCollapseState(): LeftPanelCollapseState {
+  if (typeof window === "undefined") return { layers: {}, repoFlows: {} };
+  try {
+    const raw = window.localStorage.getItem(LEFT_PANEL_COLLAPSE_STORAGE_KEY);
+    if (!raw) return { layers: {}, repoFlows: {} };
+    const parsed = JSON.parse(raw) as Partial<LeftPanelCollapseState>;
+    return {
+      layers: parsed.layers && typeof parsed.layers === "object" ? parsed.layers : {},
+      repoFlows: parsed.repoFlows && typeof parsed.repoFlows === "object" ? parsed.repoFlows : {},
+    };
+  } catch {
+    return { layers: {}, repoFlows: {} };
+  }
+}
+
+function writeLeftPanelCollapseState(state: LeftPanelCollapseState) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LEFT_PANEL_COLLAPSE_STORAGE_KEY, JSON.stringify(state));
+}
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
@@ -135,6 +165,15 @@ function firstGitCodeForScreens(gitStatus: PanelGitStatus, screens: RepoPanelScr
 function firstGitCode(gitStatus: PanelGitStatus): string | undefined {
   if (gitStatus.status !== "ready") return undefined;
   return gitStatus.files.map(gitStatusCode).find(Boolean);
+}
+
+function layerCount(node: { children?: Array<{ children?: unknown[] }> }): number {
+  return node.children?.reduce((total, child) => total + 1 + layerCount(child), 0) ?? 0;
+}
+
+function layerCollapseKey(root: { id: NodeId; design?: { name?: string } }) {
+  const name = root.design?.name?.trim().toLowerCase();
+  return name ? `name:${name}` : `id:${root.id}`;
 }
 
 function shortPathLabel(path: string) {
@@ -455,9 +494,11 @@ export function LeftPanel({
   onDesignSystemViewChange,
   onOpenChanges,
   onOpenRepoScreen = () => {},
+  onFocusCanvasScreen = () => {},
   gitStatus,
-  targetPath,
   sidecarPath,
+  activeRepoScreen,
+  loadedRepoScreens = {},
   repoContext,
 }: {
   workspace: WorkspaceMode;
@@ -474,9 +515,11 @@ export function LeftPanel({
   onDesignSystemViewChange: (view: DesignSystemView) => void;
   onOpenChanges: () => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
+  onFocusCanvasScreen: () => void;
   gitStatus: PanelGitStatus;
-  targetPath: string;
   sidecarPath: string;
+  activeRepoScreen?: { path: string; sidecarPath?: string; rootId: NodeId } | null;
+  loadedRepoScreens?: Record<string, { path: string; sidecarPath?: string; rootId: NodeId }>;
   repoContext?: RepoPanelContext | null;
 }) {
   const roots = useDocumentStore((state) => state.roots);
@@ -492,6 +535,12 @@ export function LeftPanel({
   const addToken = useDocumentStore((state) => state.addToken);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
   const setArmedComponent = useStudioStore((state) => state.setArmedComponent);
+  const [collapsedLayerRoots, setCollapsedLayerRoots] = useState<Record<string, boolean>>(
+    () => readLeftPanelCollapseState().layers,
+  );
+  const [collapsedRepoFlows, setCollapsedRepoFlows] = useState<Record<string, boolean>>(
+    () => readLeftPanelCollapseState().repoFlows,
+  );
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -521,6 +570,13 @@ export function LeftPanel({
     canDeleteLayer &&
     selectedNode?.type !== "ComponentInstance";
   const componentList = Object.values(components);
+
+  useEffect(() => {
+    writeLeftPanelCollapseState({
+      layers: collapsedLayerRoots,
+      repoFlows: collapsedRepoFlows,
+    });
+  }, [collapsedLayerRoots, collapsedRepoFlows]);
 
   function createComponent() {
     if (!focusedRoot || !selectedId || !selectedNode) return;
@@ -563,64 +619,145 @@ export function LeftPanel({
   }
 
   function layerAccordion(root: typeof rootList[number]) {
+    const collapseKey = layerCollapseKey(root);
+    const collapsed = collapsedLayerRoots[collapseKey] ?? false;
+    const count = layerCount(root);
     return (
       <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
-        <div className="eyebrow px-xs pt-2xs">Layers</div>
-        <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
-          <DocumentTree node={root} rootId={root.id} selectedIds={selection} />
-        </div>
-        <div className="flex gap-xs">
-          <PanelAction
-            onClick={() => moveSelected(reverse ? 1 : -1)}
-            disabled={reverse ? !canMoveAfter : !canMoveBefore}
-            title={horizontal ? "Move left" : "Move up"}
-          >
-            {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
-          </PanelAction>
-          <PanelAction
-            onClick={() => moveSelected(reverse ? -1 : 1)}
-            disabled={reverse ? !canMoveBefore : !canMoveAfter}
-            title={horizontal ? "Move right" : "Move down"}
-          >
-            {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
-          </PanelAction>
-          <PanelAction
-            onClick={createComponent}
-            disabled={!canMakeComponent}
-            title="Create component"
-          >
-            <Component size={14} aria-hidden="true" />
-          </PanelAction>
-          <PanelAction
-            onClick={deleteSelected}
-            disabled={!canDeleteLayer}
-            title="Delete layer"
-          >
-            <Trash2 size={14} aria-hidden="true" />
-          </PanelAction>
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setCollapsedLayerRoots((current) => ({
+              ...current,
+              [collapseKey]: !collapsed,
+            }));
+          }}
+          aria-expanded={!collapsed}
+          className="group flex h-7 min-w-0 items-center gap-xs rounded-sm px-xs text-left text-2xs font-semibold uppercase tracking-[0.12em] text-ink-faint transition-colors hover:bg-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line"
+        >
+          {collapsed ? <ChevronRight size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
+          <span className="min-w-0 flex-1 truncate">Layers</span>
+          <span className="tabular-nums">{count}</span>
+        </button>
+        {!collapsed && (
+          <>
+            <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
+              <DocumentTree node={root} rootId={root.id} selectedIds={selection} />
+            </div>
+            <div className="flex gap-xs">
+              <PanelAction
+                onClick={() => moveSelected(reverse ? 1 : -1)}
+                disabled={reverse ? !canMoveAfter : !canMoveBefore}
+                title={horizontal ? "Move left" : "Move up"}
+              >
+                {horizontal ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
+              </PanelAction>
+              <PanelAction
+                onClick={() => moveSelected(reverse ? -1 : 1)}
+                disabled={reverse ? !canMoveBefore : !canMoveAfter}
+                title={horizontal ? "Move right" : "Move down"}
+              >
+                {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
+              </PanelAction>
+              <PanelAction
+                onClick={createComponent}
+                disabled={!canMakeComponent}
+                title="Create component"
+              >
+                <Component size={14} aria-hidden="true" />
+              </PanelAction>
+              <PanelAction
+                onClick={deleteSelected}
+                disabled={!canDeleteLayer}
+                title="Delete layer"
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </PanelAction>
+            </div>
+          </>
+        )}
       </div>
     );
   }
 
   const activeItem = "bg-accent-soft text-accent";
   const rowAction = "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100";
-  const screenGitCode = gitCodeForPath(gitStatus, targetPath) ?? gitCodeForPath(gitStatus, sidecarPath);
   const sidecarGitCode = gitCodeForPath(gitStatus, sidecarPath);
   const themeGitCode = gitCodeForPath(gitStatus, "generated/theme.ts");
   const repoGitCode = firstGitCode(gitStatus);
   const repoScreens = repoContext?.screens ?? [];
   const repoAssets = repoContext?.assets ?? [];
-  function isActiveRepoScreen(screen: RepoPanelScreen) {
-    return screen.path === targetPath || screen.sidecarPath === sidecarPath;
+  function loadedRootIdForRepoScreen(screen: RepoPanelScreen) {
+    return loadedRepoScreens[screen.path]?.rootId;
   }
 
-  const activeRepoScreen = repoScreens.find(isActiveRepoScreen);
-  const repoScreenCandidates = repoScreens;
+  function isActiveRepoScreen(screen: RepoPanelScreen) {
+    const loadedRootId = loadedRootIdForRepoScreen(screen);
+    return (
+      workspace === "Screen" &&
+      !!activeRepoScreen &&
+      (screen.path === activeRepoScreen.path ||
+        (!!screen.sidecarPath && screen.sidecarPath === activeRepoScreen.sidecarPath) ||
+        (!!loadedRootId && loadedRootId === activeRepoScreen.rootId))
+    );
+  }
+
+  const activeRepoScreenItem = repoScreens.find(isActiveRepoScreen);
   const repoFlowGroups = repoFlowItemsForContext(repoContext);
   const visibleAssets = repoAssets.slice(0, 4);
+  const activeRepoRootById = activeRepoScreen
+    ? rootList.find((root) => root.id === activeRepoScreen.rootId)
+    : undefined;
+  const loadedRepoRootIds = new Set(
+    repoScreens.flatMap((screen) => {
+      const loaded = loadedRepoScreens[screen.path];
+      return loaded ? [loaded.rootId] : [];
+    }),
+  );
   const canvasScreens = rootList.filter((root) => root.id !== editingComponentId);
-  const canvasOnlyScreens = activeRepoScreen ? [] : canvasScreens;
+  const canvasScreenEntries = canvasScreens
+    .filter((root) => !loadedRepoRootIds.has(root.id))
+    .map((root, index) => ({
+      kind: "canvas" as const,
+      id: `canvas:${root.id}`,
+      root,
+      label: root.design?.name ?? `Screen ${index + 1}`,
+      active: root.id === focusedRoot?.id && workspace === "Screen",
+      gitCode:
+        root.id === focusedRoot?.id && workspace === "Screen" && !activeRepoScreen
+          ? sidecarGitCode
+          : undefined,
+      gitTitle:
+        root.id === focusedRoot?.id && workspace === "Screen" && !activeRepoScreen
+          ? sidecarPath
+          : undefined,
+    }));
+  const repoScreenEntries = repoScreens.map((screen) => {
+    const gitCode = gitCodeForScreen(gitStatus, screen);
+    return {
+      kind: "repo" as const,
+      id: `repo:${screen.path}`,
+      screen,
+      label: displayScreenName(screen),
+      active: isActiveRepoScreen(screen),
+      gitCode,
+      gitTitle: screen.path,
+    };
+  });
+  const screenLabelCounts = new Map<string, number>();
+  for (const item of [...canvasScreenEntries, ...repoScreenEntries]) {
+    screenLabelCounts.set(item.label, (screenLabelCounts.get(item.label) ?? 0) + 1);
+  }
+  const screenItems = [
+    ...canvasScreenEntries.map((item) => ({
+      ...item,
+      detail: item.gitTitle ? shortPathLabel(item.gitTitle) : undefined,
+    })),
+    ...repoScreenEntries.map((item) => ({
+      ...item,
+      detail: screenLabelCounts.get(item.label)! > 1 ? item.screen.path : undefined,
+    })),
+  ];
   const changedFiles = gitStatus.status === "ready" ? gitStatus.files : [];
   const flowItems = flows.map((flow, index) => ({
     ...flow,
@@ -719,98 +856,115 @@ export function LeftPanel({
                 <GitBadge code={flow.gitCode} title={sidecarPath} />
             </PanelRow>
           ))}
-          {repoFlowGroups.map((flow) => (
-            <div key={flow.id} className="flex flex-col gap-xs">
-              <PanelRow
-                icon={Route}
-                onClick={() => openFlow(flow.id)}
-                active={flow.screens.some(isActiveRepoScreen)}
-                title={`Show ${flow.name} flow`}
-              >
-                <span className="min-w-0 flex-1 truncate">{flow.name}</span>
-                <span className="text-2xs tabular-nums text-ink-faint">{flow.screens.length}</span>
-                <GitBadge code={firstGitCodeForScreens(gitStatus, flow.screens)} title={`${flow.name} has changes`} />
-              </PanelRow>
-              <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
-                {flow.screens.map((screen) => {
-                  const gitCode = gitCodeForScreen(gitStatus, screen);
-                  return (
-                    <div key={`${flow.id}:${screen.path}`} className="flex flex-col gap-xs">
-                      <PanelRow
-                        icon={FileText}
-                        onClick={() => onOpenRepoScreen(screen)}
-                        active={isActiveRepoScreen(screen)}
-                        title={`Open ${screen.path}`}
-                        className="text-xs"
-                      >
-                        <span className="min-w-0 flex-1 truncate">{displayScreenName(screen)}</span>
-                        <GitBadge code={gitCode} title={screen.path} />
-                      </PanelRow>
-                    </div>
-                  );
-                })}
+          {repoFlowGroups.map((flow) => {
+            const collapsed = collapsedRepoFlows[flow.id] ?? false;
+            const hasActiveScreen = flow.screens.some(isActiveRepoScreen);
+            return (
+              <div key={flow.id} className="flex flex-col gap-xs">
+                <PanelRow
+                  icon={Route}
+                  onClick={() => openFlow(flow.id)}
+                  active={hasActiveScreen}
+                  title={`Show ${flow.name} flow`}
+                  action={(
+                    <PanelAction
+                      onClick={() => {
+                        setCollapsedRepoFlows((current) => ({
+                          ...current,
+                          [flow.id]: !collapsed,
+                        }));
+                      }}
+                      aria-expanded={!collapsed}
+                      title={collapsed ? `Expand ${flow.name}` : `Collapse ${flow.name}`}
+                    >
+                      {collapsed ? <ChevronRight size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+                    </PanelAction>
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{flow.name}</span>
+                  <span className="text-2xs tabular-nums text-ink-faint">{flow.screens.length}</span>
+                  <GitBadge code={firstGitCodeForScreens(gitStatus, flow.screens)} title={`${flow.name} has changes`} />
+                </PanelRow>
+                {!collapsed && (
+                  <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
+                    {flow.screens.map((screen) => {
+                      const gitCode = gitCodeForScreen(gitStatus, screen);
+                      return (
+                        <div key={`${flow.id}:${screen.path}`} className="flex flex-col gap-xs">
+                          <PanelRow
+                            icon={FileText}
+                            onClick={() => onOpenRepoScreen(screen)}
+                            active={isActiveRepoScreen(screen)}
+                            title={`Open ${screen.path}`}
+                            className="text-xs"
+                          >
+                            <span className="min-w-0 flex-1 truncate">{displayScreenName(screen)}</span>
+                            <GitBadge code={gitCode} title={screen.path} />
+                          </PanelRow>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </PanelSection>
 
         <PanelSection
           title="Screens"
-          count={canvasOnlyScreens.length + repoScreenCandidates.length}
+          count={screenItems.length}
           action={(
             <PanelAction onClick={onAddFrame} title="Add screen">
               <Plus size={16} aria-hidden="true" />
             </PanelAction>
           )}
         >
-          {canvasOnlyScreens.map((root, index) => {
-            const active = root.id === focusedRoot?.id && workspace === "Screen";
-            const locked = !!root.design?.locked;
+          {screenItems.map((item) => {
+            const locked = item.kind === "canvas" && !!item.root.design?.locked;
+            const repoLayerRoot = item.kind === "repo"
+              ? rootList.find((root) => root.id === loadedRootIdForRepoScreen(item.screen)) ?? activeRepoRootById
+              : undefined;
             return (
-              <div key={root.id} className="flex flex-col gap-xs">
-                <PanelRow
-                  icon={Square}
-                  disabled={locked}
-                  onClick={() => {
-                    setSelection([root.id]);
-                    onWorkspaceChange("Screen");
-                  }}
-                  active={active}
-                  className={locked ? "cursor-not-allowed opacity-50" : undefined}
-                  action={(
-                    <PanelAction
-                      disabled={locked}
-                      onClick={() => deleteScreen(root.id)}
-                      title="Delete screen"
-                      className={rowAction}
-                    >
-                      <Trash2 size={14} aria-hidden="true" />
-                    </PanelAction>
-                  )}
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {root.design?.name ?? `Screen ${index + 1}`}
-                  </span>
-                  <GitBadge code={screenGitCode} title={`${screenGitCode ?? ""} ${targetPath}`} />
-                </PanelRow>
-                {root.id === focusedRoot?.id && layerAccordion(root)}
-              </div>
-            );
-          })}
-          {repoScreenCandidates.map((screen) => {
-            const gitCode = gitCodeForScreen(gitStatus, screen);
-            return (
-              <div key={screen.path} className="flex flex-col gap-xs">
+              <div key={item.id} className="flex flex-col gap-xs">
                 <PanelRow
                   icon={FileText}
-                  onClick={() => onOpenRepoScreen(screen)}
-                  active={isActiveRepoScreen(screen)}
-                  title={`Open ${screen.path}`}
+                  disabled={locked}
+                  onClick={() => {
+                    if (item.kind === "canvas") {
+                      onFocusCanvasScreen();
+                      setSelection([item.root.id]);
+                      onWorkspaceChange("Screen");
+                    } else {
+                      onOpenRepoScreen(item.screen);
+                    }
+                  }}
+                  active={item.active}
+                  title={item.kind === "repo" ? `Open ${item.screen.path}` : undefined}
+                  className={locked ? "cursor-not-allowed opacity-50" : undefined}
+                  action={
+                    item.kind === "canvas" ? (
+                      <PanelAction
+                        disabled={locked}
+                        onClick={() => deleteScreen(item.root.id)}
+                        title="Delete screen"
+                        className={rowAction}
+                      >
+                        <Trash2 size={14} aria-hidden="true" />
+                      </PanelAction>
+                    ) : undefined
+                  }
                 >
-                  <span className="min-w-0 flex-1 truncate">{displayScreenName(screen)}</span>
-                  <GitBadge code={gitCode} title={screen.path} />
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  {item.detail && (
+                    <span className="min-w-0 max-w-28 truncate text-2xs text-ink-faint">
+                      {item.detail}
+                    </span>
+                  )}
+                  <GitBadge code={item.gitCode} title={item.gitTitle} />
                 </PanelRow>
-                {isActiveRepoScreen(screen) && focusedRoot && layerAccordion(focusedRoot)}
+                {item.kind === "canvas" && item.root.id === focusedRoot?.id && layerAccordion(item.root)}
+                {item.kind === "repo" && item.active && repoLayerRoot && layerAccordion(repoLayerRoot)}
               </div>
             );
           })}

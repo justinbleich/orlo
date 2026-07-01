@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "screenName": "AccountSettings",
+  "root": {
+    "id": "settings-root",
+    "props": {},
+    "style": {
+      "width": 390,
+      "height": 844,
+      "backgroundColor": "#F7F8FB",
+      "flexDirection": "column",
+      "padding": 28,
+      "paddingTop": 72,
+      "gap": 16
+    },
+    "type": "View",
+    "children": [
+      {
+        "id": "settings-title",
+        "props": { "text": "Account Settings" },
+        "style": { "fontFamily": "Inter", "fontSize": 28, "fontWeight": "700", "color": "#111827" },
+        "type": "Text"
+      },
+      {
+        "id": "settings-copy",
+        "props": { "text": "Confirm profile, notifications, and billing preferences." },
+        "style": { "fontFamily": "Inter", "fontSize": 16, "lineHeight": 22, "color": "#667085" },
+        "type": "Text"
+      }
+    ],
+    "design": { "name": "Account Settings" }
+  }
+}

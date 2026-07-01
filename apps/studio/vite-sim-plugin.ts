@@ -3,7 +3,7 @@ import type { ComponentRegistry, Node, TokenRegistry } from "@rn-canvas/document
 import { execFile } from "node:child_process";
 import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -23,6 +23,7 @@ import {
 const execFileAsync = promisify(execFile);
 const pluginDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(pluginDir, "../..");
+const demoRepoRoot = join(repoRoot, "examples", "studio-demo");
 let activeRepoRoot = repoRoot;
 
 type CodegenRequest = {
@@ -295,11 +296,26 @@ async function parseExternalSource(sourcePath: string) {
 
 async function readGitStatus() {
   const root = activeRepoRoot;
-  const { stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "-b", "-uall"], {
+  const { stdout: gitRootStdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
     cwd: root,
     maxBuffer: 1024 * 1024,
   });
-  return parseGitStatus(root, stdout);
+  const gitRoot = gitRootStdout.trim();
+  const { stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "-b", "-uall"], {
+    cwd: gitRoot,
+    maxBuffer: 1024 * 1024,
+  });
+  const status = parseGitStatus(root, stdout);
+  if (resolve(gitRoot) === resolve(root)) return status;
+
+  const rootPrefix = relative(gitRoot, root).split(sep).join("/");
+  const files = status.files
+    .filter((file) => file.path === rootPrefix || file.path.startsWith(`${rootPrefix}/`))
+    .map((file) => ({
+      ...file,
+      path: file.path === rootPrefix ? basename(root) : file.path.slice(rootPrefix.length + 1),
+    }));
+  return { ...status, clean: files.length === 0, files };
 }
 
 async function readDesignSession(root: string): Promise<RepoDesignSession> {
@@ -352,6 +368,12 @@ async function ensureStudioBranch(root: string) {
 async function connectRepoRoot(path: string) {
   activeRepoRoot = await resolveRepoRoot(path);
   await ensureStudioBranch(activeRepoRoot);
+  return activeRepoRoot;
+}
+
+async function connectDemoRepoRoot() {
+  await access(demoRepoRoot);
+  activeRepoRoot = demoRepoRoot;
   return activeRepoRoot;
 }
 
@@ -861,6 +883,27 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Folder selection failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/repo/demo", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          await connectDemoRepoRoot();
+          sendJson(res, 200, {
+            repoPath: activeRepoRoot,
+            defaultRepoPath: repoRoot,
+            demoRepoPath: demoRepoRoot,
+            git: await readGitStatus(),
+            context: await readRepoContext(),
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Demo repository connection failed",
           });
         }
       });

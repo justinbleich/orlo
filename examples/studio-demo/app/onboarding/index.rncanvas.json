@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "screenName": "OnboardingStart",
+  "root": {
+    "id": "onboarding-root",
+    "props": {},
+    "style": {
+      "width": 390,
+      "height": 844,
+      "backgroundColor": "#F7F8FB",
+      "flexDirection": "column",
+      "padding": 28,
+      "paddingTop": 72,
+      "gap": 16
+    },
+    "type": "View",
+    "children": [
+      {
+        "id": "onboarding-title",
+        "props": { "text": "Start Strong" },
+        "style": { "fontFamily": "Inter", "fontSize": 30, "fontWeight": "700", "color": "#111827" },
+        "type": "Text"
+      },
+      {
+        "id": "onboarding-copy",
+        "props": { "text": "A guided checklist for the first session." },
+        "style": { "fontFamily": "Inter", "fontSize": 16, "lineHeight": 22, "color": "#667085" },
+        "type": "Text"
+      }
+    ],
+    "design": { "name": "Onboarding Start" }
+  }
+}

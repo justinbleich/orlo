@@ -1607,6 +1607,35 @@ export default function App() {
     }
   }, [applyConnectedRepo, repoDraft]);
 
+  const connectDemoRepo = useCallback(async () => {
+    if (codegenBusyRef.current) {
+      const message = "Wait for the current sync to finish before changing repositories.";
+      setRepoError(message);
+      setStatus(message);
+      return;
+    }
+    if (autoSyncTimerRef.current) {
+      clearTimeout(autoSyncTimerRef.current);
+      autoSyncTimerRef.current = null;
+    }
+    skipNextPathSyncRef.current = true;
+    setSyncState({ status: "idle" });
+    setRepoBusy(true);
+    setRepoError(null);
+    try {
+      const res = await fetch("/api/repo/demo", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      await applyConnectedRepo(body, body.repoPath ?? repoDraft);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Demo repository connection failed";
+      setRepoError(message);
+      setStatus(message);
+    } finally {
+      setRepoBusy(false);
+    }
+  }, [applyConnectedRepo, repoDraft]);
+
   const applyFlowManifest = useCallback((body: FlowManifest) => {
     const next: Partial<Record<FlowId, NodeId>> = {};
     const nextRoutes: FlowRoutes = {};
@@ -2967,13 +2996,22 @@ export default function App() {
                 >
                   <Eyebrow>Code</Eyebrow>
                   <Section title="Repository">
-                    <Button
-                      className="w-full"
-                      disabled={repoBusy || codegenBusy}
-                      onClick={() => void selectRepoFolder()}
-                    >
-                      <FolderOpen size={14} aria-hidden="true" /> Select folder
-                    </Button>
+                    <div className="flex gap-xs">
+                      <Button
+                        className="flex-1"
+                        disabled={repoBusy || codegenBusy}
+                        onClick={() => void connectDemoRepo()}
+                      >
+                        <Play size={14} aria-hidden="true" /> Open demo
+                      </Button>
+                      <Button
+                        className="flex-1"
+                        disabled={repoBusy || codegenBusy}
+                        onClick={() => void selectRepoFolder()}
+                      >
+                        <FolderOpen size={14} aria-hidden="true" /> Select folder
+                      </Button>
+                    </div>
                     <Field label="Connected repo" stacked>
                       <TextField
                         value={repoDraft}

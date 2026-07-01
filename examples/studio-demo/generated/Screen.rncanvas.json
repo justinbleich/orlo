@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "screenName": "Screen",
+  "root": {
+    "id": "16eee1f1-8b6f-4ada-ac3a-af067694cbbb",
+    "props": {},
+    "style": {
+      "width": 390,
+      "height": 844,
+      "backgroundColor": "#ffffff",
+      "flexDirection": "column",
+      "padding": 16,
+      "paddingTop": 64,
+      "paddingBottom": 48,
+      "gap": 12
+    },
+    "type": "View",
+    "children": []
+  }
+}
+

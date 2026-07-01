@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "screenName": "Home",
+  "root": {
+    "id": "home-root",
+    "props": {},
+    "style": {
+      "width": 390,
+      "height": 844,
+      "backgroundColor": "#F7F8FB",
+      "flexDirection": "column",
+      "padding": 32,
+      "paddingTop": 64,
+      "gap": 24
+    },
+    "type": "View",
+    "children": [
+      {
+        "id": "home-title",
+        "props": {
+          "text": "Pulseboard"
+        },
+        "style": {
+          "fontFamily": "Inter",
+          "fontSize": 32,
+          "fontWeight": "700",
+          "color": "#111827"
+        },
+        "type": "Text"
+      },
+      {
+        "id": "home-subtitle",
+        "props": {
+          "text": "A small Expo Router workspace for trying Studio flows, sidecars, tokens, and sync."
+        },
+        "style": {
+          "fontFamily": "Inter",
+          "fontSize": 16,
+          "lineHeight": 22,
+          "color": "#667085"
+        },
+        "type": "Text",
+        "design": {
+          "name": "Demo Subtitle"
+        }
+      },
+      {
+        "id": "activation-card",
+        "props": {},
+        "style": {
+          "backgroundColor": "#FFFFFF",
+          "borderColor": "#DADFE8",
+          "borderRadius": 12,
+          "borderWidth": 1,
+          "padding": 20,
+          "gap": 6
+        },
+        "type": "View",
+        "children": [
+          {
+            "id": "activation-label",
+            "props": {
+              "text": "Activation"
+            },
+            "style": {
+              "fontFamily": "Inter",
+              "fontSize": 13,
+              "fontWeight": "600",
+              "color": "#667085"
+            },
+            "type": "Text"
+          },
+          {
+            "id": "activation-value",
+            "props": {
+              "text": "68%"
+            },
+            "style": {
+              "fontFamily": "Inter",
+              "fontSize": 30,
+              "fontWeight": "800",
+              "color": "#0F8A5F"
+            },
+            "type": "Text"
+          }
+        ]
+      }
+    ],
+    "design": {
+      "name": "Home",
+      "tokens": {
+        "backgroundColor": "color-canvas"
+      }
+    }
+  },
+  "tokens": {
+    "color-canvas": {
+      "id": "color-canvas",
+      "name": "canvas",
+      "category": "color",
+      "value": "#F7F8FB"
+    }
+  }
+}

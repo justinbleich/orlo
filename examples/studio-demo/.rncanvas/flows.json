@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "updatedAt": "2026-06-30T00:00:00.000Z",
+  "flows": [
+    {
+      "id": "activation-review",
+      "label": "Activation Review",
+      "entryRootId": "home-root",
+      "entryName": "Home",
+      "routes": [
+        { "rootId": "home-root", "name": "Home" },
+        { "rootId": "onboarding-root", "name": "Onboarding Start" },
+        { "rootId": "onboarding-details-root", "name": "Checklist Details" }
+      ]
+    },
+    {
+      "id": "account-maintenance",
+      "label": "Account Maintenance",
+      "entryRootId": "settings-root",
+      "entryName": "Settings",
+      "routes": [
+        { "rootId": "settings-root", "name": "Account Settings" }
+      ]
+    }
+  ]
+}

@@ -298,6 +298,18 @@ function gitSummary(status: GitStatus): string {
   return `${status.branch} ${status.files.length} changed`;
 }
 
+function pathLabel(path?: string) {
+  if (!path) return "None";
+  return path.split("/").filter(Boolean).pop() ?? path;
+}
+
+function scopedPathLabel(path?: string, root?: string) {
+  if (!path) return "None";
+  if (!root || path === root) return pathLabel(path);
+  const prefix = root.endsWith("/") ? root : `${root}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : pathLabel(path);
+}
+
 function gitStatusCode(file: GitFileStatus): string {
   const code = `${file.index}${file.workingTree}`;
   if (code === "??") return "U";
@@ -2718,6 +2730,18 @@ export default function App() {
   const syncTone =
     syncState.status === "error" ? "amber" : syncState.status === "syncing" || syncState.status === "scheduled" ? "accent" : "neutral";
   const repoName = repoContext?.repoName ?? "Repository";
+  const workspaceFolderLabel = scopedPathLabel(repoContext?.repoPath ?? repoPath, repoContext?.gitRootPath);
+  const gitRepoLabel = repoContext?.gitRootName ?? pathLabel(gitStatus.status === "ready" ? gitStatus.repoPath : repoPath);
+  const scopedChangeLabel =
+    gitStatus.status === "loading"
+      ? "Checking"
+      : gitStatus.status === "error"
+        ? "Unavailable"
+        : gitStatus.clean
+          ? "Clean"
+          : `${gitStatus.files.length} in workspace`;
+  const branchLabel =
+    gitStatus.status === "ready" ? gitStatus.branch : gitStatus.status === "error" ? "Unavailable" : "Checking";
   const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
   const syncTarget = repoContext?.designSession?.syncTarget;
   const repoSubtitle =
@@ -2995,10 +3019,11 @@ export default function App() {
                   }}
                 >
                   <Eyebrow>Code</Eyebrow>
-                  <Section title="Repository">
+                  <Section title="Workspace">
                     <div className="flex gap-xs">
                       <Button
                         className="flex-1"
+                        variant="primary"
                         disabled={repoBusy || codegenBusy}
                         onClick={() => void connectDemoRepo()}
                       >
@@ -3012,7 +3037,7 @@ export default function App() {
                         <FolderOpen size={14} aria-hidden="true" /> Select folder
                       </Button>
                     </div>
-                    <Field label="Connected repo" stacked>
+                    <Field label="Workspace folder" stacked>
                       <TextField
                         value={repoDraft}
                         onChange={setRepoDraft}
@@ -3030,31 +3055,77 @@ export default function App() {
                         disabled={repoBusy || codegenBusy || !repoDraft.trim()}
                         onClick={() => void connectRepo()}
                       >
-                        Connect path
+                        Open path
                       </Button>
+                    </div>
+                    <div className="flex min-w-0 justify-between gap-sm text-xs">
+                      <span className="text-ink-faint">Folder</span>
+                      <span className="min-w-0 truncate text-ink" title={repoContext?.repoPath ?? repoPath}>
+                        {workspaceFolderLabel}
+                      </span>
+                    </div>
+                    {repoError && (
+                      <p className="m-0 text-xs text-amber">
+                        {repoError}
+                      </p>
+                    )}
+                  </Section>
+                  <Section
+                    title="Version Control"
+                    action={
                       <IconButton
                         title="Refresh Git status"
                         onClick={() => void refreshGitStatus()}
                       >
                         <RefreshCw size={14} aria-hidden="true" />
                       </IconButton>
+                    }
+                  >
+                    <div className="flex min-w-0 justify-between gap-sm text-xs">
+                      <span className="text-ink-faint">Branch</span>
+                      <span className="min-w-0 truncate text-ink" title={branchLabel}>
+                        {branchLabel}
+                      </span>
+                    </div>
+                    <div className="flex min-w-0 justify-between gap-sm text-xs">
+                      <span className="text-ink-faint">Changes</span>
+                      <span className="inline-flex min-w-0 items-center gap-xs text-ink" title={gitLabel}>
+                        {repoGitCode && (
+                          <span
+                            aria-hidden="true"
+                            className="size-1.5 shrink-0 rounded-full bg-accent"
+                          />
+                        )}
+                        <span className="min-w-0 truncate">{scopedChangeLabel}</span>
+                      </span>
+                    </div>
+                    <div className="flex min-w-0 justify-between gap-sm text-xs">
+                      <span className="text-ink-faint">Git repo</span>
+                      <span
+                        className="min-w-0 truncate text-ink"
+                        title={repoContext?.gitRootPath ?? (gitStatus.status === "ready" ? gitStatus.repoPath : repoPath)}
+                      >
+                        {gitRepoLabel}
+                      </span>
                     </div>
                     {repoContext?.designSession && (
-                      <div className="rounded-sm border border-line-soft bg-raised px-sm py-xs text-xs text-ink-dim">
-                        <div className="flex min-w-0 justify-between gap-sm">
-                          <span className="text-ink-faint">Sync target</span>
-                          <span className="min-w-0 truncate text-ink">{repoContext.designSession.syncTarget}</span>
+                      <>
+                        <div className="flex min-w-0 justify-between gap-sm text-xs">
+                          <span className="text-ink-faint">Writes to</span>
+                          <span className="min-w-0 truncate text-ink" title={repoContext.designSession.syncTarget}>
+                            {repoContext.designSession.syncTarget}
+                          </span>
                         </div>
-                        <div className="mt-1 flex min-w-0 justify-between gap-sm">
-                          <span className="text-ink-faint">Editing branch</span>
-                          <span className="min-w-0 truncate">{repoContext.designSession.suggestedBranch}</span>
+                        <div className="flex min-w-0 justify-between gap-sm text-xs">
+                          <span className="text-ink-faint">Suggested branch</span>
+                          <span
+                            className="min-w-0 truncate text-ink-dim"
+                            title={repoContext.designSession.suggestedBranch}
+                          >
+                            {repoContext.designSession.suggestedBranch}
+                          </span>
                         </div>
-                      </div>
-                    )}
-                    {repoError && (
-                      <p className="m-0 text-xs text-amber">
-                        {repoError}
-                      </p>
+                      </>
                     )}
                   </Section>
                   <Section title="Document">

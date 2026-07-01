@@ -108,6 +108,8 @@ type RepoAssetCandidate = {
 type RepoContext = {
   repoPath: string;
   repoName: string;
+  gitRootPath: string;
+  gitRootName: string;
   packageManager: "pnpm" | "yarn" | "npm" | "unknown";
   designSession: RepoDesignSession;
   frameworks: RepoFramework[];
@@ -296,11 +298,7 @@ async function parseExternalSource(sourcePath: string) {
 
 async function readGitStatus() {
   const root = activeRepoRoot;
-  const { stdout: gitRootStdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
-    cwd: root,
-    maxBuffer: 1024 * 1024,
-  });
-  const gitRoot = gitRootStdout.trim();
+  const gitRoot = await resolveGitRoot(root);
   const { stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "-b", "-uall"], {
     cwd: gitRoot,
     maxBuffer: 1024 * 1024,
@@ -316,6 +314,14 @@ async function readGitStatus() {
       path: file.path === rootPrefix ? basename(root) : file.path.slice(rootPrefix.length + 1),
     }));
   return { ...status, clean: files.length === 0, files };
+}
+
+async function resolveGitRoot(root: string) {
+  const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: root,
+    maxBuffer: 1024 * 1024,
+  });
+  return stdout.trim();
 }
 
 async function readDesignSession(root: string): Promise<RepoDesignSession> {
@@ -599,6 +605,7 @@ async function walkRepoFiles(root: string) {
 
 async function readRepoContext(): Promise<RepoContext> {
   const root = activeRepoRoot;
+  const gitRoot = await resolveGitRoot(root);
   const { files, rootEntries, truncated } = await walkRepoFiles(root);
   const dependencies = await readPackageDependencies(root);
   const frameworks: RepoFramework[] = [];
@@ -681,6 +688,8 @@ async function readRepoContext(): Promise<RepoContext> {
   return {
     repoPath: root,
     repoName: basename(root),
+    gitRootPath: gitRoot,
+    gitRootName: basename(gitRoot),
     packageManager: packageManagerFor(rootEntries),
     designSession: await readDesignSession(root),
     frameworks,

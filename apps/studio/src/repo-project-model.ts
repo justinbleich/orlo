@@ -1,6 +1,8 @@
 export type RepoPanelContext = {
   repoPath: string;
   repoName: string;
+  gitRootPath?: string;
+  gitRootName?: string;
   packageManager: string;
   designSession?: {
     mode: "current-branch" | "studio-branch";

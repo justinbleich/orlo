@@ -755,7 +755,7 @@ export function LeftPanel({
     })),
     ...repoScreenEntries.map((item) => ({
       ...item,
-      detail: screenLabelCounts.get(item.label)! > 1 ? item.screen.path : undefined,
+      detail: shortPathLabel(item.screen.path),
     })),
   ];
   const changedFiles = gitStatus.status === "ready" ? gitStatus.files : [];
@@ -899,6 +899,9 @@ export function LeftPanel({
                             className="text-xs"
                           >
                             <span className="min-w-0 flex-1 truncate">{displayScreenName(screen)}</span>
+                            <span className="min-w-0 max-w-28 truncate text-2xs text-ink-faint">
+                              {shortPathLabel(screen.path)}
+                            </span>
                             <GitBadge code={gitCode} title={screen.path} />
                           </PanelRow>
                         </div>

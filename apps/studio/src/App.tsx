@@ -177,6 +177,7 @@ type RepoContext = RepoPanelContext;
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
 type FlowDefinition = { id: FlowId; label: string; description?: string };
 type ActiveRepoScreen = { path: string; sidecarPath?: string; rootId: NodeId };
+type LoadedRepoScreens = Record<string, ActiveRepoScreen>;
 
 type FlowManifest = {
   version: 1;
@@ -1361,6 +1362,7 @@ export default function App() {
   const [repoBusy, setRepoBusy] = useState(false);
   const [repoContext, setRepoContext] = useState<RepoContext | null>(null);
   const [activeRepoScreen, setActiveRepoScreen] = useState<ActiveRepoScreen | null>(null);
+  const [loadedRepoScreens, setLoadedRepoScreens] = useState<LoadedRepoScreens>({});
   const [canvasCanUndo, setCanvasCanUndo] = useState(false);
   const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
@@ -1405,9 +1407,13 @@ export default function App() {
   targetPathRef.current = targetPath;
 
   useEffect(() => {
-    if (!activeRepoScreen || !focusedRootId || focusedRootId === activeRepoScreen.rootId) return;
+    if (!activeRepoScreen || roots[activeRepoScreen.rootId]) return;
     setActiveRepoScreen(null);
-  }, [activeRepoScreen, focusedRootId]);
+  }, [activeRepoScreen, roots]);
+
+  function markPendingRepoOpen(rootId: NodeId) {
+    pendingFocusRootIdRef.current = rootId;
+  }
 
   const canUndo = useDocumentStore((s) => s.past.length > 0);
   const canRedo = useDocumentStore((s) => s.future.length > 0);
@@ -1509,6 +1515,7 @@ export default function App() {
       skipNextPathSyncRef.current = true;
       managedDocumentRef.current = false;
       setActiveRepoScreen(null);
+      setLoadedRepoScreens({});
       const target = body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
       setStatus(`Connected ${nextPath} · open a screen to edit ${target}`);
     },
@@ -2433,7 +2440,7 @@ export default function App() {
     [loadRepoContext, refreshGitStatus, syncRoot],
   );
 
-  const openSidecar = useCallback(async (path = sidecarPath) => {
+  const openSidecar = useCallback(async (path = sidecarPath, mode: "replace" | "merge" = "replace") => {
     setCodegenBusy(true);
     setCodegenError(null);
     try {
@@ -2450,12 +2457,17 @@ export default function App() {
       skipTokenWriteRef.current = true;
       skipCodeSyncRef.current = true;
       skipNextPathSyncRef.current = true;
-      useDocumentStore.getState().loadRoots(
-        { [opened.root.id]: opened.root },
-        [opened.root.id],
-        opened.components,
-        opened.tokens,
-      );
+      const state = useDocumentStore.getState();
+      const nextRoots =
+        mode === "merge"
+          ? { ...state.roots, [opened.root.id]: opened.root }
+          : { [opened.root.id]: opened.root };
+      const nextComponents =
+        mode === "merge" ? { ...state.components, ...(opened.components ?? {}) } : opened.components;
+      const nextTokens =
+        mode === "merge" ? { ...state.tokens, ...(opened.tokens ?? {}) } : opened.tokens;
+      markPendingRepoOpen(opened.root.id);
+      state.loadRoots(nextRoots, [opened.root.id], nextComponents, nextTokens);
       resetCanvasHistory();
       setScreenName(opened.screenName);
       if (opened.repoPath) {
@@ -2464,11 +2476,15 @@ export default function App() {
       }
       setTargetPath(opened.targetPath);
       setSidecarPath(opened.sidecarPath);
-      setActiveRepoScreen({
+      const repoScreen = {
         path: opened.targetPath,
         sidecarPath: opened.sidecarPath,
         rootId: opened.root.id,
-      });
+      };
+      setActiveRepoScreen(repoScreen);
+      setLoadedRepoScreens((current) =>
+        mode === "merge" ? { ...current, [opened.targetPath]: repoScreen } : { [opened.targetPath]: repoScreen },
+      );
       managedDocumentRef.current = true;
       setCodegenResult(null);
       setActiveArtifactId("screen");
@@ -2483,7 +2499,7 @@ export default function App() {
     }
   }, [loadRepoContext, resetCanvasHistory, sidecarPath]);
 
-  const importSource = useCallback(async (path = targetPath) => {
+  const importSource = useCallback(async (path = targetPath, mode: "replace" | "merge" = "replace") => {
     setCodegenBusy(true);
     setCodegenError(null);
     try {
@@ -2498,10 +2514,13 @@ export default function App() {
       skipTokenWriteRef.current = true; // imported document load — not a token edit
       skipCodeSyncRef.current = true; // imported document load — not a canvas edit
       skipNextPathSyncRef.current = true;
-      useDocumentStore.getState().loadRoots(
-        { [imported.root.id]: imported.root },
-        [imported.root.id],
-      );
+      const state = useDocumentStore.getState();
+      const nextRoots =
+        mode === "merge"
+          ? { ...state.roots, [imported.root.id]: imported.root }
+          : { [imported.root.id]: imported.root };
+      markPendingRepoOpen(imported.root.id);
+      state.loadRoots(nextRoots, [imported.root.id]);
       resetCanvasHistory();
       setScreenName(imported.screenName);
       if (imported.repoPath) {
@@ -2510,11 +2529,15 @@ export default function App() {
       }
       setTargetPath(imported.sourcePath);
       setSidecarPath(imported.sidecarPath);
-      setActiveRepoScreen({
+      const repoScreen = {
         path: imported.sourcePath,
         sidecarPath: imported.sidecarPath,
         rootId: imported.root.id,
-      });
+      };
+      setActiveRepoScreen(repoScreen);
+      setLoadedRepoScreens((current) =>
+        mode === "merge" ? { ...current, [imported.sourcePath]: repoScreen } : { [imported.sourcePath]: repoScreen },
+      );
       managedDocumentRef.current = true;
       setCodegenResult(null);
       setActiveArtifactId("screen");
@@ -2538,10 +2561,10 @@ export default function App() {
     (screen: NonNullable<RepoContext>["screens"][number]) => {
       setWorkspace("Screen");
       if (screen.sidecarPath) {
-        void openSidecar(screen.sidecarPath);
+        void openSidecar(screen.sidecarPath, "merge");
         return;
       }
-      void importSource(screen.path);
+      void importSource(screen.path, "merge");
     },
     [importSource, openSidecar],
   );
@@ -2767,6 +2790,7 @@ export default function App() {
           gitStatus={gitStatus}
           sidecarPath={sidecarPath}
           activeRepoScreen={activeRepoScreen}
+          loadedRepoScreens={loadedRepoScreens}
           repoContext={repoContext}
         />
 

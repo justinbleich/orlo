@@ -16,8 +16,12 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import { findRootContaining, useDocumentStore } from "@rn-canvas/document";
 import { Eyebrow } from "./shell";
 import { color } from "./studio-theme";
+import { codeArtifacts } from "./code-artifacts";
+import { pathLabel, scopedPathLabel } from "./repo-project-model";
+import { useWorkspaceStore } from "./workspace-store";
 import {
   Button,
   Field,
@@ -39,42 +43,6 @@ type ChangeRow = {
   status: ChangeStatus;
   added: number;
   removed: number;
-};
-
-export type CodePanelProps = {
-  repoBusy: boolean;
-  codegenBusy: boolean;
-  repoDraft: string;
-  setRepoDraft: (value: string) => void;
-  repoPath: string;
-  repoContext: RepoPanelContext | null;
-  workspaceFolderLabel: string;
-  gitRepoLabel: string;
-  repoError: string | null;
-  onOpenDemo: () => void;
-  onSelectFolder: () => void;
-  onConnectPath: () => void;
-  branchInfo: { current: string; branches: string[] };
-  scopedChangeLabel: string;
-  onSwitchBranch: (branch: string, create: boolean) => void;
-  onCommit: (message: string) => void;
-  onOpenPr: () => void;
-  onForceSync: () => void;
-  sidecarPath: string;
-  setSidecarPath: (value: string) => void;
-  onOpenSidecar: () => void;
-  onImportSource: () => void;
-  screenName: string;
-  setScreenName: (value: string) => void;
-  targetPath: string;
-  setTargetPath: (value: string) => void;
-  canCodegen: boolean;
-  codegenError: string | null;
-  codegenResult: CodegenResult | null;
-  artifacts: CodeArtifact[];
-  activeArtifactId: string;
-  setActiveArtifactId: (id: string) => void;
-  headByPath: Record<string, string>;
 };
 
 function iconForKind(kind: CodeArtifact["kind"]) {
@@ -223,42 +191,65 @@ function DiffLines({ rows, kind }: { rows: DiffRow[]; kind: CodeArtifact["kind"]
   );
 }
 
-export function CodePanel(props: CodePanelProps) {
-  const {
-    repoBusy,
-    codegenBusy,
-    repoDraft,
-    setRepoDraft,
-    repoPath,
-    repoContext,
-    workspaceFolderLabel,
-    gitRepoLabel,
-    repoError,
-    onOpenDemo,
-    onSelectFolder,
-    onConnectPath,
-    branchInfo,
-    scopedChangeLabel,
-    onSwitchBranch,
-    onCommit,
-    onOpenPr,
-    onForceSync,
-    sidecarPath,
-    setSidecarPath,
-    onOpenSidecar,
-    onImportSource,
-    screenName,
-    setScreenName,
-    targetPath,
-    setTargetPath,
-    canCodegen,
-    codegenError,
-    codegenResult,
-    artifacts,
-    activeArtifactId,
-    setActiveArtifactId,
-    headByPath,
-  } = props;
+export function CodePanel() {
+  // The panel subscribes to the workspace store directly — no prop drilling
+  // through the shell; App renders <CodePanel /> and nothing else.
+  const repoBusy = useWorkspaceStore((s) => s.repoBusy);
+  const codegenBusy = useWorkspaceStore((s) => s.codegenBusy);
+  const repoDraft = useWorkspaceStore((s) => s.repoDraft);
+  const setRepoDraft = useWorkspaceStore((s) => s.setRepoDraft);
+  const repoPath = useWorkspaceStore((s) => s.repoPath);
+  const repoContext = useWorkspaceStore((s) => s.repoContext);
+  const repoError = useWorkspaceStore((s) => s.repoError);
+  const branchInfo = useWorkspaceStore((s) => s.branchInfo);
+  const sidecarPath = useWorkspaceStore((s) => s.sidecarPath);
+  const setSidecarPath = useWorkspaceStore((s) => s.setSidecarPath);
+  const screenName = useWorkspaceStore((s) => s.screenName);
+  const setScreenName = useWorkspaceStore((s) => s.setScreenName);
+  const targetPath = useWorkspaceStore((s) => s.targetPath);
+  const setTargetPath = useWorkspaceStore((s) => s.setTargetPath);
+  const codegenError = useWorkspaceStore((s) => s.codegenError);
+  const codegenResult = useWorkspaceStore((s) => s.codegenResult);
+  const activeArtifactId = useWorkspaceStore((s) => s.activeArtifactId);
+  const setActiveArtifactId = useWorkspaceStore((s) => s.setActiveArtifactId);
+  const headByPath = useWorkspaceStore((s) => s.headByPath);
+  const gitStatus = useWorkspaceStore((s) => s.gitStatus);
+  const onOpenDemo = useWorkspaceStore((s) => s.connectDemoRepo);
+  const onSelectFolder = useWorkspaceStore((s) => s.selectRepoFolder);
+  const onConnectPath = useWorkspaceStore((s) => s.connectRepo);
+  const switchBranchAction = useWorkspaceStore((s) => s.switchBranch);
+  const commitAction = useWorkspaceStore((s) => s.commitChanges);
+  const onOpenPr = useWorkspaceStore((s) => s.openPullRequest);
+  const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
+  const openSidecarAction = useWorkspaceStore((s) => s.openSidecar);
+  const importSourceAction = useWorkspaceStore((s) => s.importSource);
+  const canCodegen = useDocumentStore(
+    (s) => !!findRootContaining(Object.values(s.roots), s.selection[0] ?? ""),
+  );
+
+  const onSwitchBranch = (branch: string, create: boolean) =>
+    void switchBranchAction(branch, create);
+  const onCommit = (message: string) => void commitAction(message);
+  const onForceSync = () => void requestCodegen("sync");
+  const onOpenSidecar = () => void openSidecarAction();
+  const onImportSource = () => void importSourceAction();
+
+  const artifacts = useMemo(() => codeArtifacts(codegenResult), [codegenResult]);
+  const workspaceFolderLabel = scopedPathLabel(
+    repoContext?.repoPath ?? repoPath,
+    repoContext?.gitRootPath,
+  );
+  const gitRepoLabel =
+    repoContext?.gitRootName ??
+    pathLabel(gitStatus.status === "ready" ? gitStatus.repoPath : repoPath);
+  const scopedChangeLabel =
+    gitStatus.status === "loading"
+      ? "Checking"
+      : gitStatus.status === "error"
+        ? "Unavailable"
+        : gitStatus.clean
+          ? "Clean"
+          : `${gitStatus.files.length} in workspace`;
 
   const [diffMode, setDiffMode] = useState<"diff" | "file">("diff");
   const [copied, setCopied] = useState(false);

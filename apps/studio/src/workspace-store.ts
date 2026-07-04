@@ -1,0 +1,768 @@
+/**
+ * Workspace state — repo connection, git status, codegen/sync pipeline, and the
+ * status line. A Zustand store (not App state) so panels subscribe to exactly
+ * the slices they render: a status-line update or a git poll no longer
+ * re-renders the whole shell, and CodePanel needs no prop drilling.
+ *
+ * Non-reactive pipeline latches (in-flight codegen, debounce timers, load
+ * suppression flags) live at module scope: they change many times per second
+ * during edits and must never cause renders.
+ */
+import { create } from "zustand";
+import {
+  useDocumentStore,
+  type ComponentRegistry,
+  type Node,
+  type NodeId,
+  type TokenRegistry,
+} from "@rn-canvas/document";
+import {
+  codeArtifacts,
+  type CodeArtifact,
+  type CodegenResult,
+  type GitStatus,
+} from "./code-artifacts";
+import type { RepoPanelContext } from "./repo-project-model";
+
+export type SyncState =
+  | { status: "idle" }
+  | { status: "scheduled" }
+  | { status: "syncing" }
+  | { status: "synced"; path: string }
+  | { status: "error"; message: string };
+
+export type ActiveRepoScreen = { path: string; sidecarPath?: string; rootId: NodeId };
+export type LoadedRepoScreens = Record<string, ActiveRepoScreen>;
+
+type OpenDocumentResult = {
+  version: 1;
+  screenName: string;
+  root: Node;
+  components?: ComponentRegistry;
+  tokens?: TokenRegistry;
+  repoPath?: string;
+  targetPath: string;
+  sidecarPath: string;
+};
+
+type ImportSourceResult = {
+  screenName: string;
+  root: Node;
+  repoPath?: string;
+  sourcePath: string;
+  sidecarPath: string;
+};
+
+// --- Non-reactive pipeline latches --------------------------------------------
+
+/** Cross-cutting suppression flags shared with App-side canvas glue (e.g. the
+ *  onMount seed load must not be echoed to disk). Mutating these never renders. */
+export const workspaceFlags = {
+  /** A repo-managed document is open; auto-sync may write files. */
+  managedDocument: false,
+  /** Next token-registry change is a load, not an edit — don't write theme.ts. */
+  skipTokenWrite: false,
+  /** Next document change is a load, not an edit — don't schedule a code sync. */
+  skipCodeSync: false,
+};
+
+let codegenInFlight = false;
+let rerunRequested = false;
+let autoSyncTimer: ReturnType<typeof setTimeout> | null = null;
+/** Last canvas-manifest payload we saved or loaded (idempotent writer). */
+let canvasSaved = "";
+/** The root the next codegen targets — the last focused screen. */
+let syncRootHint: NodeId | null = null;
+
+export function setSyncRootHint(rootId: NodeId | null) {
+  syncRootHint = rootId;
+}
+
+/** Canvas-side effects the store can't own (frame focus, tldraw history). */
+let studioHooks: { onRepoDocumentOpened(rootId: NodeId): void } = {
+  onRepoDocumentOpened: () => {},
+};
+
+export function registerStudioHooks(hooks: typeof studioHooks) {
+  studioHooks = hooks;
+}
+
+function syncRoot(): Node | null {
+  const state = useDocumentStore.getState();
+  const remembered = syncRootHint ? state.roots[syncRootHint] : null;
+  if (remembered && remembered.id !== state.editingComponentId) return remembered;
+  return Object.values(state.roots).find((root) => root.id !== state.editingComponentId) ?? null;
+}
+
+interface WorkspaceState {
+  status: string;
+  gitStatus: GitStatus;
+  syncState: SyncState;
+  screenName: string;
+  targetPath: string;
+  sidecarPath: string;
+  codegenResult: CodegenResult | null;
+  codegenBusy: boolean;
+  codegenError: string | null;
+  activeArtifactId: string;
+  /** Committed (HEAD) content per output path — the diff baseline. Auto-sync
+   *  writes live to disk, so the meaningful diff is against the last commit. */
+  headByPath: Record<string, string>;
+  branchInfo: { current: string; branches: string[] };
+  repoPath: string;
+  repoDraft: string;
+  repoError: string | null;
+  repoBusy: boolean;
+  repoContext: RepoPanelContext | null;
+  activeRepoScreen: ActiveRepoScreen | null;
+  loadedRepoScreens: LoadedRepoScreens;
+
+  setStatus(status: string): void;
+  setRepoDraft(value: string): void;
+  setActiveArtifactId(id: string): void;
+  setActiveRepoScreen(screen: ActiveRepoScreen | null): void;
+  /** User-facing path edits reschedule auto-sync; programmatic loads set state
+   *  directly and don't. */
+  setScreenName(value: string): void;
+  setTargetPath(value: string): void;
+  setSidecarPath(value: string): void;
+
+  refreshGitStatus(): Promise<void>;
+  refreshBranches(): Promise<void>;
+  refreshHeads(list: CodeArtifact[]): Promise<void>;
+  loadRepo(): Promise<void>;
+  loadRepoContext(): Promise<void>;
+  loadCanvasManifest(): Promise<void>;
+  requestCodegen(
+    mode: "preview" | "sync",
+    source?: "manual" | "auto",
+  ): Promise<CodegenResult | null>;
+  scheduleAutoSync(): void;
+  openSidecar(path?: string, mode?: "replace" | "merge"): Promise<void>;
+  importSource(path?: string, mode?: "replace" | "merge"): Promise<void>;
+  connectRepo(): Promise<void>;
+  selectRepoFolder(): Promise<void>;
+  connectDemoRepo(): Promise<void>;
+  switchBranch(branch: string, create?: boolean): Promise<void>;
+  commitChanges(message: string): Promise<void>;
+  openPullRequest(): Promise<void>;
+}
+
+export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
+  /** Store a codegen result and keep dependents coherent: the artifact tab must
+   *  exist, and the HEAD diff baseline follows the artifact list. */
+  const applyCodegenResult = (result: CodegenResult | null) => {
+    const artifacts = codeArtifacts(result);
+    set((state) => ({
+      codegenResult: result,
+      activeArtifactId: artifacts.some((a) => a.id === state.activeArtifactId)
+        ? state.activeArtifactId
+        : artifacts[0]?.id ?? "screen",
+    }));
+    void get().refreshHeads(artifacts);
+  };
+
+  const applyConnectedRepo = async (
+    body: {
+      repoPath?: string;
+      git?: Partial<Extract<GitStatus, { status: "ready" }>>;
+      context?: RepoPanelContext;
+    },
+    fallbackPath: string,
+  ) => {
+    const nextPath = body.repoPath ?? fallbackPath;
+    set({ repoPath: nextPath, repoDraft: nextPath });
+    if (body.git) {
+      set({
+        gitStatus: {
+          status: "ready",
+          repoPath: body.git.repoPath ?? nextPath,
+          branch: body.git.branch ?? "unknown",
+          clean: !!body.git.clean,
+          files: Array.isArray(body.git.files) ? body.git.files : [],
+        },
+      });
+    } else {
+      await get().refreshGitStatus();
+    }
+    if (body.context) set({ repoContext: body.context });
+    else await get().loadRepoContext();
+    workspaceFlags.managedDocument = false;
+    set({ activeRepoScreen: null, loadedRepoScreens: {} });
+    void get().refreshBranches();
+    // Frame arrangement is per-repo state; pick up the new repo's layout.
+    void get().loadCanvasManifest();
+    const target =
+      body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
+    set({ status: `Connected ${nextPath} · open a screen to edit ${target}` });
+  };
+
+  /** Shared guard + teardown for the three repo-connection entry points. */
+  const beginRepoSwitch = (): boolean => {
+    if (codegenInFlight) {
+      const message = "Wait for the current sync to finish before changing repositories.";
+      set({ repoError: message, status: message });
+      return false;
+    }
+    if (autoSyncTimer) {
+      clearTimeout(autoSyncTimer);
+      autoSyncTimer = null;
+    }
+    set({ syncState: { status: "idle" }, repoBusy: true, repoError: null });
+    return true;
+  };
+
+  const openLoadedDocument = (opts: {
+    mode: "replace" | "merge";
+    root: Node;
+    components?: ComponentRegistry;
+    tokens?: TokenRegistry;
+    screenName: string;
+    targetPath: string;
+    sidecarPath: string;
+    repoPath?: string;
+  }) => {
+    // The file is the canonical source: we just read it, so don't echo it
+    // straight back out (writers fire only on subsequent in-tool edits).
+    workspaceFlags.skipTokenWrite = true;
+    workspaceFlags.skipCodeSync = true;
+    const state = useDocumentStore.getState();
+    const nextRoots =
+      opts.mode === "merge"
+        ? { ...state.roots, [opts.root.id]: opts.root }
+        : { [opts.root.id]: opts.root };
+    const nextComponents =
+      opts.mode === "merge"
+        ? { ...state.components, ...(opts.components ?? {}) }
+        : opts.components;
+    const nextTokens =
+      opts.mode === "merge" ? { ...state.tokens, ...(opts.tokens ?? {}) } : opts.tokens;
+    state.loadRoots(nextRoots, [opts.root.id], nextComponents, nextTokens);
+    studioHooks.onRepoDocumentOpened(opts.root.id);
+    const repoScreen: ActiveRepoScreen = {
+      path: opts.targetPath,
+      sidecarPath: opts.sidecarPath,
+      rootId: opts.root.id,
+    };
+    set((current) => ({
+      screenName: opts.screenName,
+      targetPath: opts.targetPath,
+      sidecarPath: opts.sidecarPath,
+      ...(opts.repoPath ? { repoPath: opts.repoPath, repoDraft: opts.repoPath } : {}),
+      activeRepoScreen: repoScreen,
+      loadedRepoScreens:
+        opts.mode === "merge"
+          ? { ...current.loadedRepoScreens, [opts.targetPath]: repoScreen }
+          : { [opts.targetPath]: repoScreen },
+    }));
+    workspaceFlags.managedDocument = true;
+    applyCodegenResult(null);
+    void get().loadRepoContext();
+    // Populate the code view live — no manual Preview needed.
+    void get().requestCodegen("preview");
+  };
+
+  return {
+    status: "Drag a frame · resize from handles · add from the toolbar",
+    gitStatus: { status: "loading" },
+    syncState: { status: "idle" },
+    screenName: "Screen",
+    targetPath: "generated/Screen.tsx",
+    sidecarPath: "generated/Screen.rncanvas.json",
+    codegenResult: null,
+    codegenBusy: false,
+    codegenError: null,
+    activeArtifactId: "screen",
+    headByPath: {},
+    branchInfo: { current: "", branches: [] },
+    repoPath: "",
+    repoDraft: "",
+    repoError: null,
+    repoBusy: false,
+    repoContext: null,
+    activeRepoScreen: null,
+    loadedRepoScreens: {},
+
+    setStatus: (status) => set({ status }),
+    setRepoDraft: (repoDraft) => set({ repoDraft }),
+    setActiveArtifactId: (activeArtifactId) => set({ activeArtifactId }),
+    setActiveRepoScreen: (activeRepoScreen) => set({ activeRepoScreen }),
+    setScreenName: (screenName) => {
+      if (screenName === get().screenName) return;
+      set({ screenName });
+      if (Object.keys(useDocumentStore.getState().roots).length) get().scheduleAutoSync();
+    },
+    setTargetPath: (targetPath) => {
+      if (targetPath === get().targetPath) return;
+      set({ targetPath });
+      if (Object.keys(useDocumentStore.getState().roots).length) get().scheduleAutoSync();
+    },
+    setSidecarPath: (sidecarPath) => set({ sidecarPath }),
+
+    refreshGitStatus: async () => {
+      try {
+        const res = await fetch("/api/git/status");
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        const previousRepoPath = get().repoPath;
+        if (body.repoPath) {
+          set((state) => ({
+            repoPath: body.repoPath,
+            repoDraft: state.repoDraft || body.repoPath,
+          }));
+        }
+        const next: GitStatus = {
+          status: "ready",
+          repoPath: body.repoPath ?? get().repoPath,
+          branch: body.branch ?? "unknown",
+          clean: !!body.clean,
+          files: Array.isArray(body.files) ? body.files : [],
+        };
+        // The 5s poll usually returns the same answer — don't re-render for it.
+        if (JSON.stringify(next) !== JSON.stringify(get().gitStatus)) {
+          set({ gitStatus: next });
+        }
+        if (body.repoPath && body.repoPath !== previousRepoPath) void get().refreshBranches();
+      } catch (error) {
+        set({
+          gitStatus: {
+            status: "error",
+            message: error instanceof Error ? error.message : "Git status failed",
+          },
+        });
+      }
+    },
+
+    refreshBranches: async () => {
+      try {
+        const res = await fetch("/api/git/branches");
+        const body = await res.json();
+        if (res.ok) {
+          set({ branchInfo: { current: body.current ?? "", branches: body.branches ?? [] } });
+        }
+      } catch {
+        /* branches unavailable — leave prior value */
+      }
+    },
+
+    refreshHeads: async (list) => {
+      if (list.length === 0) {
+        set({ headByPath: {} });
+        return;
+      }
+      const entries = await Promise.all(
+        list.map(async (artifact) => {
+          try {
+            const res = await fetch("/api/git/head-file", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path: artifact.path }),
+            });
+            const body = await res.json();
+            return [artifact.path, res.ok && body.exists ? (body.content as string) : null] as const;
+          } catch {
+            return [artifact.path, null] as const;
+          }
+        }),
+      );
+      const map: Record<string, string> = {};
+      for (const [path, content] of entries) if (content != null) map[path] = content;
+      set({ headByPath: map });
+    },
+
+    loadRepo: async () => {
+      try {
+        const res = await fetch("/api/repo");
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        set({
+          repoPath: body.repoPath ?? "",
+          repoDraft: body.repoPath ?? "",
+          repoContext: body.context ?? null,
+        });
+        void get().refreshBranches();
+      } catch (error) {
+        set({ repoError: error instanceof Error ? error.message : "Repository load failed" });
+      }
+    },
+
+    loadRepoContext: async () => {
+      try {
+        const res = await fetch("/api/repo/context");
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        set({ repoContext: body.context ?? body });
+      } catch (error) {
+        set({ repoError: error instanceof Error ? error.message : "Repository scan failed" });
+      }
+    },
+
+    loadCanvasManifest: async () => {
+      try {
+        const res = await fetch("/api/canvas");
+        const body = (await res.json()) as {
+          positions?: Record<NodeId, { x: number; y: number }>;
+        };
+        if (res.ok && body.positions) {
+          canvasSaved = JSON.stringify(body.positions);
+          useDocumentStore.getState().seedFramePositions(body.positions);
+        }
+      } catch {
+        // No canvas manifest is the normal first-run state.
+      }
+    },
+
+    requestCodegen: async (mode, source = "manual") => {
+      if (mode === "sync" && source === "auto" && !workspaceFlags.managedDocument) {
+        set({ syncState: { status: "idle" } });
+        return null;
+      }
+      const root = syncRoot();
+      if (!root) {
+        const message = "Select a screen before syncing.";
+        set({
+          codegenError: message,
+          status: message,
+          ...(mode === "sync" ? { syncState: { status: "error", message } } : {}),
+        });
+        return null;
+      }
+      if (codegenInFlight) {
+        // A codegen is in flight — remember to run once more so this newer edit lands.
+        if (source === "auto") rerunRequested = true;
+        return null;
+      }
+      codegenInFlight = true;
+      set({
+        codegenBusy: true,
+        codegenError: null,
+        ...(mode === "sync" ? { syncState: { status: "syncing" } } : {}),
+      });
+      try {
+        const state = useDocumentStore.getState();
+        const res = await fetch(`/api/codegen/${mode}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            root,
+            screenName: get().screenName,
+            targetPath: get().targetPath,
+            components: state.components,
+            tokens: state.tokens,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        applyCodegenResult(body);
+        if (source === "manual") set({ activeArtifactId: "screen" });
+        if (mode === "sync") {
+          set({ syncState: { status: "synced", path: body.targetPath } });
+          workspaceFlags.managedDocument = true;
+          void get().refreshGitStatus();
+          void get().loadRepoContext();
+        }
+        set({
+          status:
+            mode === "sync"
+              ? `${source === "auto" ? "Autosynced" : "Synced"} ${body.targetPath} + ${body.sidecarPath}`
+              : `Previewed sync for ${body.targetPath}`,
+        });
+        return body as CodegenResult;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Sync failed";
+        set({
+          codegenError: message,
+          status: message,
+          ...(mode === "sync" ? { syncState: { status: "error", message } } : {}),
+        });
+        return null;
+      } finally {
+        codegenInFlight = false;
+        set({ codegenBusy: false });
+        if (rerunRequested) {
+          rerunRequested = false;
+          get().scheduleAutoSync();
+        }
+      }
+    },
+
+    scheduleAutoSync: () => {
+      if (!workspaceFlags.managedDocument) {
+        set({ syncState: { status: "idle" } });
+        return;
+      }
+      if (autoSyncTimer) clearTimeout(autoSyncTimer);
+      set({ syncState: { status: "scheduled" } });
+      autoSyncTimer = setTimeout(() => {
+        autoSyncTimer = null;
+        if (codegenInFlight) {
+          // Don't drop this edit — the in-flight codegen will re-run when it finishes.
+          rerunRequested = true;
+          return;
+        }
+        void get().requestCodegen("sync", "auto");
+      }, 900);
+    },
+
+    openSidecar: async (path = get().sidecarPath, mode = "replace") => {
+      set({ codegenBusy: true, codegenError: null });
+      try {
+        const res = await fetch("/api/documents/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sidecarPath: path }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        const opened = body as OpenDocumentResult;
+        openLoadedDocument({
+          mode,
+          root: opened.root,
+          components: opened.components,
+          tokens: opened.tokens,
+          screenName: opened.screenName,
+          targetPath: opened.targetPath,
+          sidecarPath: opened.sidecarPath,
+          repoPath: opened.repoPath,
+        });
+        set({ status: `Opened ${opened.sidecarPath}` });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Document load failed";
+        set({ codegenError: message, status: message });
+      } finally {
+        set({ codegenBusy: false });
+      }
+    },
+
+    importSource: async (path = get().targetPath, mode = "replace") => {
+      set({ codegenBusy: true, codegenError: null });
+      try {
+        const res = await fetch("/api/documents/import-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourcePath: path }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        const imported = body as ImportSourceResult;
+        openLoadedDocument({
+          mode,
+          root: imported.root,
+          screenName: imported.screenName,
+          targetPath: imported.sourcePath,
+          sidecarPath: imported.sidecarPath,
+          repoPath: imported.repoPath,
+        });
+        set({ status: `Imported ${imported.sourcePath}` });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Code import failed";
+        set({ codegenError: message, status: message });
+      } finally {
+        set({ codegenBusy: false });
+      }
+    },
+
+    connectRepo: async () => {
+      if (!beginRepoSwitch()) return;
+      try {
+        const res = await fetch("/api/repo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repoPath: get().repoDraft }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        await applyConnectedRepo(body, get().repoDraft);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Repository connection failed";
+        set({ repoError: message, status: message });
+      } finally {
+        set({ repoBusy: false });
+      }
+    },
+
+    selectRepoFolder: async () => {
+      if (!beginRepoSwitch()) return;
+      try {
+        const res = await fetch("/api/repo/select-folder", { method: "POST" });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        await applyConnectedRepo(body, get().repoDraft);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Folder selection failed";
+        set({ repoError: message, status: message });
+      } finally {
+        set({ repoBusy: false });
+      }
+    },
+
+    connectDemoRepo: async () => {
+      if (!beginRepoSwitch()) return;
+      try {
+        const res = await fetch("/api/repo/demo", { method: "POST" });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        await applyConnectedRepo(body, body.repoPath ?? get().repoDraft);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Demo repository connection failed";
+        set({ repoError: message, status: message });
+      } finally {
+        set({ repoBusy: false });
+      }
+    },
+
+    switchBranch: async (branch, create = false) => {
+      set({ repoError: null });
+      try {
+        const res = await fetch("/api/git/switch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ branch, create }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? "Branch switch failed");
+        await get().refreshGitStatus();
+        await get().refreshBranches();
+        void get().loadRepoContext();
+        // The working tree now reflects the new branch — reload the open document.
+        void get().openSidecar();
+      } catch (e) {
+        set({ repoError: e instanceof Error ? e.message : "Branch switch failed" });
+      }
+    },
+
+    commitChanges: async (message) => {
+      set({ repoError: null });
+      try {
+        const res = await fetch("/api/git/commit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? "Commit failed");
+        set({ status: `Committed: ${message}` });
+        await get().refreshGitStatus();
+        await get().refreshBranches();
+        // The commit moved HEAD — rebase the diff baseline on it.
+        void get().refreshHeads(codeArtifacts(get().codegenResult));
+      } catch (e) {
+        set({ repoError: e instanceof Error ? e.message : "Commit failed" });
+      }
+    },
+
+    openPullRequest: async () => {
+      set({ repoError: null });
+      try {
+        const res = await fetch("/api/git/pr-url");
+        const body = await res.json();
+        if (body.url) window.open(body.url, "_blank", "noopener");
+        else set({ repoError: "No origin remote to open a pull request against." });
+      } catch (e) {
+        set({
+          repoError: e instanceof Error ? e.message : "Could not resolve pull request URL",
+        });
+      }
+    },
+  };
+});
+
+/**
+ * Document-store subscriptions that drive the pipeline: auto-sync scheduling,
+ * the canonical theme.ts writer, and the canvas-layout writer. Installed once
+ * from App; returns a cleanup.
+ */
+export function initWorkspaceSubscriptions(): () => void {
+  const docStore = useDocumentStore;
+  const workspace = useWorkspaceStore;
+
+  // Auto-sync: schedule after document edits, batched across interactions.
+  let lastRoots = docStore.getState().roots;
+  let lastComponents = docStore.getState().components;
+  let lastTokens = docStore.getState().tokens;
+  let lastInteraction = docStore.getState().interaction;
+  let dirtyDuringInteraction = false;
+  const unsubscribeAutoSync = docStore.subscribe((state) => {
+    const documentChanged =
+      state.roots !== lastRoots ||
+      state.components !== lastComponents ||
+      state.tokens !== lastTokens;
+    const interactionJustEnded = !!lastInteraction && !state.interaction;
+    lastRoots = state.roots;
+    lastComponents = state.components;
+    lastTokens = state.tokens;
+    lastInteraction = state.interaction;
+    if (interactionJustEnded && dirtyDuringInteraction) {
+      dirtyDuringInteraction = false;
+      workspace.getState().scheduleAutoSync();
+      return;
+    }
+    if (!documentChanged) return;
+    if (workspaceFlags.skipCodeSync) {
+      workspaceFlags.skipCodeSync = false;
+      return;
+    }
+    if (state.interaction) {
+      dirtyDuringInteraction = true;
+      return;
+    }
+    workspace.getState().scheduleAutoSync();
+  });
+
+  // Single-writer canonical token file: theme.ts follows the token registry.
+  // Debounced and fire-and-forget; never touches the canvas interaction path.
+  let tokenTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastTokensForWrite = docStore.getState().tokens;
+  const unsubscribeTokens = docStore.subscribe((state) => {
+    if (state.tokens === lastTokensForWrite) return;
+    lastTokensForWrite = state.tokens;
+    if (workspaceFlags.skipTokenWrite) {
+      workspaceFlags.skipTokenWrite = false; // this change was a load, not an edit
+      return;
+    }
+    if (tokenTimer) clearTimeout(tokenTimer);
+    tokenTimer = setTimeout(() => {
+      const path = workspace.getState().sidecarPath;
+      if (!path) return;
+      void fetch("/api/tokens/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sidecarPath: path, tokens: docStore.getState().tokens }),
+      }).catch(() => {});
+    }, 400);
+  });
+
+  // Canvas layout writer: frame arrangement → .rncanvas/canvas.json.
+  let canvasTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastPositions = docStore.getState().framePositions;
+  const unsubscribeCanvas = docStore.subscribe((state) => {
+    if (state.framePositions === lastPositions) return;
+    lastPositions = state.framePositions;
+    if (canvasTimer) clearTimeout(canvasTimer);
+    canvasTimer = setTimeout(() => {
+      const positions = docStore.getState().framePositions;
+      const payload = JSON.stringify(positions);
+      if (payload === canvasSaved) return;
+      canvasSaved = payload;
+      void fetch("/api/canvas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manifest: { version: 1, positions } }),
+      }).catch(() => {});
+    }, 500);
+  });
+
+  return () => {
+    unsubscribeAutoSync();
+    unsubscribeTokens();
+    unsubscribeCanvas();
+    if (tokenTimer) clearTimeout(tokenTimer);
+    if (canvasTimer) clearTimeout(canvasTimer);
+    if (autoSyncTimer) {
+      clearTimeout(autoSyncTimer);
+      autoSyncTimer = null;
+    }
+  };
+}

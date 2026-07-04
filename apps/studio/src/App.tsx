@@ -39,14 +39,15 @@ import {
 import { FrameRenderer } from "@rn-canvas/render-web";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
 import { CodePanel } from "./CodePanel";
+import { gitFileStatusLabel, type GitFileStatus, type GitStatus } from "./code-artifacts";
 import {
-  codeArtifacts,
-  gitFileStatusLabel,
-  type CodeArtifact,
-  type CodegenResult,
-  type GitFileStatus,
-  type GitStatus,
-} from "./code-artifacts";
+  initWorkspaceSubscriptions,
+  registerStudioHooks,
+  setSyncRootHint,
+  useWorkspaceStore,
+  workspaceFlags,
+  type ActiveRepoScreen,
+} from "./workspace-store";
 import { Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { color, layout, radius, space, text } from "./studio-theme";
@@ -61,8 +62,12 @@ import {
 } from "./shell";
 import {
   displayScreenName,
+  firstGitCode,
+  gitSummary,
+  pathLabel,
   repoChangesForContext,
   repoFlowItemsForContext,
+  scopedPathLabel,
   type RepoFlowPanelItem,
   type RepoPanelContext,
   type RepoPanelScreen,
@@ -144,19 +149,10 @@ const asFrame = (s: EditorShape) => s as unknown as FrameShape;
 type CreatePartial = Parameters<Editor["createShape"]>[0];
 type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
-type SyncState =
-  | { status: "idle" }
-  | { status: "scheduled" }
-  | { status: "syncing" }
-  | { status: "synced"; path: string }
-  | { status: "error"; message: string };
-
 type RepoContext = RepoPanelContext;
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
 type FlowDefinition = { id: FlowId; label: string; description?: string };
-type ActiveRepoScreen = { path: string; sidecarPath?: string; rootId: NodeId };
-type LoadedRepoScreens = Record<string, ActiveRepoScreen>;
 
 type FlowManifest = {
   version: 1;
@@ -168,25 +164,6 @@ type FlowManifest = {
     entryName?: string;
     routes: Array<{ rootId: NodeId; name: string; screenKey?: string }>;
   }>;
-};
-
-type OpenDocumentResult = {
-  version: 1;
-  screenName: string;
-  root: Node;
-  components?: import("@rn-canvas/document").ComponentRegistry;
-  tokens?: import("@rn-canvas/document").TokenRegistry;
-  repoPath?: string;
-  targetPath: string;
-  sidecarPath: string;
-};
-
-type ImportSourceResult = {
-  screenName: string;
-  root: Node;
-  repoPath?: string;
-  sourcePath: string;
-  sidecarPath: string;
 };
 
 function rootSize(root: Node): { w: number; h: number } {
@@ -218,40 +195,6 @@ function createScreenFrame(children: Node[] = [], name?: string): Node {
     design: name ? { name } : undefined,
     children,
   });
-}
-
-function gitSummary(status: GitStatus): string {
-  if (status.status === "loading") return "Git loading";
-  if (status.status === "error") return "Git unavailable";
-  if (status.clean) return `${status.branch} clean`;
-  return `${status.branch} ${status.files.length} changed`;
-}
-
-function pathLabel(path?: string) {
-  if (!path) return "None";
-  return path.split("/").filter(Boolean).pop() ?? path;
-}
-
-function scopedPathLabel(path?: string, root?: string) {
-  if (!path) return "None";
-  if (!root || path === root) return pathLabel(path);
-  const prefix = root.endsWith("/") ? root : `${root}/`;
-  return path.startsWith(prefix) ? path.slice(prefix.length) : pathLabel(path);
-}
-
-function gitStatusCode(file: GitFileStatus): string {
-  const code = `${file.index}${file.workingTree}`;
-  if (code === "??") return "U";
-  if (file.workingTree === "M" || file.index === "M") return "M";
-  if (file.workingTree === "D" || file.index === "D") return "D";
-  if (file.workingTree === "A" || file.index === "A") return "A";
-  if (file.workingTree === "R" || file.index === "R") return "R";
-  return code.trim() || "";
-}
-
-function firstGitCode(status: GitStatus): string | undefined {
-  if (status.status !== "ready") return undefined;
-  return status.files.map(gitStatusCode).find(Boolean);
 }
 
 /** Create a tldraw shape for any document root that doesn't have one yet. */
@@ -1161,19 +1104,164 @@ function PlusIcon() {
   return <span className="text-base leading-none">+</span>;
 }
 
-function ChangesTimeline({
-  gitStatus,
-  repoPath,
-  repoContext,
-  onRefresh,
-  onOpenCode,
+function TopBar({
+  workspaceContext,
+  onOpenRepoSettings,
+  onOpenCodePanel,
 }: {
-  gitStatus: GitStatus;
-  repoPath: string;
-  repoContext: RepoContext | null;
-  onRefresh: () => void;
-  onOpenCode: () => void;
+  workspaceContext: string;
+  onOpenRepoSettings: () => void;
+  onOpenCodePanel: () => void;
 }) {
+  const gitStatus = useWorkspaceStore((s) => s.gitStatus);
+  const syncState = useWorkspaceStore((s) => s.syncState);
+  const repoContext = useWorkspaceStore((s) => s.repoContext);
+  const codegenBusy = useWorkspaceStore((s) => s.codegenBusy);
+  const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
+  const canUndo = useDocumentStore((s) => s.past.length > 0);
+  const canRedo = useDocumentStore((s) => s.future.length > 0);
+  const hasActiveInteraction = useDocumentStore((s) => !!s.interaction);
+  const hasFocusedRoot = useDocumentStore(
+    (s) => !!findRootContaining(Object.values(s.roots), s.selection[0] ?? ""),
+  );
+
+  // The document store is the single undo history — frame moves live there too
+  // (framePositions), so tldraw's own history never surfaces in the UI.
+  const undoAvailable = canUndo || hasActiveInteraction;
+  const redoAvailable = canRedo;
+  const undoLatest = () => {
+    const store = useDocumentStore.getState();
+    if (store.interaction) store.commitInteraction();
+    if (useDocumentStore.getState().canUndo()) store.undo();
+  };
+  const redoLatest = () => {
+    const store = useDocumentStore.getState();
+    if (store.canRedo()) store.redo();
+  };
+
+  const syncLabel =
+    syncState.status === "scheduled"
+      ? "Sync pending"
+      : syncState.status === "syncing"
+        ? "Syncing"
+        : syncState.status === "synced"
+          ? `Synced ${syncState.path}`
+          : syncState.status === "error"
+            ? "Sync failed"
+            : "Ready";
+  const gitLabel = gitSummary(gitStatus);
+  const gitTone =
+    gitStatus.status === "error" ? "amber" : gitStatus.status === "ready" && !gitStatus.clean ? "accent" : "neutral";
+  const syncTone =
+    syncState.status === "error" ? "amber" : syncState.status === "syncing" || syncState.status === "scheduled" ? "accent" : "neutral";
+  const repoName = repoContext?.repoName ?? "Repository";
+  const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
+  const syncTarget = repoContext?.designSession?.syncTarget;
+  const repoSubtitle =
+    frameworkLabels.length > 0
+      ? `${frameworkLabels.slice(0, 3).join(" · ")}${frameworkLabels.length > 3 ? ` +${frameworkLabels.length - 3}` : ""}${syncTarget ? ` · ${syncTarget}` : ""}`
+      : repoContext?.packageManager
+        ? `No app runtime detected · ${repoContext.packageManager}${syncTarget ? ` · ${syncTarget}` : ""}`
+        : "Attach a repo";
+  const repoGitCode = firstGitCode(gitStatus);
+
+  return (
+    <header
+      className="studio-chrome flex items-center gap-md border-b border-line bg-chrome px-xl"
+      style={{
+        flex: `0 0 ${layout.topbar}px`,
+        height: layout.topbar,
+      }}
+    >
+      <div className="flex min-w-0 items-center gap-xs">
+        <strong
+          className="min-w-0 truncate text-base font-semibold text-ink"
+          title={repoContext?.repoPath ? `${repoSubtitle} · ${repoContext.repoPath}` : repoSubtitle}
+        >
+          {repoName}
+        </strong>
+        {repoGitCode && (
+          <span
+            title="Repository has changes"
+            aria-label="Repository has changes"
+            className="flex size-1 shrink-0 rounded-full bg-accent"
+          />
+        )}
+        <IconButton
+          title={repoContext ? "Change connected repo" : "Connect repo"}
+          onClick={onOpenRepoSettings}
+        >
+          <FolderOpen size={14} aria-hidden="true" />
+        </IconButton>
+      </div>
+      <span className="h-4 w-px shrink-0 bg-line-soft" aria-hidden="true" />
+      <span className="min-w-0 truncate text-xs text-ink-faint" title={workspaceContext}>
+        {workspaceContext}
+      </span>
+      <div className="ml-auto flex min-w-0 items-center gap-sm">
+        <StatusPill
+          tone={gitTone}
+          title={gitStatus.status === "error" ? gitStatus.message : gitLabel}
+        >
+          {gitLabel}
+        </StatusPill>
+        <StatusPill
+          tone={syncTone}
+          title={syncState.status === "error" ? syncState.message : syncLabel}
+        >
+          {syncLabel}
+        </StatusPill>
+      </div>
+      <div className="flex items-center gap-xs border-l border-line-soft pl-md">
+        <IconButton disabled={!undoAvailable} onClick={undoLatest} title="Undo" kbd="⌘Z">
+          <Undo2 size={16} aria-hidden="true" />
+        </IconButton>
+        <IconButton disabled={!redoAvailable} onClick={redoLatest} title="Redo" kbd="⌘⇧Z">
+          <Redo2 size={16} aria-hidden="true" />
+        </IconButton>
+      </div>
+      <div className="flex min-w-0 items-center gap-sm border-l border-line-soft pl-md">
+        <IconButton
+          title="Preview generated code"
+          onClick={() => {
+            onOpenCodePanel();
+            setStatus("Previewing generated code");
+            void requestCodegen("preview");
+          }}
+          disabled={codegenBusy || !hasFocusedRoot}
+        >
+          <Play size={14} aria-hidden="true" />
+        </IconButton>
+        <Button
+          variant="primary"
+          disabled={codegenBusy || !hasFocusedRoot}
+          title="Sync generated files"
+          onClick={() => void requestCodegen("sync")}
+        >
+          <Save size={14} aria-hidden="true" /> Sync
+        </Button>
+      </div>
+    </header>
+  );
+}
+
+/** The one-line status readout. Its own subscriber so the near-constant status
+ *  churn (every tool action sets it) never re-renders the shell. */
+function StatusStrip() {
+  const status = useWorkspaceStore((s) => s.status);
+  return (
+    <div className="studio-chrome flex h-7 flex-none items-center gap-sm border-t border-line bg-chrome px-md text-xs text-ink-dim">
+      <span className="truncate">{status}</span>
+    </div>
+  );
+}
+
+function ChangesTimeline({ onOpenCode }: { onOpenCode: () => void }) {
+  const gitStatus = useWorkspaceStore((s) => s.gitStatus);
+  const repoPath = useWorkspaceStore((s) => s.repoPath);
+  const repoContext = useWorkspaceStore((s) => s.repoContext);
+  const onRefresh = useWorkspaceStore((s) => s.refreshGitStatus);
   const entries: Array<{
     id: string;
     label: string;
@@ -1279,23 +1367,9 @@ function ChangesTimeline({
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
-  const codegenBusyRef = useRef(false);
-  const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Edits made while a codegen is in flight set this so a trailing sync runs once
-  // the current one finishes — the latest canvas state always reaches disk/the view.
-  const rerunRequestedRef = useRef(false);
-  const scheduleAutoSyncRef = useRef<() => void>(() => {});
-  const skipCodeSyncRef = useRef(false);
-  const skipNextPathSyncRef = useRef(false);
-  const managedDocumentRef = useRef(false);
-  const syncRootIdRef = useRef<NodeId | null>(null);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
-  // Set when a document is freshly opened so the code view populates live without a
-  // manual Preview (auto-sync only fires on subsequent edits).
-  const pendingPreviewRef = useRef(false);
   const pendingFlowManifestRef = useRef<FlowManifest | null>(null);
 
-  const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
   const [flows, setFlows] = useState<FlowDefinition[]>(DEFAULT_FLOWS);
@@ -1305,29 +1379,25 @@ export default function App() {
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
-  const [screenName, setScreenName] = useState("Screen");
-  const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
-  const [sidecarPath, setSidecarPath] = useState("generated/Screen.rncanvas.json");
-  const [codegenResult, setCodegenResult] = useState<CodegenResult | null>(null);
-  // Committed (HEAD) content per output path — the diff baseline. Auto-sync writes
-  // live to disk, so the meaningful diff is against the last commit, not a snapshot.
-  const [headByPath, setHeadByPath] = useState<Record<string, string>>({});
-  const [branchInfo, setBranchInfo] = useState<{ current: string; branches: string[] }>({
-    current: "",
-    branches: [],
-  });
-  const [activeArtifactId, setActiveArtifactId] = useState("screen");
-  const [codegenError, setCodegenError] = useState<string | null>(null);
-  const [codegenBusy, setCodegenBusy] = useState(false);
-  const [syncState, setSyncState] = useState<SyncState>({ status: "idle" });
-  const [gitStatus, setGitStatus] = useState<GitStatus>({ status: "loading" });
-  const [repoPath, setRepoPath] = useState("");
-  const [repoDraft, setRepoDraft] = useState("");
-  const [repoError, setRepoError] = useState<string | null>(null);
-  const [repoBusy, setRepoBusy] = useState(false);
-  const [repoContext, setRepoContext] = useState<RepoContext | null>(null);
-  const [activeRepoScreen, setActiveRepoScreen] = useState<ActiveRepoScreen | null>(null);
-  const [loadedRepoScreens, setLoadedRepoScreens] = useState<LoadedRepoScreens>({});
+
+  // Workspace slices App itself renders or orchestrates. Panels that own their
+  // display state (CodePanel, ChangesTimeline, TopBar, StatusStrip) subscribe
+  // to the workspace store directly — status/sync/codegen churn stays out of
+  // the shell render.
+  const gitStatus = useWorkspaceStore((s) => s.gitStatus);
+  const repoContext = useWorkspaceStore((s) => s.repoContext);
+  const sidecarPath = useWorkspaceStore((s) => s.sidecarPath);
+  const activeRepoScreen = useWorkspaceStore((s) => s.activeRepoScreen);
+  const loadedRepoScreens = useWorkspaceStore((s) => s.loadedRepoScreens);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
+  const setActiveRepoScreen = useWorkspaceStore((s) => s.setActiveRepoScreen);
+  const refreshGitStatus = useWorkspaceStore((s) => s.refreshGitStatus);
+  const loadRepo = useWorkspaceStore((s) => s.loadRepo);
+  const loadRepoContext = useWorkspaceStore((s) => s.loadRepoContext);
+  const loadCanvasManifest = useWorkspaceStore((s) => s.loadCanvasManifest);
+  const openSidecar = useWorkspaceStore((s) => s.openSidecar);
+  const importSource = useWorkspaceStore((s) => s.importSource);
+  const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
 
   // The document store's selection is the single source of truth. The focused
   // frame is *derived* from it (the root whose subtree holds the selection), and
@@ -1345,7 +1415,6 @@ export default function App() {
     [roots, selection],
   );
   const focusedRootId = focusedRoot?.id ?? null;
-  const artifacts = useMemo(() => codeArtifacts(codegenResult), [codegenResult]);
   const flowPanelItems = useMemo<FlowPanelItem[]>(() => {
     const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
     return flows.map((flow) => ({
@@ -1358,25 +1427,26 @@ export default function App() {
     () => repoFlowItemsForContext(repoContext),
     [repoContext],
   );
-  const activeArtifact =
-    artifacts.find((artifact) => artifact.id === activeArtifactId) ?? artifacts[0] ?? null;
   if (focusedRootId && focusedRootId !== editingComponentId) {
-    syncRootIdRef.current = focusedRootId;
+    setSyncRootHint(focusedRootId);
   }
-  const screenNameRef = useRef(screenName);
-  const targetPathRef = useRef(targetPath);
-  const pathSyncSignatureRef = useRef(`${screenName}|${targetPath}`);
-  screenNameRef.current = screenName;
-  targetPathRef.current = targetPath;
 
   useEffect(() => {
     if (!activeRepoScreen || roots[activeRepoScreen.rootId]) return;
     setActiveRepoScreen(null);
-  }, [activeRepoScreen, roots]);
+  }, [activeRepoScreen, roots, setActiveRepoScreen]);
 
-  function markPendingRepoOpen(rootId: NodeId) {
-    pendingFocusRootIdRef.current = rootId;
-  }
+  // Canvas-side effects for repo document opens: focus the new frame and clear
+  // tldraw's (inert) history.
+  useEffect(() => {
+    registerStudioHooks({
+      onRepoDocumentOpened: (rootId) => {
+        pendingFocusRootIdRef.current = rootId;
+        editorRef.current?.clearHistory();
+      },
+    });
+    return initWorkspaceSubscriptions();
+  }, []);
 
   const canUndo = useDocumentStore((s) => s.past.length > 0);
   const canRedo = useDocumentStore((s) => s.future.length > 0);
@@ -1398,203 +1468,6 @@ export default function App() {
       setActiveFlow(flows[0].id);
     }
   }, [activeFlow, flows, repoFlowItems]);
-
-  useEffect(() => {
-    if (artifacts.length && !artifacts.some((artifact) => artifact.id === activeArtifactId)) {
-      setActiveArtifactId(artifacts[0].id);
-    }
-  }, [activeArtifactId, artifacts]);
-
-  const refreshGitStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/git/status");
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      if (body.repoPath) {
-        setRepoPath(body.repoPath);
-        setRepoDraft((draft) => draft || body.repoPath);
-      }
-      setGitStatus({
-        status: "ready",
-        repoPath: body.repoPath ?? repoPath,
-        branch: body.branch ?? "unknown",
-        clean: !!body.clean,
-        files: Array.isArray(body.files) ? body.files : [],
-      });
-    } catch (error) {
-      setGitStatus({
-        status: "error",
-        message: error instanceof Error ? error.message : "Git status failed",
-      });
-    }
-  }, [repoPath]);
-
-  const loadRepo = useCallback(async () => {
-    try {
-      const res = await fetch("/api/repo");
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      setRepoPath(body.repoPath ?? "");
-      setRepoDraft(body.repoPath ?? "");
-      setRepoContext(body.context ?? null);
-    } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "Repository load failed");
-    }
-  }, []);
-
-  const loadRepoContext = useCallback(async () => {
-    try {
-      const res = await fetch("/api/repo/context");
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      setRepoContext(body.context ?? body);
-    } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "Repository scan failed");
-    }
-  }, []);
-
-  // Canvas layout manifest (.rncanvas/canvas.json): frame arrangement survives
-  // reloads. `canvasSavedRef` makes load → save idempotent without skip flags.
-  const canvasSavedRef = useRef("");
-  const loadCanvasManifest = useCallback(async () => {
-    try {
-      const res = await fetch("/api/canvas");
-      const body = (await res.json()) as {
-        positions?: Record<NodeId, { x: number; y: number }>;
-      };
-      if (res.ok && body.positions) {
-        canvasSavedRef.current = JSON.stringify(body.positions);
-        useDocumentStore.getState().seedFramePositions(body.positions);
-      }
-    } catch {
-      // No canvas manifest is the normal first-run state.
-    }
-  }, []);
-
-  const applyConnectedRepo = useCallback(
-    async (body: {
-      repoPath?: string;
-      git?: Partial<Extract<GitStatus, { status: "ready" }>>;
-      context?: RepoContext;
-    }, fallbackPath = repoDraft) => {
-      const nextPath = body.repoPath ?? fallbackPath;
-      setRepoPath(nextPath);
-      setRepoDraft(nextPath);
-      if (body.git) {
-        setGitStatus({
-          status: "ready",
-          repoPath: body.git.repoPath ?? nextPath,
-          branch: body.git.branch ?? "unknown",
-          clean: !!body.git.clean,
-          files: Array.isArray(body.git.files) ? body.git.files : [],
-        });
-      } else {
-        await refreshGitStatus();
-      }
-      if (body.context) setRepoContext(body.context);
-      else await loadRepoContext();
-      skipNextPathSyncRef.current = true;
-      managedDocumentRef.current = false;
-      setActiveRepoScreen(null);
-      setLoadedRepoScreens({});
-      // Frame arrangement is per-repo state; pick up the new repo's layout.
-      void loadCanvasManifest();
-      const target = body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
-      setStatus(`Connected ${nextPath} · open a screen to edit ${target}`);
-    },
-    [loadCanvasManifest, loadRepoContext, refreshGitStatus, repoDraft],
-  );
-
-  const connectRepo = useCallback(async () => {
-    if (codegenBusyRef.current) {
-      const message = "Wait for the current sync to finish before changing repositories.";
-      setRepoError(message);
-      setStatus(message);
-      return;
-    }
-    if (autoSyncTimerRef.current) {
-      clearTimeout(autoSyncTimerRef.current);
-      autoSyncTimerRef.current = null;
-    }
-    skipNextPathSyncRef.current = true;
-    setSyncState({ status: "idle" });
-    setRepoBusy(true);
-    setRepoError(null);
-    try {
-      const res = await fetch("/api/repo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repoPath: repoDraft }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      await applyConnectedRepo(body, repoDraft);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Repository connection failed";
-      setRepoError(message);
-      setStatus(message);
-    } finally {
-      setRepoBusy(false);
-    }
-  }, [applyConnectedRepo, repoDraft]);
-
-  const selectRepoFolder = useCallback(async () => {
-    if (codegenBusyRef.current) {
-      const message = "Wait for the current sync to finish before changing repositories.";
-      setRepoError(message);
-      setStatus(message);
-      return;
-    }
-    if (autoSyncTimerRef.current) {
-      clearTimeout(autoSyncTimerRef.current);
-      autoSyncTimerRef.current = null;
-    }
-    skipNextPathSyncRef.current = true;
-    setSyncState({ status: "idle" });
-    setRepoBusy(true);
-    setRepoError(null);
-    try {
-      const res = await fetch("/api/repo/select-folder", { method: "POST" });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      await applyConnectedRepo(body, repoDraft);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Folder selection failed";
-      setRepoError(message);
-      setStatus(message);
-    } finally {
-      setRepoBusy(false);
-    }
-  }, [applyConnectedRepo, repoDraft]);
-
-  const connectDemoRepo = useCallback(async () => {
-    if (codegenBusyRef.current) {
-      const message = "Wait for the current sync to finish before changing repositories.";
-      setRepoError(message);
-      setStatus(message);
-      return;
-    }
-    if (autoSyncTimerRef.current) {
-      clearTimeout(autoSyncTimerRef.current);
-      autoSyncTimerRef.current = null;
-    }
-    skipNextPathSyncRef.current = true;
-    setSyncState({ status: "idle" });
-    setRepoBusy(true);
-    setRepoError(null);
-    try {
-      const res = await fetch("/api/repo/demo", { method: "POST" });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      await applyConnectedRepo(body, body.repoPath ?? repoDraft);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Demo repository connection failed";
-      setRepoError(message);
-      setStatus(message);
-    } finally {
-      setRepoBusy(false);
-    }
-  }, [applyConnectedRepo, repoDraft]);
 
   const applyFlowManifest = useCallback((body: FlowManifest) => {
     const next: Partial<Record<FlowId, NodeId>> = {};
@@ -1714,31 +1587,6 @@ export default function App() {
   );
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let last = useDocumentStore.getState().framePositions;
-    const unsubscribe = useDocumentStore.subscribe((state) => {
-      if (state.framePositions === last) return;
-      last = state.framePositions;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        const positions = useDocumentStore.getState().framePositions;
-        const payload = JSON.stringify(positions);
-        if (payload === canvasSavedRef.current) return;
-        canvasSavedRef.current = payload;
-        void fetch("/api/canvas", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ manifest: { version: 1, positions } }),
-        }).catch(() => {});
-      }, 500);
-    });
-    return () => {
-      if (timer) clearTimeout(timer);
-      unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
     void loadRepo();
     void refreshGitStatus();
     void loadFlowManifest();
@@ -1758,43 +1606,6 @@ export default function App() {
     };
   }, [loadCanvasManifest, loadFlowManifest, loadRepo, refreshGitStatus]);
 
-  // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
-  // beside the sidecar whenever the token registry changes. Debounced and
-  // fire-and-forget — token edits are occasional and this never touches the canvas
-  // interaction hot path (it fires only when the `tokens` slice reference changes).
-  const sidecarPathRef = useRef(sidecarPath);
-  sidecarPathRef.current = sidecarPath;
-  // Set just before a `loadRoots` so the writer does NOT echo a freshly *read*
-  // registry back to disk (which would clobber the file we just loaded — e.g. the
-  // empty seed registry overwriting an existing theme.ts on app start).
-  const skipTokenWriteRef = useRef(false);
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let lastTokens = useDocumentStore.getState().tokens;
-    const unsubscribe = useDocumentStore.subscribe((state) => {
-      if (state.tokens === lastTokens) return;
-      lastTokens = state.tokens;
-      if (skipTokenWriteRef.current) {
-        skipTokenWriteRef.current = false; // this change was a load, not an edit
-        return;
-      }
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        const path = sidecarPathRef.current;
-        if (!path) return;
-        void fetch("/api/tokens/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sidecarPath: path, tokens: useDocumentStore.getState().tokens }),
-        }).catch(() => {});
-      }, 400);
-    });
-    return () => {
-      if (timer) clearTimeout(timer);
-      unsubscribe();
-    };
-  }, []);
-
   const onMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
     // Keep tldraw's own canvas affordances light and gridded by default.
@@ -1807,9 +1618,9 @@ export default function App() {
         [createNode("Text", { props: { text: "Hello RN Canvas" } })],
         nextScreenName(Object.values(store.roots)),
       );
-      skipTokenWriteRef.current = true; // seed load — don't write theme.ts
-      skipCodeSyncRef.current = true; // seed load — don't write generated files
-      setActiveRepoScreen(null);
+      workspaceFlags.skipTokenWrite = true; // seed load — don't write theme.ts
+      workspaceFlags.skipCodeSync = true; // seed load — don't write generated files
+      useWorkspaceStore.getState().setActiveRepoScreen(null);
       store.loadRoots({ [seed.id]: seed }, [seed.id]);
     }
     syncShapes(editor);
@@ -2522,196 +2333,6 @@ export default function App() {
     setStatus(`${label} tool active`);
   }, []);
 
-  const syncRoot = useCallback(() => {
-    const state = useDocumentStore.getState();
-    const rememberedRoot = syncRootIdRef.current ? state.roots[syncRootIdRef.current] : null;
-    if (rememberedRoot && rememberedRoot.id !== state.editingComponentId) return rememberedRoot;
-    return Object.values(state.roots).find((root) => root.id !== state.editingComponentId) ?? null;
-  }, []);
-
-  const requestCodegen = useCallback(
-    async (mode: "preview" | "sync", source: "manual" | "auto" = "manual") => {
-      if (mode === "sync" && source === "auto" && !managedDocumentRef.current) {
-        setSyncState({ status: "idle" });
-        return null;
-      }
-      const root = syncRoot();
-      if (!root) {
-        const message = "Select a screen before syncing.";
-        setCodegenError(message);
-        if (mode === "sync") setSyncState({ status: "error", message });
-        setStatus(message);
-        return null;
-      }
-      if (codegenBusyRef.current) {
-        // A codegen is in flight — remember to run once more so this newer edit lands.
-        if (source === "auto") rerunRequestedRef.current = true;
-        return null;
-      }
-      codegenBusyRef.current = true;
-      setCodegenBusy(true);
-      setCodegenError(null);
-      if (mode === "sync") setSyncState({ status: "syncing" });
-      try {
-        const state = useDocumentStore.getState();
-        const res = await fetch(`/api/codegen/${mode}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            root,
-            screenName: screenNameRef.current,
-            targetPath: targetPathRef.current,
-            components: state.components,
-            tokens: state.tokens,
-          }),
-        });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-        setCodegenResult(body);
-        if (source === "manual") setActiveArtifactId("screen");
-        if (mode === "sync") setSyncState({ status: "synced", path: body.targetPath });
-        if (mode === "sync") managedDocumentRef.current = true;
-        if (mode === "sync") {
-          void refreshGitStatus();
-          void loadRepoContext();
-        }
-        setStatus(
-          mode === "sync"
-            ? `${source === "auto" ? "Autosynced" : "Synced"} ${body.targetPath} + ${body.sidecarPath}`
-            : `Previewed sync for ${body.targetPath}`,
-        );
-        return body as CodegenResult;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Sync failed";
-        setCodegenError(message);
-        if (mode === "sync") setSyncState({ status: "error", message });
-        setStatus(message);
-        return null;
-      } finally {
-        codegenBusyRef.current = false;
-        setCodegenBusy(false);
-        if (rerunRequestedRef.current) {
-          rerunRequestedRef.current = false;
-          scheduleAutoSyncRef.current();
-        }
-      }
-    },
-    [loadRepoContext, refreshGitStatus, syncRoot],
-  );
-
-  const openSidecar = useCallback(async (path = sidecarPath, mode: "replace" | "merge" = "replace") => {
-    setCodegenBusy(true);
-    setCodegenError(null);
-    try {
-      const res = await fetch("/api/documents/open", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sidecarPath: path }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const opened = body as OpenDocumentResult;
-      // The file is the canonical token source: we just read it, so don't echo it
-      // straight back out (the writer fires only on subsequent in-tool edits).
-      skipTokenWriteRef.current = true;
-      skipCodeSyncRef.current = true;
-      skipNextPathSyncRef.current = true;
-      const state = useDocumentStore.getState();
-      const nextRoots =
-        mode === "merge"
-          ? { ...state.roots, [opened.root.id]: opened.root }
-          : { [opened.root.id]: opened.root };
-      const nextComponents =
-        mode === "merge" ? { ...state.components, ...(opened.components ?? {}) } : opened.components;
-      const nextTokens =
-        mode === "merge" ? { ...state.tokens, ...(opened.tokens ?? {}) } : opened.tokens;
-      markPendingRepoOpen(opened.root.id);
-      state.loadRoots(nextRoots, [opened.root.id], nextComponents, nextTokens);
-      resetCanvasHistory();
-      setScreenName(opened.screenName);
-      if (opened.repoPath) {
-        setRepoPath(opened.repoPath);
-        setRepoDraft(opened.repoPath);
-      }
-      setTargetPath(opened.targetPath);
-      setSidecarPath(opened.sidecarPath);
-      const repoScreen = {
-        path: opened.targetPath,
-        sidecarPath: opened.sidecarPath,
-        rootId: opened.root.id,
-      };
-      setActiveRepoScreen(repoScreen);
-      setLoadedRepoScreens((current) =>
-        mode === "merge" ? { ...current, [opened.targetPath]: repoScreen } : { [opened.targetPath]: repoScreen },
-      );
-      managedDocumentRef.current = true;
-      setCodegenResult(null);
-      pendingPreviewRef.current = true;
-      setActiveArtifactId("screen");
-      void loadRepoContext();
-      setStatus(`Opened ${opened.sidecarPath}`);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Document load failed";
-      setCodegenError(message);
-      setStatus(message);
-    } finally {
-      setCodegenBusy(false);
-    }
-  }, [loadRepoContext, resetCanvasHistory, sidecarPath]);
-
-  const importSource = useCallback(async (path = targetPath, mode: "replace" | "merge" = "replace") => {
-    setCodegenBusy(true);
-    setCodegenError(null);
-    try {
-      const res = await fetch("/api/documents/import-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourcePath: path }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const imported = body as ImportSourceResult;
-      skipTokenWriteRef.current = true; // imported document load — not a token edit
-      skipCodeSyncRef.current = true; // imported document load — not a canvas edit
-      skipNextPathSyncRef.current = true;
-      const state = useDocumentStore.getState();
-      const nextRoots =
-        mode === "merge"
-          ? { ...state.roots, [imported.root.id]: imported.root }
-          : { [imported.root.id]: imported.root };
-      markPendingRepoOpen(imported.root.id);
-      state.loadRoots(nextRoots, [imported.root.id]);
-      resetCanvasHistory();
-      setScreenName(imported.screenName);
-      if (imported.repoPath) {
-        setRepoPath(imported.repoPath);
-        setRepoDraft(imported.repoPath);
-      }
-      setTargetPath(imported.sourcePath);
-      setSidecarPath(imported.sidecarPath);
-      const repoScreen = {
-        path: imported.sourcePath,
-        sidecarPath: imported.sidecarPath,
-        rootId: imported.root.id,
-      };
-      setActiveRepoScreen(repoScreen);
-      setLoadedRepoScreens((current) =>
-        mode === "merge" ? { ...current, [imported.sourcePath]: repoScreen } : { [imported.sourcePath]: repoScreen },
-      );
-      managedDocumentRef.current = true;
-      setCodegenResult(null);
-      pendingPreviewRef.current = true;
-      setActiveArtifactId("screen");
-      void loadRepoContext();
-      setStatus(`Imported ${imported.sourcePath}`);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Code import failed";
-      setCodegenError(message);
-      setStatus(message);
-    } finally {
-      setCodegenBusy(false);
-    }
-  }, [loadRepoContext, resetCanvasHistory, targetPath]);
 
   const openRepoSettings = useCallback(() => {
     setInspectorTab("Code");
@@ -2730,221 +2351,8 @@ export default function App() {
     [importSource, openSidecar],
   );
 
-  const scheduleAutoSync = useCallback(() => {
-    if (!managedDocumentRef.current) {
-      setSyncState({ status: "idle" });
-      return;
-    }
-    if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
-    setSyncState({ status: "scheduled" });
-    autoSyncTimerRef.current = setTimeout(() => {
-      autoSyncTimerRef.current = null;
-      if (codegenBusyRef.current) {
-        // Don't drop this edit — the in-flight codegen will re-run when it finishes.
-        rerunRequestedRef.current = true;
-        return;
-      }
-      void requestCodegen("sync", "auto");
-    }, 900);
-  }, [requestCodegen]);
-  scheduleAutoSyncRef.current = scheduleAutoSync;
 
-  useEffect(() => {
-    let lastRoots = useDocumentStore.getState().roots;
-    let lastComponents = useDocumentStore.getState().components;
-    let lastTokens = useDocumentStore.getState().tokens;
-    let lastInteraction = useDocumentStore.getState().interaction;
-    let dirtyDuringInteraction = false;
-    const unsubscribe = useDocumentStore.subscribe((state) => {
-      const documentChanged =
-        state.roots !== lastRoots ||
-        state.components !== lastComponents ||
-        state.tokens !== lastTokens;
-      const interactionJustEnded = !!lastInteraction && !state.interaction;
-      lastRoots = state.roots;
-      lastComponents = state.components;
-      lastTokens = state.tokens;
-      lastInteraction = state.interaction;
-      if (interactionJustEnded && dirtyDuringInteraction) {
-        dirtyDuringInteraction = false;
-        scheduleAutoSync();
-        return;
-      }
-      if (!documentChanged) return;
-      if (skipCodeSyncRef.current) {
-        skipCodeSyncRef.current = false;
-        return;
-      }
-      if (state.interaction) {
-        dirtyDuringInteraction = true;
-        return;
-      }
-      scheduleAutoSync();
-    });
-    return () => {
-      if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
-      unsubscribe();
-    };
-  }, [scheduleAutoSync]);
 
-  useEffect(() => {
-    const signature = `${screenName}|${targetPath}`;
-    if (signature === pathSyncSignatureRef.current) return;
-    pathSyncSignatureRef.current = signature;
-    if (skipNextPathSyncRef.current) {
-      skipNextPathSyncRef.current = false;
-      return;
-    }
-    if (!Object.keys(useDocumentStore.getState().roots).length) return;
-    scheduleAutoSync();
-  }, [screenName, targetPath, scheduleAutoSync]);
-
-  // Populate the code view live once a freshly-opened document's roots + paths have
-  // settled — no manual Preview needed. Auto-sync keeps it current on later edits.
-  useEffect(() => {
-    if (!pendingPreviewRef.current) return;
-    if (!Object.keys(useDocumentStore.getState().roots).length) return;
-    pendingPreviewRef.current = false;
-    void requestCodegen("preview");
-  }, [roots, screenName, targetPath, requestCodegen]);
-
-  const refreshHeads = useCallback(async (list: CodeArtifact[]) => {
-    if (list.length === 0) {
-      setHeadByPath({});
-      return;
-    }
-    const entries = await Promise.all(
-      list.map(async (artifact) => {
-        try {
-          const res = await fetch("/api/git/head-file", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path: artifact.path }),
-          });
-          const body = await res.json();
-          return [artifact.path, res.ok && body.exists ? (body.content as string) : null] as const;
-        } catch {
-          return [artifact.path, null] as const;
-        }
-      }),
-    );
-    const map: Record<string, string> = {};
-    for (const [path, content] of entries) if (content != null) map[path] = content;
-    setHeadByPath(map);
-  }, []);
-
-  const refreshBranches = useCallback(async () => {
-    try {
-      const res = await fetch("/api/git/branches");
-      const body = await res.json();
-      if (res.ok) setBranchInfo({ current: body.current ?? "", branches: body.branches ?? [] });
-    } catch {
-      /* branches unavailable — leave prior value */
-    }
-  }, []);
-
-  // Refresh the HEAD diff baseline whenever the generated artifacts change.
-  useEffect(() => {
-    void refreshHeads(artifacts);
-  }, [artifacts, refreshHeads]);
-
-  useEffect(() => {
-    void refreshBranches();
-  }, [refreshBranches, repoPath]);
-
-  const switchBranch = useCallback(
-    async (branch: string, create = false) => {
-      setRepoError(null);
-      try {
-        const res = await fetch("/api/git/switch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ branch, create }),
-        });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? "Branch switch failed");
-        await refreshGitStatus();
-        await refreshBranches();
-        void loadRepoContext();
-        // The working tree now reflects the new branch — reload the open document.
-        void openSidecar();
-      } catch (e) {
-        setRepoError(e instanceof Error ? e.message : "Branch switch failed");
-      }
-    },
-    [loadRepoContext, openSidecar, refreshBranches, refreshGitStatus],
-  );
-
-  const commitChanges = useCallback(
-    async (message: string) => {
-      setRepoError(null);
-      try {
-        const res = await fetch("/api/git/commit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, paths: codeArtifacts(codegenResult).map((a) => a.path) }),
-        });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? "Commit failed");
-        await refreshGitStatus();
-        await refreshBranches();
-        void refreshHeads(codeArtifacts(codegenResult));
-      } catch (e) {
-        setRepoError(e instanceof Error ? e.message : "Commit failed");
-      }
-    },
-    [codegenResult, refreshBranches, refreshGitStatus, refreshHeads],
-  );
-
-  const openPullRequest = useCallback(async () => {
-    setRepoError(null);
-    try {
-      const res = await fetch("/api/git/pr-url");
-      const body = await res.json();
-      if (body.url) window.open(body.url, "_blank", "noopener");
-      else setRepoError("No origin remote to open a pull request against.");
-    } catch (e) {
-      setRepoError(e instanceof Error ? e.message : "Could not resolve pull request URL");
-    }
-  }, []);
-
-  const syncLabel =
-    syncState.status === "scheduled"
-      ? "Sync pending"
-      : syncState.status === "syncing"
-        ? "Syncing"
-        : syncState.status === "synced"
-          ? `Synced ${syncState.path}`
-          : syncState.status === "error"
-            ? "Sync failed"
-            : "Ready";
-  const gitLabel = gitSummary(gitStatus);
-  const gitTone =
-    gitStatus.status === "error" ? "amber" : gitStatus.status === "ready" && !gitStatus.clean ? "accent" : "neutral";
-  const syncTone =
-    syncState.status === "error" ? "amber" : syncState.status === "syncing" || syncState.status === "scheduled" ? "accent" : "neutral";
-  const repoName = repoContext?.repoName ?? "Repository";
-  const workspaceFolderLabel = scopedPathLabel(repoContext?.repoPath ?? repoPath, repoContext?.gitRootPath);
-  const gitRepoLabel = repoContext?.gitRootName ?? pathLabel(gitStatus.status === "ready" ? gitStatus.repoPath : repoPath);
-  const scopedChangeLabel =
-    gitStatus.status === "loading"
-      ? "Checking"
-      : gitStatus.status === "error"
-        ? "Unavailable"
-        : gitStatus.clean
-          ? "Clean"
-          : `${gitStatus.files.length} in workspace`;
-  const branchLabel =
-    gitStatus.status === "ready" ? gitStatus.branch : gitStatus.status === "error" ? "Unavailable" : "Checking";
-  const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
-  const syncTarget = repoContext?.designSession?.syncTarget;
-  const repoSubtitle =
-    frameworkLabels.length > 0
-      ? `${frameworkLabels.slice(0, 3).join(" · ")}${frameworkLabels.length > 3 ? ` +${frameworkLabels.length - 3}` : ""}${syncTarget ? ` · ${syncTarget}` : ""}`
-      : repoContext?.packageManager
-        ? `No app runtime detected · ${repoContext.packageManager}${syncTarget ? ` · ${syncTarget}` : ""}`
-        : "Attach a repo";
-  const repoGitCode = firstGitCode(gitStatus);
   // Read-only context crumb mirroring the active workspace (and its object where known).
   const workspaceContext =
     workspace === "Component"
@@ -2966,92 +2374,8 @@ export default function App() {
         background: color.canvas,
       }}
     >
-      {/* TOP BAR */}
-      <header
-        className="studio-chrome flex items-center gap-md border-b border-line bg-chrome px-xl"
-        style={{
-          flex: `0 0 ${layout.topbar}px`,
-          height: layout.topbar,
-        }}
-      >
-        <div className="flex min-w-0 items-center gap-xs">
-          <strong
-            className="min-w-0 truncate text-base font-semibold text-ink"
-            title={repoContext?.repoPath ? `${repoSubtitle} · ${repoContext.repoPath}` : repoSubtitle}
-          >
-            {repoName}
-          </strong>
-          {repoGitCode && (
-            <span
-              title="Repository has changes"
-              aria-label="Repository has changes"
-              className="flex size-1 shrink-0 rounded-full bg-accent"
-            />
-          )}
-          <IconButton
-            title={repoContext ? "Change connected repo" : "Connect repo"}
-            onClick={openRepoSettings}
-          >
-            <FolderOpen size={14} aria-hidden="true" />
-          </IconButton>
-        </div>
-        <span className="h-4 w-px shrink-0 bg-line-soft" aria-hidden="true" />
-        <span className="min-w-0 truncate text-xs text-ink-faint" title={workspaceContext}>
-          {workspaceContext}
-        </span>
-        <div className="ml-auto flex min-w-0 items-center gap-sm">
-          <StatusPill
-            tone={gitTone}
-            title={gitStatus.status === "error" ? gitStatus.message : gitLabel}
-          >
-            {gitLabel}
-          </StatusPill>
-          <StatusPill
-            tone={syncTone}
-            title={syncState.status === "error" ? syncState.message : syncLabel}
-          >
-            {syncLabel}
-          </StatusPill>
-        </div>
-        <div className="flex items-center gap-xs border-l border-line-soft pl-md">
-          <IconButton
-            disabled={!undoAvailable}
-            onClick={undoLatest}
-            title="Undo"
-            kbd="⌘Z"
-          >
-            <Undo2 size={16} aria-hidden="true" />
-          </IconButton>
-          <IconButton
-            disabled={!redoAvailable}
-            onClick={redoLatest}
-            title="Redo"
-            kbd="⌘⇧Z"
-          >
-            <Redo2 size={16} aria-hidden="true" />
-          </IconButton>
-        </div>
-        <div className="flex min-w-0 items-center gap-sm border-l border-line-soft pl-md">
-          <IconButton
-            title="Preview generated code"
-            onClick={() => {
-              setInspectorTab("Code");
-              void requestCodegen("preview");
-            }}
-            disabled={codegenBusy || !focusedRoot}
-          >
-            <Play size={14} aria-hidden="true" />
-          </IconButton>
-          <Button
-            variant="primary"
-            disabled={codegenBusy || !focusedRoot}
-            title="Sync generated files"
-            onClick={() => void requestCodegen("sync")}
-          >
-            <Save size={14} aria-hidden="true" /> Sync
-          </Button>
-        </div>
-      </header>
+      {/* TOP BAR (self-subscribing: git/sync pills don't re-render the shell) */}
+      <TopBar workspaceContext={workspaceContext} onOpenRepoSettings={openRepoSettings} onOpenCodePanel={() => setInspectorTab("Code")} />
 
       {/* WORKBENCH: left panel · canvas (with floating bottom toolbar) · right column */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
@@ -3161,9 +2485,7 @@ export default function App() {
           )}
           {/* Shared status strip — consistent across all workspaces so the canvas
               frame keeps a stable height as the workspace changes. */}
-          <div className="studio-chrome flex h-7 flex-none items-center gap-sm border-t border-line bg-chrome px-md text-xs text-ink-dim">
-            <span className="truncate">{status}</span>
-          </div>
+          <StatusStrip />
         </div>
 
         {/* RIGHT COLUMN: canvas/code inspector. Optional native preview is on demand. */}
@@ -3202,49 +2524,9 @@ export default function App() {
                   <Inspector rootId={focusedRootId} />
                 </ErrorBoundary>
               ) : inspectorTab === "Code" ? (
-                <CodePanel
-                  repoBusy={repoBusy}
-                  codegenBusy={codegenBusy}
-                  repoDraft={repoDraft}
-                  setRepoDraft={setRepoDraft}
-                  repoPath={repoPath}
-                  repoContext={repoContext}
-                  workspaceFolderLabel={workspaceFolderLabel}
-                  gitRepoLabel={gitRepoLabel}
-                  repoError={repoError}
-                  onOpenDemo={() => void connectDemoRepo()}
-                  onSelectFolder={() => void selectRepoFolder()}
-                  onConnectPath={() => void connectRepo()}
-                  branchInfo={branchInfo}
-                  scopedChangeLabel={scopedChangeLabel}
-                  onSwitchBranch={(branch, create) => void switchBranch(branch, create)}
-                  onCommit={(message) => void commitChanges(message)}
-                  onOpenPr={() => void openPullRequest()}
-                  onForceSync={() => void requestCodegen("sync")}
-                  sidecarPath={sidecarPath}
-                  setSidecarPath={setSidecarPath}
-                  onOpenSidecar={() => void openSidecar()}
-                  onImportSource={() => void importSource()}
-                  screenName={screenName}
-                  setScreenName={setScreenName}
-                  targetPath={targetPath}
-                  setTargetPath={setTargetPath}
-                  canCodegen={Boolean(focusedRoot)}
-                  codegenError={codegenError}
-                  codegenResult={codegenResult}
-                  artifacts={artifacts}
-                  activeArtifactId={activeArtifactId}
-                  setActiveArtifactId={setActiveArtifactId}
-                  headByPath={headByPath}
-                />
+                <CodePanel />
               ) : (
-                <ChangesTimeline
-                  gitStatus={gitStatus}
-                  repoPath={repoPath}
-                  repoContext={repoContext}
-                  onRefresh={() => void refreshGitStatus()}
-                  onOpenCode={() => setInspectorTab("Code")}
-                />
+                <ChangesTimeline onOpenCode={() => setInspectorTab("Code")} />
               )}
             </div>
           </div>

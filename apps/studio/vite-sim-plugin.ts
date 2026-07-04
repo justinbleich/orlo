@@ -482,6 +482,7 @@ async function writeFlowManifest(manifest: FlowManifest) {
 type CanvasManifest = {
   version: 1;
   positions: Record<string, { x: number; y: number }>;
+  flowPositions?: Record<string, Record<string, { x: number; y: number }>>;
 };
 
 function canvasManifestPath() {
@@ -505,7 +506,26 @@ async function readCanvasManifest(): Promise<CanvasManifest> {
           positions[rootId] = { x: position.x, y: position.y };
         }
       }
-      return { version: 1, positions };
+      const flowPositions: NonNullable<CanvasManifest["flowPositions"]> = {};
+      if (data.flowPositions && typeof data.flowPositions === "object") {
+        for (const [flowId, byRoot] of Object.entries(data.flowPositions)) {
+          if (!byRoot || typeof byRoot !== "object") continue;
+          const normalized: Record<string, { x: number; y: number }> = {};
+          for (const [rootId, position] of Object.entries(byRoot)) {
+            if (
+              position &&
+              typeof position.x === "number" &&
+              Number.isFinite(position.x) &&
+              typeof position.y === "number" &&
+              Number.isFinite(position.y)
+            ) {
+              normalized[rootId] = { x: position.x, y: position.y };
+            }
+          }
+          flowPositions[flowId] = normalized;
+        }
+      }
+      return { version: 1, positions, flowPositions };
     }
   } catch {
     // No manifest yet is the normal first-run state.
@@ -516,7 +536,11 @@ async function readCanvasManifest(): Promise<CanvasManifest> {
 async function writeCanvasManifest(manifest: CanvasManifest): Promise<CanvasManifest> {
   const path = canvasManifestPath();
   await mkdir(dirname(path), { recursive: true });
-  const normalized: CanvasManifest = { version: 1, positions: manifest.positions ?? {} };
+  const normalized: CanvasManifest = {
+    version: 1,
+    positions: manifest.positions ?? {},
+    flowPositions: manifest.flowPositions ?? {},
+  };
   await writeFile(path, JSON.stringify(normalized, null, 2) + "\n");
   return normalized;
 }

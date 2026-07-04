@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  Flag,
   FileCode2,
   FileJson2,
   FolderOpen,
@@ -37,8 +36,8 @@ import {
   type RNPrimitive,
   type TokenCategory,
 } from "@rn-canvas/document";
-import { FrameRenderer } from "@rn-canvas/render-web";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
+import { FlowCanvas } from "./FlowCanvas";
 import { CodePanel } from "./CodePanel";
 import { gitFileStatusLabel, type GitFileStatus, type GitStatus } from "./code-artifacts";
 import {
@@ -293,37 +292,8 @@ function nextScreenName(roots: Iterable<Node>) {
   return `Screen ${index}`;
 }
 
-function FlowScreenPreview({
-  root,
-  components,
-}: {
-  root: Node;
-  components: ComponentRegistry;
-}) {
-  const { w, h } = rootSize(root);
-  const scale = Math.min(144 / w, 256 / h);
-  const previewWidth = w * scale;
-  const previewHeight = h * scale;
-
-  return (
-    <div className="relative h-64 w-36 overflow-hidden rounded-sm bg-white shadow-inner">
-      <div
-        className="pointer-events-none absolute left-1/2 top-1/2 origin-top-left"
-        style={{
-          width: w,
-          height: h,
-          transform: `translate(-${previewWidth / 2}px, -${previewHeight / 2}px) scale(${scale})`,
-        }}
-      >
-        <FrameRenderer root={root} components={components} />
-      </div>
-    </div>
-  );
-}
-
 function FlowWorkspace({
   roots,
-  components,
   flows,
   repoFlows,
   activeFlow,
@@ -340,7 +310,6 @@ function FlowWorkspace({
   onRenameFlow,
 }: {
   roots: Node[];
-  components: ComponentRegistry;
   flows: FlowDefinition[];
   repoFlows: RepoFlowPanelItem[];
   activeFlow: FlowId;
@@ -556,96 +525,19 @@ function FlowWorkspace({
           </IconButton>
         </div>
       </div>
-      <div ref={flowViewportRef} className="relative flex-1 overflow-auto">
-        <div className="grid min-h-full min-w-[760px] grid-cols-[minmax(0,1fr)_260px]">
-          <div className="overflow-auto p-2xl">
-            <div className="flex min-w-max items-start gap-2xl">
-              {routeScreens.map((root, index) => (
-                <div
-                  key={root.id}
-                  {...dragProps(root.id, index)}
-                  className={cn(
-                    "relative flex cursor-grab flex-col items-center gap-sm rounded-sm p-2xs active:cursor-grabbing",
-                    draggedRouteId && draggedRouteId !== root.id && "outline outline-1 outline-accent-line",
-                  )}
-                >
-                  {index > 0 && (
-                    <div
-                      className="absolute -left-2xl top-28 h-px w-2xl bg-accent-line"
-                      aria-hidden="true"
-                    />
-                  )}
-                  <div className="flex h-5 items-center gap-xs text-xs font-medium text-ink-dim">
-                    <span>{labelFor(root, index)}</span>
-                    {root.id === entryScreen?.id && (
-                      <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                        Start
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onSelectScreen(root.id)}
-                    className="flex h-64 w-36 items-center justify-center overflow-hidden rounded-sm border border-line bg-chrome shadow-control transition-colors hover:border-accent-line hover:bg-raised"
-                  >
-                    <FlowScreenPreview root={root} components={components} />
-                  </button>
-                  <div className="flex h-7 items-center gap-2xs">
-                    <button
-                      type="button"
-                      onClick={() => onEntryRootChange(root.id)}
-                      disabled={root.id === entryScreen?.id}
-                      title={root.id === entryScreen?.id ? "Start screen" : "Set as start"}
-                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-default disabled:bg-accent-soft disabled:text-accent"
-                    >
-                      <Flag size={12} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onMoveRoute(root.id, -1)}
-                      disabled={index === 0}
-                      title="Move earlier"
-                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      <ArrowLeft size={13} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onMoveRoute(root.id, 1)}
-                      disabled={index === routeScreens.length - 1}
-                      title="Move later"
-                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      <ArrowRight size={13} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onRemoveRoute(root.id)}
-                      title="Remove from flow"
-                      className="flex size-6 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink"
-                    >
-                      <X size={13} aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {routeScreens.length === 0 && (
-                <div className="flex flex-col items-start gap-sm rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
-                  <span>Add a screen to start mapping the flow.</span>
-                  {availableScreens[0] && (
-                    <button
-                      type="button"
-                      onClick={() => onAddRoute(availableScreens[0].id)}
-                      className="inline-flex h-7 items-center gap-xs rounded-sm border border-line bg-raised px-sm text-xs font-medium text-ink-dim transition-colors hover:bg-chrome-2 hover:text-ink"
-                    >
-                      <Plus size={12} aria-hidden="true" />
-                      Add {labelFor(availableScreens[0], 0)}
-                    </button>
-                  )}
-                </div>
-              )}
+      <div ref={flowViewportRef} className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(0,1fr)_260px]">
+          {activeFlowDefinition ? (
+            <FlowCanvas
+              flow={activeFlowDefinition}
+              routeScreens={routeScreens}
+              onSelectScreen={onSelectScreen}
+            />
+          ) : (
+            <div className="flex items-center justify-center text-sm text-ink-faint">
+              Select a flow to map screens.
             </div>
-          </div>
+          )}
           <aside className="border-l border-line bg-chrome p-md">
             <div className="flex flex-col gap-md">
               <div>
@@ -2298,7 +2190,6 @@ export default function App() {
           {workspace === "Flow" ? (
             <FlowWorkspace
               roots={Object.values(roots)}
-              components={componentRegistry}
               flows={flows}
               repoFlows={repoFlowItems}
               activeFlow={activeFlow}

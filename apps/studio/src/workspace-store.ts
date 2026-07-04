@@ -24,6 +24,7 @@ import {
 } from "./code-artifacts";
 import { bindLoadedRepoScreen, type RepoPanelContext } from "./repo-project-model";
 import {
+  addFlowEdge,
   deriveLinearEdges,
   flowRouteScreens,
   flowScreenKey,
@@ -41,6 +42,8 @@ export type FlowDefinition = {
   routes: NodeId[];
   edges: FlowEdge[];
 };
+
+export type FlowPositions = Record<string, Record<string, { x: number; y: number }>>;
 
 export const DEFAULT_FLOWS: FlowDefinition[] = [
   {
@@ -120,6 +123,7 @@ let rerunRequested = false;
 let autoSyncTimer: ReturnType<typeof setTimeout> | null = null;
 /** Last canvas-manifest payload we saved or loaded (idempotent writer). */
 let canvasSaved = "";
+let canvasSaveTimer: ReturnType<typeof setTimeout> | null = null;
 /** The root the next codegen targets — the last focused screen. */
 let syncRootHint: NodeId | null = null;
 /** Roots edited since the last flush. A token/component change dirties every
@@ -205,6 +209,29 @@ function flowDefinitionsToManifest(
   };
 }
 
+function canvasPayload(
+  positions: Record<NodeId, { x: number; y: number }>,
+  flowPositions: FlowPositions,
+) {
+  return JSON.stringify({ positions, flowPositions });
+}
+
+function saveCanvasManifestLater() {
+  if (canvasSaveTimer) clearTimeout(canvasSaveTimer);
+  canvasSaveTimer = setTimeout(() => {
+    const positions = useDocumentStore.getState().framePositions;
+    const flowPositions = useWorkspaceStore.getState().flowPositions;
+    const payload = canvasPayload(positions, flowPositions);
+    if (payload === canvasSaved) return;
+    canvasSaved = payload;
+    void fetch("/api/canvas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ manifest: { version: 1, positions, flowPositions } }),
+    }).catch(() => {});
+  }, 500);
+}
+
 export function setSyncRootHint(rootId: NodeId | null) {
   syncRootHint = rootId;
 }
@@ -249,6 +276,7 @@ interface WorkspaceState {
   loadedRepoScreens: LoadedRepoScreens;
   flowsById: Record<string, FlowDefinition>;
   flowOrder: string[];
+  flowPositions: FlowPositions;
 
   /** Persistent error notices (sync/repo/git failures). Transient confirmations
    *  stay in the status strip; errors stack here until dismissed. */
@@ -280,8 +308,11 @@ interface WorkspaceState {
   ): Promise<void>;
   setFlowEntryRoot(flowId: string, rootId: NodeId): Promise<void>;
   updateFlowRoutes(flowId: string, routeIds: NodeId[], screenRoots?: Node[]): Promise<void>;
+  addFlowEdge(flowId: string, edge: FlowEdge): Promise<void>;
   upsertFlow(flow: FlowDefinition): Promise<void>;
   removeFlow(flowId: string): Promise<void>;
+  setFlowPosition(flowId: string, rootId: NodeId, x: number, y: number): void;
+  seedFlowPositions(flowPositions: FlowPositions): void;
   requestCodegen(
     mode: "preview" | "sync",
     source?: "manual" | "auto",
@@ -564,6 +595,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     loadedRepoScreens: {},
     flowsById: defaultFlowsById(),
     flowOrder: DEFAULT_FLOWS.map((flow) => flow.id),
+    flowPositions: {},
 
     toasts: [],
     pushToast: (message) =>
@@ -702,10 +734,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const res = await fetch("/api/canvas");
         const body = (await res.json()) as {
           positions?: Record<NodeId, { x: number; y: number }>;
+          flowPositions?: FlowPositions;
         };
-        if (res.ok && body.positions) {
-          canvasSaved = JSON.stringify(body.positions);
-          useDocumentStore.getState().seedFramePositions(body.positions);
+        if (res.ok) {
+          const positions = body.positions ?? {};
+          const flowPositions = body.flowPositions ?? {};
+          canvasSaved = canvasPayload(positions, flowPositions);
+          useDocumentStore.getState().seedFramePositions(positions);
+          set({ flowPositions });
         }
       } catch {
         // No canvas manifest is the normal first-run state.
@@ -781,6 +817,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       await get().persistFlowManifest(nextFlows, screenRoots);
     },
 
+    addFlowEdge: async (flowId, edge) => {
+      const flow = get().flowsById[flowId];
+      if (!flow) return;
+      const nextEdges = addFlowEdge(flow.edges, flow.routes, edge);
+      if (JSON.stringify(nextEdges) === JSON.stringify(flow.edges)) return;
+      const nextFlow = { ...flow, edges: nextEdges };
+      const nextFlows = flowsFromState(get()).map((item) =>
+        item.id === flowId ? nextFlow : item,
+      );
+      set((state) => ({ flowsById: { ...state.flowsById, [flowId]: nextFlow } }));
+      await get().persistFlowManifest(nextFlows);
+    },
+
     upsertFlow: async (flow) => {
       const current = flowsFromState(get());
       const exists = current.some((item) => item.id === flow.id);
@@ -800,12 +849,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       set((state) => {
         const flowsById = { ...state.flowsById };
         delete flowsById[flowId];
+        const flowPositions = { ...state.flowPositions };
+        delete flowPositions[flowId];
         return {
           flowsById,
+          flowPositions,
           flowOrder: state.flowOrder.filter((id) => id !== flowId),
         };
       });
+      saveCanvasManifestLater();
       await get().persistFlowManifest(nextFlows);
+    },
+
+    setFlowPosition: (flowId, rootId, x, y) => {
+      set((state) => ({
+        flowPositions: {
+          ...state.flowPositions,
+          [flowId]: {
+            ...(state.flowPositions[flowId] ?? {}),
+            [rootId]: { x, y },
+          },
+        },
+      }));
+      saveCanvasManifestLater();
+    },
+
+    seedFlowPositions: (flowPositions) => {
+      set({ flowPositions });
     },
 
     requestCodegen: async (mode, source = "manual") => {
@@ -1126,23 +1196,11 @@ export function initWorkspaceSubscriptions(): () => void {
   });
 
   // Canvas layout writer: frame arrangement → .rncanvas/canvas.json.
-  let canvasTimer: ReturnType<typeof setTimeout> | null = null;
   let lastPositions = docStore.getState().framePositions;
   const unsubscribeCanvas = docStore.subscribe((state) => {
     if (state.framePositions === lastPositions) return;
     lastPositions = state.framePositions;
-    if (canvasTimer) clearTimeout(canvasTimer);
-    canvasTimer = setTimeout(() => {
-      const positions = docStore.getState().framePositions;
-      const payload = JSON.stringify(positions);
-      if (payload === canvasSaved) return;
-      canvasSaved = payload;
-      void fetch("/api/canvas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manifest: { version: 1, positions } }),
-      }).catch(() => {});
-    }, 500);
+    saveCanvasManifestLater();
   });
 
   return () => {
@@ -1150,7 +1208,7 @@ export function initWorkspaceSubscriptions(): () => void {
     unsubscribeTokens();
     unsubscribeCanvas();
     if (tokenTimer) clearTimeout(tokenTimer);
-    if (canvasTimer) clearTimeout(canvasTimer);
+    if (canvasSaveTimer) clearTimeout(canvasSaveTimer);
     if (autoSyncTimer) {
       clearTimeout(autoSyncTimer);
       autoSyncTimer = null;

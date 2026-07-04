@@ -282,3 +282,39 @@ test("cancelling an interaction restores roots and selection", () => {
   assert.deepEqual(state.selection, [root.id]);
   assert.equal(state.past.length, 0);
 });
+
+test("node index answers lookups on old and new tree references after an edit", () => {
+  const leaf = createNode("Text", { id: "idx-leaf" });
+  const inner = createNode("View", { id: "idx-inner", children: [leaf] });
+  const root = createNode("View", { id: "idx-root", children: [inner] });
+
+  // Warm the index on the original tree.
+  assert.equal(findNode(root, "idx-leaf"), leaf);
+  assert.equal(getParent(root, "idx-leaf"), inner);
+  assert.equal(getParent(root, "idx-root"), undefined);
+
+  const updated = updateStyle(root, "idx-leaf", { width: 42 });
+  // New reference: lookups reflect the edit (fresh index, structural sharing).
+  assert.equal(findNode(updated, "idx-leaf")?.style.width, 42);
+  assert.equal(getParent(updated, "idx-leaf")?.id, "idx-inner");
+  // Old reference still answers with its own (unchanged) snapshot.
+  assert.equal(findNode(root, "idx-leaf")?.style.width, undefined);
+});
+
+test("node index tracks structural ops (insert, move, remove)", () => {
+  const a = createNode("View", { id: "idx2-a" });
+  const b = createNode("View", { id: "idx2-b" });
+  const root = createNode("View", { id: "idx2-root", children: [a, b] });
+  const child = createNode("Text", { id: "idx2-child" });
+
+  const inserted = insertChild(root, "idx2-a", child);
+  assert.equal(getParent(inserted, "idx2-child")?.id, "idx2-a");
+
+  const moved = moveNode(inserted, "idx2-child", "idx2-b", 0);
+  assert.equal(getParent(moved, "idx2-child")?.id, "idx2-b");
+  assert.equal(childrenOf(findNode(moved, "idx2-a")!).length, 0);
+
+  const removed = removeNode(moved, "idx2-child");
+  assert.equal(findNode(removed, "idx2-child"), undefined);
+  assert.equal(getParent(removed, "idx2-child"), undefined);
+});

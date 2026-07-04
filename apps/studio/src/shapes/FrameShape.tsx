@@ -11,8 +11,10 @@ import {
 } from "tldraw";
 import { BatteryFull, Signal, Wifi } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   applyOverrides,
+  collectUsedComponentIds,
   createInstance,
   findNode,
   resolveVariant,
@@ -400,10 +402,30 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     }, [setStudioLayout, shape.props.rootId]);
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
-    const selection = useDocumentStore((s) => s.selection);
     const editingComponentId = useDocumentStore((s) => s.editingComponentId);
-    // The component registry expands any instances in this frame to primitives.
-    const components = useDocumentStore((s) => s.components);
+    // Selection collapses to one boolean here, so selecting nodes in another
+    // frame doesn't re-render (or re-layout) this one.
+    const hasInnerSelection = useDocumentStore((s) => {
+      const tree = s.roots[shape.props.rootId];
+      return !!tree && s.selection.some((id) => id !== tree.id && !!findNode(tree, id));
+    });
+    // Only the definitions this frame's tree actually uses (transitively), plus
+    // this frame's own definition while it hosts a component edit. Editing an
+    // unrelated component no longer re-expands and re-layouts every frame.
+    const components = useDocumentStore(
+      useShallow((s): ComponentRegistry => {
+        const tree = s.roots[shape.props.rootId];
+        const out: ComponentRegistry = {};
+        if (!tree) return out;
+        for (const id of collectUsedComponentIds(tree, s.components)) {
+          const definition = s.components[id];
+          if (definition) out[id] = definition;
+        }
+        const own = s.components[shape.props.rootId];
+        if (own) out[shape.props.rootId] = own;
+        return out;
+      }),
+    );
     const activeVariant = useStudioStore((state) => state.activeVariant);
     const outOfFocus = !!editingComponentId && shape.props.rootId !== editingComponentId;
     const editingDefinition =
@@ -420,8 +442,6 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
       () => shape.props.w * editor.getZoomLevel() >= LOD_MIN_ONSCREEN_WIDTH,
       [editor, shape.id, shape.props.w],
     );
-    const hasInnerSelection =
-      !!root && selection.some((id) => id !== root.id && !!findNode(root, id));
     const live = selected || largeEnough || hasInnerSelection;
     // The overlay owns pointer input when its frame is selected, or for any frame
     // while a tool is armed (so you can draw into an unselected screen directly).

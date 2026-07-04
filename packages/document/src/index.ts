@@ -62,6 +62,7 @@ export {
   createInstance,
   presetProp,
   applyOverrides,
+  collectUsedComponentIds,
   expandComponents,
   ownerInstanceId,
   reconcileInstance,

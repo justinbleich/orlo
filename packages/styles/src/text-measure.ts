@@ -117,10 +117,29 @@ function wrap(
   return { lines: Math.max(1, totalLines), width: Math.ceil(widest) };
 }
 
+/** Bounded insert-order cache: cleared wholesale when full (strings are tiny,
+ *  rebuilding is cheap, and no LRU bookkeeping stays off the measure hot path). */
+class BoundedCache<V> {
+  private map = new Map<string, V>();
+  constructor(private readonly limit: number) {}
+  get(key: string): V | undefined {
+    return this.map.get(key);
+  }
+  set(key: string, value: V): void {
+    if (this.map.size >= this.limit) this.map.clear();
+    this.map.set(key, value);
+  }
+}
+
 /**
  * Browser canvas-2d measurer. Falls back to a deterministic character-width
  * estimate when no DOM is present (Node/tests), so the same code path is usable
  * everywhere.
+ *
+ * Measurement is memoized at two levels — per-string widths (hit hardest: wrap()
+ * probes a width per word candidate on every Yoga pass) and full measure results.
+ * Yoga rebuilds the whole tree per layout, so without this every keystroke and
+ * drag re-measured every Text node from scratch.
  */
 export function createCanvasTextMeasurer(opts?: {
   fontMetrics?: FontMetricsTable;
@@ -132,22 +151,43 @@ export function createCanvasTextMeasurer(opts?: {
     ctx = document.createElement("canvas").getContext("2d");
   }
 
+  const widthCache = new BoundedCache<number>(8_000);
+  const resultCache = new BoundedCache<TextMeasureResult>(4_000);
+
   return {
     measure({ text, style, numberOfLines, maxWidth }): TextMeasureResult {
       const lh = lineHeightPx(style, metrics);
       const letterSpacing = style.letterSpacing ?? 0;
+      const font = fontShorthand(style);
+
+      // Round the wrap width slightly so sub-pixel jitter from Yoga doesn't
+      // defeat the result cache (a 0.1px width change can't alter wrapping in
+      // any way a user can perceive).
+      const widthKey = maxWidth === undefined ? "∞" : (Math.round(maxWidth * 10) / 10).toString();
+      const resultKey = `${font}|${letterSpacing}|${lh}|${numberOfLines ?? ""}|${widthKey}|${text}`;
+      const cached = resultCache.get(resultKey);
+      if (cached) return cached;
 
       const widthOf = (s: string): number => {
+        const key = `${font}|${letterSpacing}|${s}`;
+        const hit = widthCache.get(key);
+        if (hit !== undefined) return hit;
+        let width: number;
         if (ctx) {
-          ctx.font = fontShorthand(style);
-          return ctx.measureText(s).width + letterSpacing * Math.max(0, s.length - 1);
+          ctx.font = font;
+          width = ctx.measureText(s).width + letterSpacing * Math.max(0, s.length - 1);
+        } else {
+          const size = style.fontSize ?? DEFAULT_FONT_SIZE;
+          width = s.length * (size * 0.6 + letterSpacing);
         }
-        const size = style.fontSize ?? DEFAULT_FONT_SIZE;
-        return s.length * (size * 0.6 + letterSpacing);
+        widthCache.set(key, width);
+        return width;
       };
 
       const { lines, width } = wrap(text, widthOf, maxWidth, numberOfLines);
-      return { width, height: lines * lh };
+      const result = { width, height: lines * lh };
+      resultCache.set(resultKey, result);
+      return result;
     },
   };
 }

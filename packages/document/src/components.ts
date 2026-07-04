@@ -272,6 +272,45 @@ export function ownerInstanceId(expandedId: NodeId): NodeId | null {
   return marker === -1 ? null : expandedId.slice(0, marker);
 }
 
+const usedComponentsCache = new WeakMap<
+  Node,
+  { registry: ComponentRegistry; ids: readonly NodeId[] }
+>();
+
+/**
+ * Every component id a tree depends on for expansion — placed instances plus,
+ * transitively, instances inside their templates and slot children. Memoized on
+ * the (immutable) tree + registry pair so per-render callers pay a walk only when
+ * one of them actually changed. Used to scope canvas subscriptions: a frame only
+ * needs to re-expand when a definition it uses changes.
+ */
+export function collectUsedComponentIds(
+  tree: Node,
+  registry: ComponentRegistry,
+): readonly NodeId[] {
+  const cached = usedComponentsCache.get(tree);
+  if (cached && cached.registry === registry) return cached.ids;
+  const ids = new Set<NodeId>();
+  const visit = (node: Node) => {
+    if (node.type === "ComponentInstance") {
+      if (!ids.has(node.componentId)) {
+        ids.add(node.componentId);
+        const definition = registry[node.componentId];
+        if (definition) visit(definition.template);
+      }
+      if (node.slots) {
+        for (const children of Object.values(node.slots)) children.forEach(visit);
+      }
+      return;
+    }
+    for (const child of childrenOf(node)) visit(child);
+  };
+  visit(tree);
+  const result = Object.freeze([...ids].sort());
+  usedComponentsCache.set(tree, { registry, ids: result });
+  return result;
+}
+
 // --- Reconciliation (definition edits) --------------------------------------
 
 /** Drop prop targets whose node no longer exists in the template, and any prop

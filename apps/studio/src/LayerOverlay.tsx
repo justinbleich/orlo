@@ -31,7 +31,7 @@ import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
 import { smartSnap, type SnapRect } from "./canvas-snap";
 import { equalSpacingSnap, type SpacingRect, type SpacingSegment } from "./canvas-spacing";
 
-type ResizeHandle = "nw" | "ne" | "se" | "sw";
+type ResizeHandle = "nw" | "ne" | "se" | "sw" | "n" | "e" | "s" | "w";
 type GroupMember = { nodeId: NodeId; left: number; top: number; width: number; height: number; style: Node["style"] };
 type Gesture = {
   kind: "move" | "resize" | "marquee" | "create";
@@ -489,11 +489,14 @@ export function LayerOverlay({
     const store = useDocumentStore.getState();
 
     if (current.kind === "resize") {
-      const west = current.handle === "nw" || current.handle === "sw";
-      const north = current.handle === "nw" || current.handle === "ne";
-      const nextWidth = Math.max(1, current.box.width + (west ? -dx : dx));
-      const nextHeight = Math.max(1, current.box.height + (north ? -dy : dy));
-      const partial: Record<string, number> = { width: nextWidth, height: nextHeight };
+      const west = current.handle === "nw" || current.handle === "sw" || current.handle === "w";
+      const north = current.handle === "nw" || current.handle === "ne" || current.handle === "n";
+      // Edge handles resize a single axis; corners keep both.
+      const horizontalOnly = current.handle === "e" || current.handle === "w";
+      const verticalOnly = current.handle === "n" || current.handle === "s";
+      const partial: Record<string, number> = {};
+      if (!verticalOnly) partial.width = Math.max(1, current.box.width + (west ? -dx : dx));
+      if (!horizontalOnly) partial.height = Math.max(1, current.box.height + (north ? -dy : dy));
       if (node.style.position === "absolute") {
         const parentLeft = current.parentBox?.left ?? 0;
         const parentTop = current.parentBox?.top ?? 0;
@@ -692,11 +695,20 @@ export function LayerOverlay({
   }
 
   const handles: ResizeHandle[] = ["nw", "ne", "se", "sw"];
-  const handlePosition: Record<ResizeHandle, React.CSSProperties> = {
+  const handlePosition: Partial<Record<ResizeHandle, React.CSSProperties>> = {
     nw: { left: -4, top: -4, cursor: "nwse-resize" },
     ne: { right: -4, top: -4, cursor: "nesw-resize" },
     se: { right: -4, bottom: -4, cursor: "nwse-resize" },
     sw: { left: -4, bottom: -4, cursor: "nesw-resize" },
+  };
+  // Invisible single-axis strips along the edges — "just make it wider" without
+  // aiming for a corner.
+  const edgeHandles: ResizeHandle[] = ["n", "e", "s", "w"];
+  const edgePosition: Partial<Record<ResizeHandle, React.CSSProperties>> = {
+    n: { left: 6, right: 6, top: -3, height: 6, cursor: "ns-resize" },
+    s: { left: 6, right: 6, bottom: -3, height: 6, cursor: "ns-resize" },
+    e: { top: 6, bottom: 6, right: -3, width: 6, cursor: "ew-resize" },
+    w: { top: 6, bottom: 6, left: -3, width: 6, cursor: "ew-resize" },
   };
   const showHoverLabel =
     active &&
@@ -741,6 +753,26 @@ export function LayerOverlay({
         setHoveredBox(null);
       }}
       onDoubleClick={onDoubleClick}
+      onContextMenu={(event) => {
+        if (!active || editing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const point = localPoint(
+          overlayRef.current ?? (event.currentTarget as HTMLDivElement),
+          event.clientX,
+          event.clientY,
+        );
+        const rawHit = hitTestLayout(result.layout, point);
+        const hit = rawHit ? resolveHit(rawHit) : undefined;
+        if (!hit || hit.node.id === root.id || hit.node.design?.hidden) return;
+        useDocumentStore.getState().setSelection([hit.node.id]);
+        useStudioStore.getState().openLayerMenu({
+          rootId: root.id,
+          nodeId: hit.node.id,
+          x: event.clientX,
+          y: event.clientY,
+        });
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !editing) selectParent();
       }}
@@ -906,24 +938,39 @@ export function LayerOverlay({
               singleNode &&
               singleNode.id !== root.id &&
               singleNode.type !== "ComponentInstance" &&
-              !singleNode.design?.locked &&
-              handles.map((handle) => (
-                <div
-                  key={handle}
-                  title={`Resize ${handle}`}
-                  onPointerDown={(event) => onResizePointerDown(event, handle)}
-                  style={{
-                    position: "absolute",
-                    width: 8,
-                    height: 8,
-                    border: `1px solid ${color.accent}`,
-                    borderRadius: radius.sm,
-                    background: color.chrome,
-                    pointerEvents: "auto",
-                    ...handlePosition[handle],
-                  }}
-                />
-              ))}
+              !singleNode.design?.locked && (
+                <>
+                  {edgeHandles.map((handle) => (
+                    <div
+                      key={handle}
+                      title={`Resize ${handle}`}
+                      onPointerDown={(event) => onResizePointerDown(event, handle)}
+                      style={{
+                        position: "absolute",
+                        pointerEvents: "auto",
+                        ...edgePosition[handle],
+                      }}
+                    />
+                  ))}
+                  {handles.map((handle) => (
+                    <div
+                      key={handle}
+                      title={`Resize ${handle}`}
+                      onPointerDown={(event) => onResizePointerDown(event, handle)}
+                      style={{
+                        position: "absolute",
+                        width: 8,
+                        height: 8,
+                        border: `1px solid ${color.accent}`,
+                        borderRadius: radius.sm,
+                        background: color.chrome,
+                        pointerEvents: "auto",
+                        ...handlePosition[handle],
+                      }}
+                    />
+                  ))}
+                </>
+              )}
           </div>
         ))}
 

@@ -30,6 +30,14 @@ interface StudioState {
   activeVariant: Record<string, string>;
   setActiveVariant(propertyName: string, value: string): void;
   resetActiveVariant(): void;
+  /** Collapsed layer-tree rows, keyed by node id. Lifted here (not per-row
+   *  React state) so expand state survives tree remounts. */
+  collapsedLayers: Record<NodeId, boolean>;
+  toggleLayerCollapsed(nodeId: NodeId): void;
+  /** Open layer context menu (canvas or tree). One at a time, app-wide. */
+  layerMenu: { rootId: NodeId; nodeId: NodeId; x: number; y: number } | null;
+  openLayerMenu(menu: { rootId: NodeId; nodeId: NodeId; x: number; y: number }): void;
+  closeLayerMenu(): void;
 }
 
 export const useStudioStore = create<StudioState>((set) => ({
@@ -47,4 +55,12 @@ export const useStudioStore = create<StudioState>((set) => ({
   setActiveVariant: (propertyName, value) =>
     set((state) => ({ activeVariant: { ...state.activeVariant, [propertyName]: value } })),
   resetActiveVariant: () => set({ activeVariant: {} }),
+  collapsedLayers: {},
+  toggleLayerCollapsed: (nodeId) =>
+    set((state) => ({
+      collapsedLayers: { ...state.collapsedLayers, [nodeId]: !state.collapsedLayers[nodeId] },
+    })),
+  layerMenu: null,
+  openLayerMenu: (layerMenu) => set({ layerMenu }),
+  closeLayerMenu: () => set({ layerMenu: null }),
 }));

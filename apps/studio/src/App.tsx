@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Flag,
@@ -50,6 +51,7 @@ import {
 } from "./workspace-store";
 import { Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { LayerContextMenu } from "./LayerContextMenu";
 import { color, layout, radius, space, text } from "./studio-theme";
 import {
   Eyebrow,
@@ -1257,6 +1259,50 @@ function StatusStrip() {
   );
 }
 
+/** Persistent error notices. Confirmations stay in the status strip; failures
+ *  stack here until dismissed so they can't scroll past unseen. */
+function Toasts() {
+  const toasts = useWorkspaceStore((s) => s.toasts);
+  const dismiss = useWorkspaceStore((s) => s.dismissToast);
+  if (toasts.length === 0) return null;
+  return (
+    <div className="studio-chrome fixed bottom-10 right-4 z-50 flex w-80 flex-col gap-xs">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          role="alert"
+          className="flex items-start gap-sm rounded-sm border border-amber/50 bg-chrome p-sm shadow-popover"
+        >
+          <AlertTriangle size={14} aria-hidden="true" className="mt-px shrink-0 text-amber" />
+          <div className="min-w-0 flex-1 break-words text-xs text-ink">{toast.message}</div>
+          <button
+            type="button"
+            title="Dismiss"
+            onClick={() => dismiss(toast.id)}
+            className="shrink-0 text-ink-faint transition-colors hover:text-ink"
+          >
+            <X size={13} aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const RIGHT_COLUMN_WIDTH_KEY = "rn-canvas.rightColumnWidth";
+const RIGHT_COLUMN_MIN = 300;
+const RIGHT_COLUMN_MAX = 640;
+
+function readStoredRightColumnWidth(): number {
+  try {
+    const raw = Number(window.localStorage.getItem(RIGHT_COLUMN_WIDTH_KEY));
+    if (Number.isFinite(raw) && raw >= RIGHT_COLUMN_MIN && raw <= RIGHT_COLUMN_MAX) return raw;
+  } catch {
+    /* storage unavailable */
+  }
+  return layout.rightColumn;
+}
+
 function ChangesTimeline({ onOpenCode }: { onOpenCode: () => void }) {
   const gitStatus = useWorkspaceStore((s) => s.gitStatus);
   const repoPath = useWorkspaceStore((s) => s.repoPath);
@@ -1379,6 +1425,7 @@ export default function App() {
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
+  const [rightColumnWidth, setRightColumnWidth] = useState(readStoredRightColumnWidth);
 
   // Workspace slices App itself renders or orchestrates. Panels that own their
   // display state (CodePanel, ChangesTimeline, TopBar, StatusStrip) subscribe
@@ -2488,12 +2535,38 @@ export default function App() {
           <StatusStrip />
         </div>
 
-        {/* RIGHT COLUMN: canvas/code inspector. Optional native preview is on demand. */}
+        {/* RIGHT COLUMN: canvas/code inspector. Drag the divider to resize —
+            diffs want width. Width persists per browser. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize inspector"
+          title="Drag to resize"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+            const width = Math.min(
+              RIGHT_COLUMN_MAX,
+              Math.max(RIGHT_COLUMN_MIN, window.innerWidth - event.clientX),
+            );
+            setRightColumnWidth(width);
+            try {
+              window.localStorage.setItem(RIGHT_COLUMN_WIDTH_KEY, String(width));
+            } catch {
+              /* storage unavailable */
+            }
+          }}
+          onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+          className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-accent-line"
+        />
         <div
           className="studio-chrome"
           style={{
-            flex: `0 0 ${layout.rightColumn}px`,
-            width: layout.rightColumn,
+            flex: `0 0 ${rightColumnWidth}px`,
+            width: rightColumnWidth,
             borderLeft: `1px solid ${color.line}`,
             display: "flex",
             flexDirection: "column",
@@ -2532,6 +2605,8 @@ export default function App() {
           </div>
         </div>
       </div>
+      <LayerContextMenu />
+      <Toasts />
     </div>
     </TooltipProvider>
   );

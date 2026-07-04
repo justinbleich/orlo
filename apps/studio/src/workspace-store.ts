@@ -84,6 +84,7 @@ let syncRootHint: NodeId | null = null;
  *  screen root (token reapply touches all trees), so a color-token edit syncs
  *  every affected generated file, not just the focused one. */
 const dirtyRoots = new Set<NodeId>();
+let nextToastId = 1;
 
 export function setSyncRootHint(rootId: NodeId | null) {
   syncRootHint = rootId;
@@ -127,6 +128,12 @@ interface WorkspaceState {
   repoContext: RepoPanelContext | null;
   activeRepoScreen: ActiveRepoScreen | null;
   loadedRepoScreens: LoadedRepoScreens;
+
+  /** Persistent error notices (sync/repo/git failures). Transient confirmations
+   *  stay in the status strip; errors stack here until dismissed. */
+  toasts: Array<{ id: number; message: string }>;
+  pushToast(message: string): void;
+  dismissToast(id: number): void;
 
   setStatus(status: string): void;
   setRepoDraft(value: string): void;
@@ -237,6 +244,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       if (source === "manual") {
         const message = "Select a screen before syncing.";
         set({ codegenError: message, status: message, syncState: { status: "error", message } });
+      get().pushToast(message);
       } else {
         set({ syncState: { status: "idle" } });
       }
@@ -273,6 +281,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     } catch (e) {
       const message = e instanceof Error ? e.message : "Sync failed";
       set({ codegenError: message, status: message, syncState: { status: "error", message } });
+      get().pushToast(message);
       return null;
     } finally {
       codegenInFlight = false;
@@ -324,6 +333,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     if (codegenInFlight) {
       const message = "Wait for the current sync to finish before changing repositories.";
       set({ repoError: message, status: message });
+        get().pushToast(message);
       return false;
     }
     if (autoSyncTimer) {
@@ -405,6 +415,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     repoContext: null,
     activeRepoScreen: null,
     loadedRepoScreens: {},
+
+    toasts: [],
+    pushToast: (message) =>
+      set((state) => {
+        // Collapse duplicates: re-raising the same failure refreshes, not stacks.
+        const kept = state.toasts.filter((toast) => toast.message !== message);
+        return { toasts: [...kept, { id: nextToastId++, message }].slice(-4) };
+      }),
+    dismissToast: (id) =>
+      set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) })),
 
     setStatus: (status) => set({ status }),
     setRepoDraft: (repoDraft) => set({ repoDraft }),
@@ -555,6 +575,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       if (!root) {
         const message = "Select a screen before syncing.";
         set({ codegenError: message, status: message });
+        get().pushToast(message);
         return null;
       }
       if (codegenInFlight) {
@@ -576,6 +597,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       } catch (e) {
         const message = e instanceof Error ? e.message : "Preview failed";
         set({ codegenError: message, status: message });
+        get().pushToast(message);
         return null;
       } finally {
         codegenInFlight = false;
@@ -630,6 +652,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       } catch (e) {
         const message = e instanceof Error ? e.message : "Document load failed";
         set({ codegenError: message, status: message });
+        get().pushToast(message);
       } finally {
         set({ codegenBusy: false });
       }
@@ -658,6 +681,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       } catch (e) {
         const message = e instanceof Error ? e.message : "Code import failed";
         set({ codegenError: message, status: message });
+        get().pushToast(message);
       } finally {
         set({ codegenBusy: false });
       }
@@ -678,6 +702,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const message =
           error instanceof Error ? error.message : "Repository connection failed";
         set({ repoError: message, status: message });
+        get().pushToast(message);
       } finally {
         set({ repoBusy: false });
       }
@@ -693,6 +718,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       } catch (error) {
         const message = error instanceof Error ? error.message : "Folder selection failed";
         set({ repoError: message, status: message });
+        get().pushToast(message);
       } finally {
         set({ repoBusy: false });
       }
@@ -709,6 +735,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const message =
           error instanceof Error ? error.message : "Demo repository connection failed";
         set({ repoError: message, status: message });
+        get().pushToast(message);
       } finally {
         set({ repoBusy: false });
       }
@@ -730,7 +757,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         // The working tree now reflects the new branch — reload the open document.
         void get().openSidecar();
       } catch (e) {
-        set({ repoError: e instanceof Error ? e.message : "Branch switch failed" });
+        const message = e instanceof Error ? e.message : "Branch switch failed";
+        set({ repoError: message });
+        get().pushToast(message);
       }
     },
 
@@ -750,7 +779,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         // The commit moved HEAD — rebase the diff baseline on it.
         void get().refreshHeads(codeArtifacts(get().codegenResult));
       } catch (e) {
-        set({ repoError: e instanceof Error ? e.message : "Commit failed" });
+        const message = e instanceof Error ? e.message : "Commit failed";
+        set({ repoError: message });
+        get().pushToast(message);
       }
     },
 

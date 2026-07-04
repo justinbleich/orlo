@@ -440,7 +440,7 @@ async function remoteCompareUrl() {
   }
 }
 
-async function connectRepoRoot(path: string) {
+async function connectRepoRoot(path?: string) {
   activeRepoRoot = await resolveRepoRoot(path);
   await ensureStudioBranch(activeRepoRoot);
   return activeRepoRoot;
@@ -781,9 +781,34 @@ export function simScreenshotPlugin(): Plugin {
   >();
   let nextCommandId = 1;
   let activeClient: { id: string; lastSeen: number } | null = null;
+  // The active client's parked long-poll, when its queue was empty. Held open for
+  // LONG_POLL_MS so an idle bridge costs ~2 requests a minute instead of 10/s.
+  let commandWaiter: {
+    res: import("node:http").ServerResponse;
+    timeout: ReturnType<typeof setTimeout>;
+  } | null = null;
+  const LONG_POLL_MS = 25_000;
 
   function browserBridgeActive(now = Date.now()) {
+    // A parked long-poll is proof the client is connected even though its
+    // lastSeen predates the park.
+    if (commandWaiter) return true;
     return !!activeClient && now - activeClient.lastSeen <= 2_000;
+  }
+
+  /** Answer the parked long-poll (with the next command, or 204 on timeout). */
+  function resolveCommandWaiter(command: BrowserCommand | null) {
+    if (!commandWaiter) return;
+    const { res, timeout } = commandWaiter;
+    commandWaiter = null;
+    clearTimeout(timeout);
+    if (activeClient) activeClient.lastSeen = Date.now();
+    if (command) {
+      sendJson(res, 200, command);
+    } else {
+      res.statusCode = 204;
+      res.end();
+    }
   }
 
   return {
@@ -1141,6 +1166,9 @@ export function simScreenshotPlugin(): Plugin {
           }
           const id = String(nextCommandId++);
           commandQueue.push({ id, type: body.type, payload: body.payload ?? {} });
+          // Hand the command straight to a parked long-poll instead of waiting
+          // for the next poll cycle.
+          if (commandWaiter) resolveCommandWaiter(commandQueue.shift() ?? null);
           const timeout = setTimeout(() => {
             pending.delete(id);
             sendJson(res, 504, {
@@ -1201,22 +1229,39 @@ export function simScreenshotPlugin(): Plugin {
           return;
         }
         const now = Date.now();
-        if (!activeClient || now - activeClient.lastSeen > 2_000) {
+        // Never take over while the active client has a poll parked — a stale
+        // lastSeen during a long-poll doesn't mean the client went away.
+        if (!commandWaiter && (!activeClient || now - activeClient.lastSeen > 2_000)) {
           activeClient = { id: clientId, lastSeen: now };
         }
-        if (activeClient.id !== clientId) {
-          res.statusCode = 204;
-          res.end();
+        if (activeClient?.id !== clientId) {
+          // A non-active client (e.g. a second tab): answer 204 after a beat so
+          // its immediate-reconnect loop doesn't busy-poll the server.
+          const timeout = setTimeout(() => {
+            res.statusCode = 204;
+            res.end();
+          }, 1_000);
+          res.on("close", () => clearTimeout(timeout));
           return;
         }
         activeClient.lastSeen = now;
         const command = commandQueue.shift();
-        if (!command) {
-          res.statusCode = 204;
-          res.end();
+        if (command) {
+          sendJson(res, 200, command);
           return;
         }
-        sendJson(res, 200, command);
+        // Empty queue: park this poll until a command arrives or the window ends.
+        // A newer poll from the same client (e.g. after a network retry)
+        // supersedes the parked one.
+        resolveCommandWaiter(null);
+        const timeout = setTimeout(() => resolveCommandWaiter(null), LONG_POLL_MS);
+        commandWaiter = { res, timeout };
+        res.on("close", () => {
+          if (commandWaiter?.res === res) {
+            clearTimeout(commandWaiter.timeout);
+            commandWaiter = null;
+          }
+        });
       });
 
       server.middlewares.use("/api/mcp/result", async (req, res) => {

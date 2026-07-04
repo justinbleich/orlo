@@ -167,8 +167,8 @@ function firstGitCode(gitStatus: PanelGitStatus): string | undefined {
   return gitStatus.files.map(gitStatusCode).find(Boolean);
 }
 
-function layerCount(node: { children?: Array<{ children?: unknown[] }> }): number {
-  return node.children?.reduce((total, child) => total + 1 + layerCount(child), 0) ?? 0;
+function layerCount(node: Parameters<typeof childrenOf>[0]): number {
+  return childrenOf(node).reduce((total, child) => total + 1 + layerCount(child), 0);
 }
 
 function layerCollapseKey(root: { id: NodeId; design?: { name?: string } }) {

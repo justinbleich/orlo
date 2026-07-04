@@ -70,6 +70,7 @@ export function nextLayerSelection(
 
 export function firstSelectableChild(root: Node, id: NodeId): NodeId | undefined {
   const node = findNode(root, id);
+  if (!node) return undefined;
   return childrenOf(node)
     .find((child) => !child.design?.hidden && !child.design?.locked)
     ?.id;

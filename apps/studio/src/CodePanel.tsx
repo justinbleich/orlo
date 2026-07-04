@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { Menu } from "@base-ui/react/menu";
 import {
   Check,
+  ChevronDown,
   Copy,
   FileCode2,
   FileJson2,
@@ -22,13 +24,12 @@ import {
   IconButton,
   Section,
   SegmentedControl,
-  Select,
   StatusPill,
   TextField,
   cn,
 } from "./studio-ui";
 import type { RepoPanelContext } from "./repo-project-model";
-import type { CodeArtifact, CodegenResult, GitStatus } from "./code-artifacts";
+import type { CodeArtifact, CodegenResult } from "./code-artifacts";
 import { computeLineDiff, type DiffRow } from "./line-diff";
 
 type ChangeStatus = "new" | "modified" | "unchanged";
@@ -53,10 +54,8 @@ export type CodePanelProps = {
   onOpenDemo: () => void;
   onSelectFolder: () => void;
   onConnectPath: () => void;
-  gitStatus: GitStatus;
   branchInfo: { current: string; branches: string[] };
   scopedChangeLabel: string;
-  onRefreshGit: () => void;
   onSwitchBranch: (branch: string, create: boolean) => void;
   onCommit: (message: string) => void;
   onOpenPr: () => void;
@@ -90,6 +89,15 @@ function changeBarColor(status: ChangeStatus) {
 
 function lineCount(code: string) {
   return code === "" ? 0 : code.replace(/\n$/, "").split("\n").length;
+}
+
+/** Keep both ends of a long ref visible: studio-demo/…-refactor. */
+function middleTruncate(value: string, max = 34) {
+  if (value.length <= max) return value;
+  const keep = max - 1;
+  const head = Math.ceil(keep / 2);
+  const tail = Math.floor(keep / 2);
+  return `${value.slice(0, head)}…${value.slice(value.length - tail)}`;
 }
 
 // --- Restrained, on-palette syntax highlighting --------------------------------
@@ -229,10 +237,8 @@ export function CodePanel(props: CodePanelProps) {
     onOpenDemo,
     onSelectFolder,
     onConnectPath,
-    gitStatus,
     branchInfo,
     scopedChangeLabel,
-    onRefreshGit,
     onSwitchBranch,
     onCommit,
     onOpenPr,
@@ -277,8 +283,11 @@ export function CodePanel(props: CodePanelProps) {
   const activeArtifact =
     artifacts.find((artifact) => artifact.id === activeArtifactId) ?? artifacts[0] ?? null;
   const activeHead = activeArtifact ? headByPath[activeArtifact.path] : undefined;
-  const activeDiff =
-    activeArtifact && activeHead != null ? computeLineDiff(activeHead, activeArtifact.code) : null;
+  const activeDiff = useMemo(
+    () =>
+      activeArtifact && activeHead != null ? computeLineDiff(activeHead, activeArtifact.code) : null,
+    [activeArtifact, activeHead],
+  );
   const showDiff = diffMode === "diff" && activeDiff != null;
 
   async function copyActive() {
@@ -341,7 +350,6 @@ export function CodePanel(props: CodePanelProps) {
     );
   }
 
-  const branchOptions = branchInfo.branches.map((b) => ({ value: b, label: b }));
   const currentBranch = branchInfo.current || repoContext?.designSession?.branch || "—";
 
   return (
@@ -355,9 +363,11 @@ export function CodePanel(props: CodePanelProps) {
             <StatusPill tone="accent">
               <Loader2 size={11} aria-hidden="true" className="animate-spin" /> Syncing
             </StatusPill>
+          ) : !codegenResult ? (
+            <StatusPill tone="neutral">No screen</StatusPill>
           ) : (
             <StatusPill tone={changedCount > 0 ? "accent" : "neutral"}>
-              {changedCount > 0 ? `${changedCount} changed` : "In sync"}
+              {changedCount > 0 ? `${changedCount} file${changedCount === 1 ? "" : "s"} changed` : "Up to date"}
             </StatusPill>
           )}
         </div>
@@ -366,22 +376,52 @@ export function CodePanel(props: CodePanelProps) {
         <div className="flex items-center gap-xs">
           <GitBranch size={14} aria-hidden="true" className="shrink-0 text-ink-faint" />
           {newBranch === null ? (
-            <>
-              <div className="min-w-0 flex-1">
-                <Select
-                  value={branchOptions.some((o) => o.value === currentBranch) ? currentBranch : undefined}
-                  onChange={(branch) => onSwitchBranch(branch, false)}
-                  options={branchOptions}
-                  placeholder={currentBranch}
-                />
-              </div>
-              <IconButton title="New studio branch" onClick={() => setNewBranch("")}>
-                <Plus size={14} aria-hidden="true" />
-              </IconButton>
-              <IconButton title="Refresh Git status" onClick={onRefreshGit}>
-                <RefreshCw size={14} aria-hidden="true" />
-              </IconButton>
-            </>
+            <Menu.Root>
+              <Menu.Trigger
+                title={currentBranch}
+                className={cn(
+                  "flex h-7 min-w-0 flex-1 items-center justify-between gap-sm overflow-hidden rounded-sm border border-line bg-chrome-2 px-sm text-sm text-ink",
+                  "transition-colors hover:bg-raised focus-visible:outline-none focus-visible:border-accent-line",
+                  "data-[popup-open]:border-accent-line data-[popup-open]:bg-raised",
+                )}
+              >
+                <span className="min-w-0 flex-1 truncate text-left">{middleTruncate(currentBranch)}</span>
+                <ChevronDown size={14} aria-hidden="true" className="shrink-0 text-ink-faint" />
+              </Menu.Trigger>
+              <Menu.Portal>
+                <Menu.Positioner sideOffset={4} align="start" className="z-50">
+                  <Menu.Popup className="studio-popup flex max-h-[min(360px,60vh)] w-[var(--anchor-width)] flex-col rounded-md border border-line bg-chrome p-control shadow-popover outline-none">
+                    <div className="min-h-0 flex-1 overflow-y-auto">
+                      {branchInfo.branches.map((branch) => (
+                        <Menu.Item
+                          key={branch}
+                          onClick={() => onSwitchBranch(branch, false)}
+                          className={cn(
+                            "flex cursor-default items-center justify-between gap-sm rounded-sm py-menu-y pl-sm pr-xs text-sm outline-none",
+                            "data-[highlighted]:bg-raised data-[highlighted]:text-ink",
+                            branch === currentBranch ? "text-ink" : "text-ink-dim",
+                          )}
+                        >
+                          <span className="min-w-0 truncate">{branch}</span>
+                          {branch === currentBranch && (
+                            <Check size={14} aria-hidden="true" className="shrink-0 text-accent" />
+                          )}
+                        </Menu.Item>
+                      ))}
+                    </div>
+                    <div className="mt-control border-t border-line pt-control">
+                      <Menu.Item
+                        onClick={() => setNewBranch("")}
+                        className="flex cursor-default items-center gap-sm rounded-sm py-menu-y pl-sm pr-xs text-sm text-accent outline-none data-[highlighted]:bg-accent-soft"
+                      >
+                        <Plus size={14} aria-hidden="true" className="shrink-0" />
+                        Checkout and create new branch
+                      </Menu.Item>
+                    </div>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
           ) : (
             <>
               <TextField
@@ -446,14 +486,14 @@ export function CodePanel(props: CodePanelProps) {
         ) : (
           <div className="flex items-center gap-md text-xs text-ink-faint">
             <span className="min-w-0 flex-1 truncate">
-              {codegenResult ? "Committed — nothing to push." : "Live code will appear here."}
+              {codegenResult ? "Generated code is up to date." : "Live code will appear here."}
             </span>
             <button
               type="button"
               onClick={onOpenPr}
               className="inline-flex items-center gap-2xs transition-colors hover:text-ink"
             >
-              <GitPullRequestArrow size={13} aria-hidden="true" /> PR
+              <GitPullRequestArrow size={13} aria-hidden="true" /> Open PR
             </button>
             <button
               type="button"
@@ -472,13 +512,13 @@ export function CodePanel(props: CodePanelProps) {
         )}
       </div>
 
-      {/* C — change summary vs HEAD + diff viewer */}
+      {/* C — change summary since the last commit + diff viewer */}
       {codegenResult ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-col gap-2xs p-md pb-sm">
             <div className="mb-2xs flex items-baseline gap-xs">
               <Eyebrow>Changes</Eyebrow>
-              <span className="text-2xs text-ink-faint">vs HEAD</span>
+              <span className="text-2xs text-ink-faint">since last commit</span>
             </div>
             {changeRows.map((row) => {
               const active = row.artifact.id === activeArtifact?.id;
@@ -532,7 +572,7 @@ export function CodePanel(props: CodePanelProps) {
                   value={diffMode}
                   onChange={setDiffMode}
                   options={[
-                    { value: "diff", content: "Diff", title: "Diff vs HEAD" },
+                    { value: "diff", content: "Diff", title: "Diff since last commit" },
                     { value: "file", content: "File", title: "Full file" },
                   ]}
                 />
@@ -543,7 +583,7 @@ export function CodePanel(props: CodePanelProps) {
               </div>
               {diffMode === "diff" && activeDiff == null && (
                 <div className="border-b border-line-soft bg-chrome-2 px-sm py-xs text-2xs text-ink-faint">
-                  New file — not yet in {currentBranch}. Showing full contents.
+                  New file — not in the last commit on {currentBranch}. Showing full contents.
                 </div>
               )}
               {showDiff ? (

@@ -78,6 +78,7 @@ import {
   TooltipProvider,
   cn,
 } from "./studio-ui";
+import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
@@ -464,7 +465,8 @@ function FlowWorkspace({
   const routeScreens = flowRouteScreens(screens, activeFlow, routeIds);
   const availableScreens = flowAvailableScreens(screens, activeFlow, routeIds);
   const entryScreen =
-    (entryRootId && routeScreens.find((root) => root.id === entryRootId)) ?? routeScreens[0];
+    (entryRootId ? routeScreens.find((root) => root.id === entryRootId) : undefined) ??
+    routeScreens[0];
   const screenLabels = new Map(
     screens.map((root, index) => [root.id, flowScreenName(root, index)]),
   );
@@ -1677,8 +1679,9 @@ export default function App() {
         flows: nextFlows.map((flow) => {
           const routeScreens = flowRouteScreens(screenRoots, flow.id, routesByFlow[flow.id]);
           const entry =
-            (entrypoints[flow.id] && routeScreens.find((root) => root.id === entrypoints[flow.id])) ??
-            routeScreens[0];
+            (entrypoints[flow.id]
+              ? routeScreens.find((root) => root.id === entrypoints[flow.id])
+              : undefined) ?? routeScreens[0];
           return {
             id: flow.id,
             label: flow.label,
@@ -1710,8 +1713,19 @@ export default function App() {
     void loadRepo();
     void refreshGitStatus();
     void loadFlowManifest();
-    const timer = setInterval(() => void refreshGitStatus(), 5_000);
-    return () => clearInterval(timer);
+    // Poll git only while the tab is visible; refresh once on return so a
+    // backgrounded Studio doesn't spawn a git subprocess every 5s.
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void refreshGitStatus();
+    }, 5_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshGitStatus();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [loadFlowManifest, loadRepo, refreshGitStatus]);
 
   // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
@@ -2221,12 +2235,69 @@ export default function App() {
       }
 
       // In Yoga flow, arrow keys reorder along the parent's visual flex axis.
-      // Absolute children keep the normal positional model and are not reordered.
+      // Absolute children keep the positional model: arrows nudge 1px (Shift 10px).
       if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
         const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
         const nodeIds = focused
           ? normalizeNodeSelection(focused, store.selection, { excludeRoot: true })
           : [];
+        const absoluteIds = focused
+          ? nodeIds.filter((id) => {
+              const candidate = findNode(focused, id);
+              return candidate?.style.position === "absolute" && !candidate.design?.locked;
+            })
+          : [];
+        if (focused && absoluteIds.length > 0) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const step = event.shiftKey ? 10 : 1;
+          const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+          const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+          const snapshot = useStudioStore.getState().layouts[focused.id]?.snapshot;
+          store.beginInteraction();
+          try {
+            for (const id of absoluteIds) {
+              const node = findNode(focused, id);
+              if (!node) continue;
+              // Backfill unset start pins from the last layout so a nudge moves
+              // from the rendered position instead of jumping toward 0 (same
+              // backfill the canvas group drag does in LayerOverlay).
+              const style = { ...node.style };
+              const box = snapshot?.get(id)?.[0];
+              const parent = getParent(focused, id);
+              const parentBox = parent ? snapshot?.get(parent.id)?.[0] : undefined;
+              if (box && parentBox) {
+                const borderLeft =
+                  parent?.style.borderLeftWidth ?? parent?.style.borderWidth ?? 0;
+                const borderTop =
+                  parent?.style.borderTopWidth ?? parent?.style.borderWidth ?? 0;
+                if (
+                  absoluteConstraintMode(style, "horizontal") === "start" &&
+                  style.left === undefined
+                ) {
+                  style.left = box.left - parentBox.left - borderLeft;
+                }
+                if (
+                  absoluteConstraintMode(style, "vertical") === "start" &&
+                  style.top === undefined
+                ) {
+                  style.top = box.top - parentBox.top - borderTop;
+                }
+              }
+              useDocumentStore.getState().updateStyle(focused.id, id, {
+                ...(dx !== 0 ? absoluteMovePatch(style, "horizontal", dx) : {}),
+                ...(dy !== 0 ? absoluteMovePatch(style, "vertical", dy) : {}),
+              });
+            }
+            useDocumentStore.getState().commitInteraction();
+          } catch {
+            useDocumentStore.getState().cancelInteraction();
+          }
+          setStatus(
+            `Nudged ${absoluteIds.length} layer${absoluteIds.length === 1 ? "" : "s"}`,
+          );
+          return;
+        }
         const node = focused && nodeIds.length === 1 ? findNode(focused, nodeIds[0]) : undefined;
         const parent = focused && node ? getParent(focused, node.id) : undefined;
         if (focused && node && parent && node.style.position !== "absolute") {
@@ -3084,10 +3155,8 @@ export default function App() {
                   onOpenDemo={() => void connectDemoRepo()}
                   onSelectFolder={() => void selectRepoFolder()}
                   onConnectPath={() => void connectRepo()}
-                  gitStatus={gitStatus}
                   branchInfo={branchInfo}
                   scopedChangeLabel={scopedChangeLabel}
-                  onRefreshGit={() => void refreshGitStatus()}
                   onSwitchBranch={(branch, create) => void switchBranch(branch, create)}
                   onCommit={(message) => void commitChanges(message)}
                   onOpenPr={() => void openPullRequest()}

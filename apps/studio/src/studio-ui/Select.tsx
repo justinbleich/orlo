@@ -29,10 +29,10 @@ export function Select<T extends string>({
       <BaseSelect.Trigger
         className={cn(
           controlClass,
-          "flex items-center justify-between gap-sm text-left",
+          "flex items-center justify-between gap-sm overflow-hidden text-left",
         )}
       >
-        <BaseSelect.Value>
+        <BaseSelect.Value className="min-w-0 flex-1 truncate">
           {(val: T | null) =>
             options.find((o) => o.value === val)?.label ?? (
               <span className="text-ink-faint">{placeholder}</span>

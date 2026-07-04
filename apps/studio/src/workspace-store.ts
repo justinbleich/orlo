@@ -31,7 +31,14 @@ export type SyncState =
   | { status: "synced"; path: string }
   | { status: "error"; message: string };
 
-export type ActiveRepoScreen = { path: string; sidecarPath?: string; rootId: NodeId };
+export type ActiveRepoScreen = {
+  path: string;
+  sidecarPath?: string;
+  rootId: NodeId;
+  /** The screen's component name, kept so background roots sync under their own
+   *  name (the editable name field only binds to the active screen). */
+  screenName?: string;
+};
 export type LoadedRepoScreens = Record<string, ActiveRepoScreen>;
 
 type OpenDocumentResult = {
@@ -73,6 +80,10 @@ let autoSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let canvasSaved = "";
 /** The root the next codegen targets — the last focused screen. */
 let syncRootHint: NodeId | null = null;
+/** Roots edited since the last flush. A token/component change dirties every
+ *  screen root (token reapply touches all trees), so a color-token edit syncs
+ *  every affected generated file, not just the focused one. */
+const dirtyRoots = new Set<NodeId>();
 
 export function setSyncRootHint(rootId: NodeId | null) {
   syncRootHint = rootId;
@@ -162,6 +173,117 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     void get().refreshHeads(artifacts);
   };
 
+  const postCodegen = async (
+    mode: "preview" | "sync",
+    payload: { root: Node; screenName: string; targetPath: string },
+  ): Promise<CodegenResult> => {
+    const state = useDocumentStore.getState();
+    const res = await fetch(`/api/codegen/${mode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...payload,
+        components: state.components,
+        tokens: state.tokens,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return body as CodegenResult;
+  };
+
+  /**
+   * Write every dirty root that has a sync target, sequentially. The focused
+   * screen uses the live editable name/path fields; background repo screens use
+   * the metadata captured when they were opened; canvas-only background screens
+   * are skipped (there is no file to write until they're focused and synced).
+   */
+  const flushSync = async (source: "manual" | "auto"): Promise<CodegenResult | null> => {
+    if (source === "auto" && !workspaceFlags.managedDocument) {
+      set({ syncState: { status: "idle" } });
+      return null;
+    }
+    if (codegenInFlight) {
+      if (source === "auto") rerunRequested = true;
+      return null;
+    }
+    const docState = useDocumentStore.getState();
+    const displayRootId = get().activeRepoScreen?.rootId ?? syncRoot()?.id ?? null;
+    const metaByRoot = new Map<NodeId, { screenName: string; targetPath: string }>();
+    for (const screen of Object.values(get().loadedRepoScreens)) {
+      if (screen.screenName) {
+        metaByRoot.set(screen.rootId, {
+          screenName: screen.screenName,
+          targetPath: screen.path,
+        });
+      }
+    }
+    const targets: { root: Node; screenName: string; targetPath: string }[] = [];
+    for (const rootId of [...dirtyRoots]) {
+      const root = docState.roots[rootId];
+      if (!root || rootId === docState.editingComponentId) {
+        dirtyRoots.delete(rootId);
+        continue;
+      }
+      if (rootId === displayRootId) {
+        targets.push({ root, screenName: get().screenName, targetPath: get().targetPath });
+      } else {
+        const meta = metaByRoot.get(rootId);
+        if (meta) targets.push({ root, ...meta });
+        else dirtyRoots.delete(rootId);
+      }
+    }
+    if (targets.length === 0) {
+      if (source === "manual") {
+        const message = "Select a screen before syncing.";
+        set({ codegenError: message, status: message, syncState: { status: "error", message } });
+      } else {
+        set({ syncState: { status: "idle" } });
+      }
+      return null;
+    }
+    codegenInFlight = true;
+    set({ codegenBusy: true, codegenError: null, syncState: { status: "syncing" } });
+    let displayResult: CodegenResult | null = null;
+    try {
+      const paths: string[] = [];
+      for (const target of targets) {
+        const body = await postCodegen("sync", target);
+        dirtyRoots.delete(target.root.id);
+        paths.push(body.targetPath);
+        // Only the focused screen's result feeds the code view — a background
+        // token resync must not switch the panel to another screen's file.
+        if (target.root.id === displayRootId) displayResult = body;
+      }
+      if (displayResult) {
+        applyCodegenResult(displayResult);
+        if (source === "manual") set({ activeArtifactId: "screen" });
+      }
+      workspaceFlags.managedDocument = true;
+      set({
+        syncState: {
+          status: "synced",
+          path: paths.length === 1 ? paths[0] : `${paths.length} files`,
+        },
+        status: `${source === "auto" ? "Autosynced" : "Synced"} ${paths.join(" · ")}`,
+      });
+      void get().refreshGitStatus();
+      void get().loadRepoContext();
+      return displayResult;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Sync failed";
+      set({ codegenError: message, status: message, syncState: { status: "error", message } });
+      return null;
+    } finally {
+      codegenInFlight = false;
+      set({ codegenBusy: false });
+      if (rerunRequested) {
+        rerunRequested = false;
+        get().scheduleAutoSync();
+      }
+    }
+  };
+
   const applyConnectedRepo = async (
     body: {
       repoPath?: string;
@@ -243,6 +365,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       path: opts.targetPath,
       sidecarPath: opts.sidecarPath,
       rootId: opts.root.id,
+      screenName: opts.screenName,
     };
     set((current) => ({
       screenName: opts.screenName,
@@ -290,12 +413,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     setScreenName: (screenName) => {
       if (screenName === get().screenName) return;
       set({ screenName });
-      if (Object.keys(useDocumentStore.getState().roots).length) get().scheduleAutoSync();
+      const focused = syncRoot();
+      if (focused) {
+        dirtyRoots.add(focused.id);
+        get().scheduleAutoSync();
+      }
     },
     setTargetPath: (targetPath) => {
       if (targetPath === get().targetPath) return;
       set({ targetPath });
-      if (Object.keys(useDocumentStore.getState().roots).length) get().scheduleAutoSync();
+      const focused = syncRoot();
+      if (focused) {
+        dirtyRoots.add(focused.id);
+        get().scheduleAutoSync();
+      }
     },
     setSidecarPath: (sidecarPath) => set({ sidecarPath }),
 
@@ -413,68 +544,38 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     requestCodegen: async (mode, source = "manual") => {
-      if (mode === "sync" && source === "auto" && !workspaceFlags.managedDocument) {
-        set({ syncState: { status: "idle" } });
-        return null;
+      if (mode === "sync") {
+        // Every sync goes through the dirty-root flush; a manual Sync also
+        // covers the focused screen even if nothing marked it dirty yet.
+        const focused = syncRoot();
+        if (focused) dirtyRoots.add(focused.id);
+        return flushSync(source);
       }
       const root = syncRoot();
       if (!root) {
         const message = "Select a screen before syncing.";
-        set({
-          codegenError: message,
-          status: message,
-          ...(mode === "sync" ? { syncState: { status: "error", message } } : {}),
-        });
+        set({ codegenError: message, status: message });
         return null;
       }
       if (codegenInFlight) {
-        // A codegen is in flight — remember to run once more so this newer edit lands.
         if (source === "auto") rerunRequested = true;
         return null;
       }
       codegenInFlight = true;
-      set({
-        codegenBusy: true,
-        codegenError: null,
-        ...(mode === "sync" ? { syncState: { status: "syncing" } } : {}),
-      });
+      set({ codegenBusy: true, codegenError: null });
       try {
-        const state = useDocumentStore.getState();
-        const res = await fetch(`/api/codegen/${mode}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            root,
-            screenName: get().screenName,
-            targetPath: get().targetPath,
-            components: state.components,
-            tokens: state.tokens,
-          }),
+        const body = await postCodegen("preview", {
+          root,
+          screenName: get().screenName,
+          targetPath: get().targetPath,
         });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
         applyCodegenResult(body);
         if (source === "manual") set({ activeArtifactId: "screen" });
-        if (mode === "sync") {
-          set({ syncState: { status: "synced", path: body.targetPath } });
-          workspaceFlags.managedDocument = true;
-          void get().refreshGitStatus();
-          void get().loadRepoContext();
-        }
-        set({
-          status:
-            mode === "sync"
-              ? `${source === "auto" ? "Autosynced" : "Synced"} ${body.targetPath} + ${body.sidecarPath}`
-              : `Previewed sync for ${body.targetPath}`,
-        });
-        return body as CodegenResult;
+        set({ status: `Previewed sync for ${body.targetPath}` });
+        return body;
       } catch (e) {
-        const message = e instanceof Error ? e.message : "Sync failed";
-        set({
-          codegenError: message,
-          status: message,
-          ...(mode === "sync" ? { syncState: { status: "error", message } } : {}),
-        });
+        const message = e instanceof Error ? e.message : "Preview failed";
+        set({ codegenError: message, status: message });
         return null;
       } finally {
         codegenInFlight = false;
@@ -500,7 +601,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           rerunRequested = true;
           return;
         }
-        void get().requestCodegen("sync", "auto");
+        void flushSync("auto");
       }, 900);
     },
 
@@ -679,16 +780,19 @@ export function initWorkspaceSubscriptions(): () => void {
   const workspace = useWorkspaceStore;
 
   // Auto-sync: schedule after document edits, batched across interactions.
+  // Per-root reference diffing feeds the dirty set so a flush writes every
+  // edited screen's file, not just the focused one.
   let lastRoots = docStore.getState().roots;
   let lastComponents = docStore.getState().components;
   let lastTokens = docStore.getState().tokens;
   let lastInteraction = docStore.getState().interaction;
   let dirtyDuringInteraction = false;
   const unsubscribeAutoSync = docStore.subscribe((state) => {
-    const documentChanged =
-      state.roots !== lastRoots ||
-      state.components !== lastComponents ||
-      state.tokens !== lastTokens;
+    const previousRoots = lastRoots;
+    const rootsChanged = state.roots !== lastRoots;
+    const globalsChanged =
+      state.components !== lastComponents || state.tokens !== lastTokens;
+    const documentChanged = rootsChanged || globalsChanged;
     const interactionJustEnded = !!lastInteraction && !state.interaction;
     lastRoots = state.roots;
     lastComponents = state.components;
@@ -701,8 +805,19 @@ export function initWorkspaceSubscriptions(): () => void {
     }
     if (!documentChanged) return;
     if (workspaceFlags.skipCodeSync) {
-      workspaceFlags.skipCodeSync = false;
+      workspaceFlags.skipCodeSync = false; // a load, not an edit — nothing dirties
       return;
+    }
+    if (rootsChanged) {
+      for (const [id, root] of Object.entries(state.roots)) {
+        if (previousRoots[id] !== root) dirtyRoots.add(id);
+      }
+    }
+    if (globalsChanged) {
+      // Tokens/components reapply across every tree — all screens are stale.
+      for (const id of Object.keys(state.roots)) {
+        if (id !== state.editingComponentId) dirtyRoots.add(id);
+      }
     }
     if (state.interaction) {
       dirtyDuringInteraction = true;

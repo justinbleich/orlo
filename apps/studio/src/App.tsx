@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  ArrowLeft,
-  ArrowRight,
   FileCode2,
   FileJson2,
   FolderOpen,
-  Plus,
   Play,
   RefreshCw,
   Redo2,
@@ -29,7 +26,6 @@ import {
   findRootContaining,
   getParent,
   useDocumentStore,
-  type ComponentRegistry,
   type DesignToken,
   type Node,
   type NodeId,
@@ -38,6 +34,7 @@ import {
 } from "@rn-canvas/document";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
 import { FlowCanvas } from "./FlowCanvas";
+import { FlowInspector } from "./FlowInspector";
 import { CodePanel } from "./CodePanel";
 import { gitFileStatusLabel, type GitFileStatus, type GitStatus } from "./code-artifacts";
 import {
@@ -94,7 +91,6 @@ import {
   flowAvailableScreens,
   flowRouteScreens,
   flowScreenName,
-  moveFlowRouteToIndex,
   removeFlowRoute,
   reorderFlowRoute,
 } from "./flow-model";
@@ -301,11 +297,6 @@ function FlowWorkspace({
   routeIds,
   onSelectScreen,
   onOpenRepoScreen,
-  onEntryRootChange,
-  onAddRoute,
-  onRemoveRoute,
-  onMoveRoute,
-  onMoveRouteToIndex,
   onAddFrame,
   onRenameFlow,
 }: {
@@ -317,11 +308,6 @@ function FlowWorkspace({
   routeIds?: NodeId[];
   onSelectScreen: (rootId: NodeId) => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
-  onEntryRootChange: (rootId: NodeId) => void;
-  onAddRoute: (rootId: NodeId) => void;
-  onRemoveRoute: (rootId: NodeId) => void;
-  onMoveRoute: (rootId: NodeId, offset: -1 | 1) => void;
-  onMoveRouteToIndex: (rootId: NodeId, targetIndex: number) => void;
   onAddFrame: () => void;
   onRenameFlow: (flowId: FlowId, label: string) => boolean;
 }) {
@@ -331,7 +317,6 @@ function FlowWorkspace({
       root.id !== useDocumentStore.getState().editingComponentId,
   );
   const routeScreens = flowRouteScreens(screens, activeFlow, routeIds);
-  const availableScreens = flowAvailableScreens(screens, activeFlow, routeIds);
   const entryScreen =
     (entryRootId ? routeScreens.find((root) => root.id === entryRootId) : undefined) ??
     routeScreens[0];
@@ -342,7 +327,6 @@ function FlowWorkspace({
     screenLabels.get(root.id) ?? flowScreenName(root, fallbackIndex);
   const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
   const flowViewportRef = useRef<HTMLDivElement | null>(null);
-  const [draggedRouteId, setDraggedRouteId] = useState<NodeId | null>(null);
   const repoFlow = repoFlows.find((flow) => flow.id === activeFlow);
   const activeFlowDefinition = flows.find((flow) => flow.id === activeFlow);
   const activeFlowLabel = activeFlowDefinition?.label ?? flowLabel(flows, activeFlow);
@@ -372,28 +356,6 @@ function FlowWorkspace({
     if (!onRenameFlow(activeFlow, nextLabel)) resetFlowNameDraft();
   };
 
-  const dragProps = (rootId: NodeId, index: number) => ({
-    draggable: true,
-    onDragStart: (event: React.DragEvent) => {
-      setDraggedRouteId(rootId);
-      event.dataTransfer.effectAllowed = "move";
-    },
-    onDragOver: (event: React.DragEvent) => {
-      if (draggedRouteId && draggedRouteId !== rootId) {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-      }
-    },
-    onDrop: (event: React.DragEvent) => {
-      event.preventDefault();
-      if (draggedRouteId && draggedRouteId !== rootId) {
-        onMoveRouteToIndex(draggedRouteId, index);
-      }
-      setDraggedRouteId(null);
-    },
-    onDragEnd: () => setDraggedRouteId(null),
-  });
-
   if (repoFlow) {
     const entry = repoFlow.screens[0];
     return (
@@ -412,76 +374,43 @@ function FlowWorkspace({
           )}
         </div>
         <div ref={flowViewportRef} className="relative flex-1 overflow-auto">
-          <div className="grid min-h-full min-w-[760px] grid-cols-[minmax(0,1fr)_280px]">
-            <div className="overflow-auto p-2xl">
-              <div className="flex min-w-max items-start gap-2xl">
-                {repoFlow.screens.map((screen, index) => (
-                  <div key={screen.path} className="relative flex w-44 flex-col items-center gap-sm">
-                    {index > 0 && (
-                      <div
-                        className="absolute -left-2xl top-20 h-px w-2xl bg-accent-line"
-                        aria-hidden="true"
-                      />
+          <div className="overflow-auto p-2xl">
+            <div className="flex min-w-max items-start gap-2xl">
+              {repoFlow.screens.map((screen, index) => (
+                <div key={screen.path} className="relative flex w-44 flex-col items-center gap-sm">
+                  {index > 0 && (
+                    <div
+                      className="absolute -left-2xl top-20 h-px w-2xl bg-accent-line"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <div className="flex h-5 items-center gap-xs text-xs font-medium text-ink-dim">
+                    <span>{displayScreenName(screen)}</span>
+                    {index === 0 && (
+                      <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
+                        Start
+                      </span>
                     )}
-                    <div className="flex h-5 items-center gap-xs text-xs font-medium text-ink-dim">
-                      <span>{displayScreenName(screen)}</span>
-                      {index === 0 && (
-                        <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                          Start
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => onOpenRepoScreen(screen)}
-                      className="flex h-40 w-36 flex-col items-center justify-center gap-sm rounded-sm border border-line bg-chrome p-md text-center shadow-control transition-colors hover:border-accent-line hover:bg-raised"
-                      title={screen.path}
-                    >
-                      <span className="flex size-9 items-center justify-center rounded-sm bg-accent-soft text-sm font-semibold text-accent">
-                        {index + 1}
-                      </span>
-                      <span className="max-w-full truncate text-sm font-semibold text-ink">
-                        {displayScreenName(screen)}
-                      </span>
-                      <span className="max-w-full truncate text-2xs text-ink-faint">
-                        {screen.path}
-                      </span>
-                    </button>
                   </div>
-                ))}
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => onOpenRepoScreen(screen)}
+                    className="flex h-40 w-36 flex-col items-center justify-center gap-sm rounded-sm border border-line bg-chrome p-md text-center shadow-control transition-colors hover:border-accent-line hover:bg-raised"
+                    title={screen.path}
+                  >
+                    <span className="flex size-9 items-center justify-center rounded-sm bg-accent-soft text-sm font-semibold text-accent">
+                      {index + 1}
+                    </span>
+                    <span className="max-w-full truncate text-sm font-semibold text-ink">
+                      {displayScreenName(screen)}
+                    </span>
+                    <span className="max-w-full truncate text-2xs text-ink-faint">
+                      {screen.path}
+                    </span>
+                  </button>
+                </div>
+              ))}
             </div>
-            <aside className="border-l border-line bg-chrome p-md">
-              <div className="flex flex-col gap-md">
-                <div>
-                  <div className="eyebrow">Route Wiring</div>
-                  <div className="mt-xs text-sm font-semibold text-ink">
-                    {repoFlow.screens.length} screens
-                  </div>
-                  <p className="m-0 mt-xs text-xs text-ink-faint">
-                    This sequence is inferred from matching route folders. Open a screen to edit its layers.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-xs">
-                  {repoFlow.screens.map((screen, index) => (
-                    <button
-                      key={screen.path}
-                      type="button"
-                      onClick={() => onOpenRepoScreen(screen)}
-                      className="flex min-h-8 items-center gap-xs rounded-sm px-sm py-xs text-left text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
-                    >
-                      <span className="w-5 shrink-0 text-2xs tabular-nums text-ink-faint">
-                        {index + 1}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{displayScreenName(screen)}</span>
-                        <span className="block truncate text-2xs text-ink-faint">{screen.path}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </aside>
           </div>
         </div>
       </div>
@@ -526,138 +455,17 @@ function FlowWorkspace({
         </div>
       </div>
       <div ref={flowViewportRef} className="relative min-h-0 flex-1 overflow-hidden">
-        <div className="grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(0,1fr)_260px]">
-          {activeFlowDefinition ? (
-            <FlowCanvas
-              flow={activeFlowDefinition}
-              routeScreens={routeScreens}
-              onSelectScreen={onSelectScreen}
-            />
-          ) : (
-            <div className="flex items-center justify-center text-sm text-ink-faint">
-              Select a flow to map screens.
-            </div>
-          )}
-          <aside className="border-l border-line bg-chrome p-md">
-            <div className="flex flex-col gap-md">
-              <div>
-                <div className="eyebrow">Navigator</div>
-                <div className="mt-xs text-sm font-semibold text-ink">
-                  Route order ({routeScreens.length})
-                </div>
-                <p className="m-0 mt-xs text-xs text-ink-faint">
-                  Add screens to this flow and arrange the sequence. Start marks the first
-                  screen a runtime adapter should open.
-                </p>
-              </div>
-              {entryScreen && (
-                <div className="rounded-sm bg-raised p-sm">
-                  <div className="text-2xs font-semibold uppercase tracking-[0.08em] text-ink-faint">
-                    Start screen
-                  </div>
-                  <div className="mt-xs truncate text-sm font-medium text-ink">
-                    {entryLabel}
-                  </div>
-                </div>
-              )}
-              <div className="flex flex-col gap-xs">
-                {routeScreens.map((root, index) => (
-                  <div
-                    key={root.id}
-                    {...dragProps(root.id, index)}
-                    className={cn(
-                      "flex h-8 cursor-grab items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink active:cursor-grabbing",
-                      draggedRouteId && draggedRouteId !== root.id && "ring-1 ring-accent-line",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onSelectScreen(root.id)}
-                      className="flex min-w-0 flex-1 items-center gap-xs text-left"
-                    >
-                      <span className="w-5 shrink-0 text-2xs tabular-nums text-ink-faint">
-                        {index + 1}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">
-                        {labelFor(root, index)}
-                      </span>
-                    </button>
-                    {root.id === entryScreen?.id ? (
-                      <span className="shrink-0 text-2xs font-semibold text-accent">
-                        Start
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => onEntryRootChange(root.id)}
-                        className="shrink-0 rounded-pill px-xs py-px text-2xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
-                      >
-                        Set start
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onMoveRoute(root.id, -1)}
-                      disabled={index === 0}
-                      title="Move earlier"
-                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      <ArrowLeft size={12} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onMoveRoute(root.id, 1)}
-                      disabled={index === routeScreens.length - 1}
-                      title="Move later"
-                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      <ArrowRight size={12} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onRemoveRoute(root.id)}
-                      title="Remove from flow"
-                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
-                    >
-                      <X size={12} aria-hidden="true" />
-                    </button>
-                  </div>
-                ))}
-                {routeScreens.length === 0 && (
-                  <p className="m-0 text-xs text-ink-faint">No screens in this flow yet.</p>
-                )}
-              </div>
-              <div className="flex flex-col gap-xs">
-                <div className="eyebrow">Available Screens</div>
-                {availableScreens.map((root, index) => (
-                  <div
-                    key={root.id}
-                    className="flex h-8 items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onSelectScreen(root.id)}
-                      className="min-w-0 flex-1 truncate text-left"
-                    >
-                      {labelFor(root, index)}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onAddRoute(root.id)}
-                      title={`Add ${labelFor(root, index)} to flow`}
-                      className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
-                    >
-                      <Plus size={12} aria-hidden="true" />
-                    </button>
-                  </div>
-                ))}
-                {availableScreens.length === 0 && (
-                  <p className="m-0 text-xs text-ink-faint">All screens are in this flow.</p>
-                )}
-              </div>
-            </div>
-          </aside>
-        </div>
+        {activeFlowDefinition ? (
+          <FlowCanvas
+            flow={activeFlowDefinition}
+            routeScreens={routeScreens}
+            onSelectScreen={onSelectScreen}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-ink-faint">
+            Select a flow to map screens.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1301,7 +1109,6 @@ export default function App() {
   const loadRepo = useWorkspaceStore((s) => s.loadRepo);
   const loadCanvasManifest = useWorkspaceStore((s) => s.loadCanvasManifest);
   const applyFlowManifestToStore = useWorkspaceStore((s) => s.applyFlowManifest);
-  const setStoredFlowEntryRoot = useWorkspaceStore((s) => s.setFlowEntryRoot);
   const updateStoredFlowRoutes = useWorkspaceStore((s) => s.updateFlowRoutes);
   const upsertStoredFlow = useWorkspaceStore((s) => s.upsertFlow);
   const removeStoredFlow = useWorkspaceStore((s) => s.removeFlow);
@@ -1536,13 +1343,6 @@ export default function App() {
     setStatus("Showing changes");
   }, []);
 
-  const setFlowEntryRoot = useCallback((rootId: NodeId) => {
-    void setStoredFlowEntryRoot(activeFlow, rootId).then(
-      () => setStatus("Updated flow entrypoint"),
-      (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
-    );
-  }, [activeFlow, setStoredFlowEntryRoot]);
-
   const updateFlowRoutes = useCallback(
     (
       updater: (current: NodeId[] | undefined, screens: Node[]) => NodeId[],
@@ -1583,17 +1383,6 @@ export default function App() {
     (rootId: NodeId, offset: -1 | 1) => {
       updateFlowRoutes(
         (current, screenRoots) => reorderFlowRoute(screenRoots, activeFlow, current, rootId, offset),
-        "Updated flow order",
-      );
-    },
-    [activeFlow, updateFlowRoutes],
-  );
-
-  const moveScreenToFlowIndex = useCallback(
-    (rootId: NodeId, targetIndex: number) => {
-      updateFlowRoutes(
-        (current, screenRoots) =>
-          moveFlowRouteToIndex(screenRoots, activeFlow, current, rootId, targetIndex),
         "Updated flow order",
       );
     },
@@ -1644,6 +1433,16 @@ export default function App() {
       return true;
     },
     [flows, upsertStoredFlow],
+  );
+
+  const updateFlowDefinition = useCallback(
+    (flow: FlowDefinition, status: string) => {
+      void upsertStoredFlow(flow).then(
+        () => setStatus(status),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+    },
+    [setStatus, upsertStoredFlow],
   );
 
   const removeFlow = useCallback(
@@ -2138,6 +1937,13 @@ export default function App() {
 
   // Read-only context crumb mirroring the active workspace (and its object where known).
   const activeFlowDefinition = flowsById[activeFlow];
+  const flowInspectorScreens = Object.values(roots).filter((root) => root.id !== editingComponentId);
+  const flowInspectorRouteScreens = activeFlowDefinition
+    ? flowRouteScreens(flowInspectorScreens, activeFlow, activeFlowDefinition.routes)
+    : [];
+  const flowInspectorAvailableScreens = activeFlowDefinition
+    ? flowAvailableScreens(flowInspectorScreens, activeFlow, activeFlowDefinition.routes)
+    : [];
   const workspaceContext =
     workspace === "Component"
       ? `Component · ${editingComponentName ?? "Untitled"}`
@@ -2197,11 +2003,6 @@ export default function App() {
               routeIds={activeFlowDefinition?.routes}
               onSelectScreen={selectScreenFromWorkspace}
               onOpenRepoScreen={openRepoScreen}
-              onEntryRootChange={setFlowEntryRoot}
-              onAddRoute={addScreenToFlow}
-              onRemoveRoute={removeScreenFromFlow}
-              onMoveRoute={moveScreenInFlow}
-              onMoveRouteToIndex={moveScreenToFlowIndex}
               onAddFrame={addFrameToActiveFlow}
               onRenameFlow={renameFlow}
             />
@@ -2309,36 +2110,57 @@ export default function App() {
             minHeight: 0,
           }}
         >
-          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-            <div style={{ padding: space.md, paddingBottom: 0 }}>
-              <div className="mb-xs flex items-center gap-xs">
-                <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
-                {inspectorTab !== "Design" && (
-                  <span className="text-2xs font-semibold text-ink-faint">
-                    {inspectorTab}
-                  </span>
-                )}
+          {workspace === "Flow" ? (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: space.md, paddingBottom: 0 }}>
+                <div className="mb-xs flex items-center gap-xs">
+                  <div className="eyebrow min-w-0 flex-1 truncate">Flow Inspector</div>
+                </div>
               </div>
-              {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
-              <Tabs
-                tabs={["Design", "Code", "History"]}
-                active={inspectorTab}
-                onSelect={setInspectorTab}
-                variant="underline"
+              <FlowInspector
+                flow={activeFlowDefinition}
+                screens={flowInspectorScreens}
+                routeScreens={flowInspectorRouteScreens}
+                availableScreens={flowInspectorAvailableScreens}
+                onSelectScreen={selectScreenFromWorkspace}
+                onAddRoute={addScreenToFlow}
+                onRemoveRoute={removeScreenFromFlow}
+                onMoveRoute={moveScreenInFlow}
+                onUpdateFlow={updateFlowDefinition}
               />
             </div>
-            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-              {inspectorTab === "Design" ? (
-                <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
-                  <Inspector rootId={focusedRootId} />
-                </ErrorBoundary>
-              ) : inspectorTab === "Code" ? (
-                <CodePanel />
-              ) : (
-                <ChangesTimeline onOpenCode={() => setInspectorTab("Code")} />
-              )}
+          ) : (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: space.md, paddingBottom: 0 }}>
+                <div className="mb-xs flex items-center gap-xs">
+                  <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
+                  {inspectorTab !== "Design" && (
+                    <span className="text-2xs font-semibold text-ink-faint">
+                      {inspectorTab}
+                    </span>
+                  )}
+                </div>
+                {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
+                <Tabs
+                  tabs={["Design", "Code", "History"]}
+                  active={inspectorTab}
+                  onSelect={setInspectorTab}
+                  variant="underline"
+                />
+              </div>
+              <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+                {inspectorTab === "Design" ? (
+                  <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
+                    <Inspector rootId={focusedRootId} />
+                  </ErrorBoundary>
+                ) : inspectorTab === "Code" ? (
+                  <CodePanel />
+                ) : (
+                  <ChangesTimeline onOpenCode={() => setInspectorTab("Code")} />
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
       <LayerContextMenu />

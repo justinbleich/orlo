@@ -474,6 +474,53 @@ async function writeFlowManifest(manifest: FlowManifest) {
   return next.manifest;
 }
 
+// --- Canvas layout manifest (.rncanvas/canvas.json) ---------------------------
+// Workspace-spatial state: where each screen frame sits on the infinite canvas.
+// Kept out of per-screen sidecars deliberately — arrangement is a workspace
+// concern, not part of any one screen's artifact.
+
+type CanvasManifest = {
+  version: 1;
+  positions: Record<string, { x: number; y: number }>;
+};
+
+function canvasManifestPath() {
+  return join(activeRepoRoot, ".rncanvas", "canvas.json");
+}
+
+async function readCanvasManifest(): Promise<CanvasManifest> {
+  try {
+    const raw = await readFile(canvasManifestPath(), "utf8");
+    const data = JSON.parse(raw) as CanvasManifest;
+    if (data && data.version === 1 && typeof data.positions === "object" && data.positions) {
+      const positions: CanvasManifest["positions"] = {};
+      for (const [rootId, position] of Object.entries(data.positions)) {
+        if (
+          position &&
+          typeof position.x === "number" &&
+          Number.isFinite(position.x) &&
+          typeof position.y === "number" &&
+          Number.isFinite(position.y)
+        ) {
+          positions[rootId] = { x: position.x, y: position.y };
+        }
+      }
+      return { version: 1, positions };
+    }
+  } catch {
+    // No manifest yet is the normal first-run state.
+  }
+  return { version: 1, positions: {} };
+}
+
+async function writeCanvasManifest(manifest: CanvasManifest): Promise<CanvasManifest> {
+  const path = canvasManifestPath();
+  await mkdir(dirname(path), { recursive: true });
+  const normalized: CanvasManifest = { version: 1, positions: manifest.positions ?? {} };
+  await writeFile(path, JSON.stringify(normalized, null, 2) + "\n");
+  return normalized;
+}
+
 const repoScanIgnoredDirs = new Set([
   ".git",
   ".next",
@@ -1144,6 +1191,26 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Flow manifest failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/canvas", async (req, res) => {
+        try {
+          if (req.method === "GET") {
+            sendJson(res, 200, await readCanvasManifest());
+            return;
+          }
+          if (req.method !== "POST") {
+            sendJson(res, 405, { error: "GET or POST required" });
+            return;
+          }
+          const body = await readRequestJson<{ manifest?: CanvasManifest }>(req);
+          if (!body.manifest) throw new Error("Missing canvas manifest");
+          sendJson(res, 200, await writeCanvasManifest(body.manifest));
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Canvas manifest failed",
           });
         }
       });

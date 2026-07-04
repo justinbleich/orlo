@@ -321,6 +321,19 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     return true;
   }
 
+  // Translating a frame is a *document* action: the position lives in the store
+  // (single undo history + canvas.json persistence); tldraw's own record is just
+  // the live view. The whole drag is one interaction → one undo entry.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override onTranslateStart(): any {
+    try {
+      useDocumentStore.getState().beginInteraction();
+    } catch {
+      /* an interaction may already be active (e.g. multi-frame drag) */
+    }
+    return undefined;
+  }
+
   // Inner RN-node gestures belong to the document overlay. Even if tldraw's
   // capture listener also observes the pointer, never translate the host frame
   // while its document selection is inside the root.
@@ -330,13 +343,24 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     const root = store.roots[current.props.rootId];
     const hasInnerSelection =
       !!root && store.selection.some((id) => id !== root.id && !!findNode(root, id));
-    if (!hasInnerSelection) return undefined;
-    return {
-      id: current.id,
-      type: current.type,
-      x: initial.x,
-      y: initial.y,
-    };
+    if (hasInnerSelection) {
+      return {
+        id: current.id,
+        type: current.type,
+        x: initial.x,
+        y: initial.y,
+      };
+    }
+    store.setFramePosition(current.props.rootId, current.x, current.y);
+    return undefined;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override onTranslateEnd(initial: FrameShape, current: FrameShape): any {
+    const store = useDocumentStore.getState();
+    store.setFramePosition(current.props.rootId, current.x, current.y);
+    store.commitInteraction();
+    return undefined;
   }
 
   // Resizing the frame is resizing the *screen*: the new box size is written to

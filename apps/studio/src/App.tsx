@@ -262,20 +262,29 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
       .filter(isFrame)
       .map((s) => asFrame(s).props.rootId),
   );
+  const store = useDocumentStore.getState();
+  const seeded: Record<NodeId, { x: number; y: number }> = {};
   let i = existing.size;
   for (const root of Object.values(roots)) {
     if (existing.has(root.id)) continue;
     const { w, h } = rootSize(root);
+    // Stored position wins (persisted arrangement / undo state); new frames get
+    // the grid slot, recorded back so the layout is durable from the start.
+    const stored = store.framePositions[root.id];
+    const x = stored?.x ?? 80 + (i % 3) * (DEVICE_FRAME.width + 50);
+    const y = stored?.y ?? 80 + Math.floor(i / 3) * (DEVICE_FRAME.height + 56);
+    if (!stored) seeded[root.id] = { x, y };
     editor.createShape({
       id: createShapeId(),
       type: FRAME_TYPE,
-      x: 80 + (i % 3) * (DEVICE_FRAME.width + 50),
-      y: 80 + Math.floor(i / 3) * (DEVICE_FRAME.height + 56),
+      x,
+      y,
       props: { rootId: root.id, w, h },
       isLocked: !!root.design?.locked,
     } as unknown as CreatePartial);
     i += 1;
   }
+  store.seedFramePositions(seeded);
 }
 
 /** Frame records derive from document roots, so reconciliation must never
@@ -285,29 +294,6 @@ function syncShapes(editor: Editor) {
     () => createMissingShapes(editor, useDocumentStore.getState().roots),
     { history: "ignore", ignoreShapeLock: true },
   );
-}
-
-function canvasGeometrySignature(editor: Editor) {
-  return editor
-    .getCurrentPageShapes()
-    .filter(isFrame)
-    .map((shape) => {
-      const frame = asFrame(shape);
-      return [frame.id, frame.x, frame.y, frame.rotation, frame.props.w, frame.props.h];
-    })
-    .sort(([a], [b]) => String(a).localeCompare(String(b)))
-    .map((parts) => parts.join(":"))
-    .join("|");
-}
-
-function stepCanvasHistory(editor: Editor, direction: "undo" | "redo") {
-  const before = canvasGeometrySignature(editor);
-  for (let skipped = 0; skipped < 100; skipped += 1) {
-    const available = direction === "undo" ? editor.getCanUndo() : editor.getCanRedo();
-    if (!available) return;
-    editor[direction]();
-    if (canvasGeometrySignature(editor) !== before) return;
-  }
 }
 
 function findFrameShapeForRoot(editor: Editor, rootId: NodeId): EditorShape | undefined {
@@ -1342,8 +1328,6 @@ export default function App() {
   const [repoContext, setRepoContext] = useState<RepoContext | null>(null);
   const [activeRepoScreen, setActiveRepoScreen] = useState<ActiveRepoScreen | null>(null);
   const [loadedRepoScreens, setLoadedRepoScreens] = useState<LoadedRepoScreens>({});
-  const [canvasCanUndo, setCanvasCanUndo] = useState(false);
-  const [canvasCanRedo, setCanvasCanRedo] = useState(false);
 
   // The document store's selection is the single source of truth. The focused
   // frame is *derived* from it (the root whose subtree holds the selection), and
@@ -1469,6 +1453,24 @@ export default function App() {
     }
   }, []);
 
+  // Canvas layout manifest (.rncanvas/canvas.json): frame arrangement survives
+  // reloads. `canvasSavedRef` makes load → save idempotent without skip flags.
+  const canvasSavedRef = useRef("");
+  const loadCanvasManifest = useCallback(async () => {
+    try {
+      const res = await fetch("/api/canvas");
+      const body = (await res.json()) as {
+        positions?: Record<NodeId, { x: number; y: number }>;
+      };
+      if (res.ok && body.positions) {
+        canvasSavedRef.current = JSON.stringify(body.positions);
+        useDocumentStore.getState().seedFramePositions(body.positions);
+      }
+    } catch {
+      // No canvas manifest is the normal first-run state.
+    }
+  }, []);
+
   const applyConnectedRepo = useCallback(
     async (body: {
       repoPath?: string;
@@ -1495,10 +1497,12 @@ export default function App() {
       managedDocumentRef.current = false;
       setActiveRepoScreen(null);
       setLoadedRepoScreens({});
+      // Frame arrangement is per-repo state; pick up the new repo's layout.
+      void loadCanvasManifest();
       const target = body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
       setStatus(`Connected ${nextPath} · open a screen to edit ${target}`);
     },
-    [loadRepoContext, refreshGitStatus, repoDraft],
+    [loadCanvasManifest, loadRepoContext, refreshGitStatus, repoDraft],
   );
 
   const connectRepo = useCallback(async () => {
@@ -1710,9 +1714,35 @@ export default function App() {
   );
 
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let last = useDocumentStore.getState().framePositions;
+    const unsubscribe = useDocumentStore.subscribe((state) => {
+      if (state.framePositions === last) return;
+      last = state.framePositions;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const positions = useDocumentStore.getState().framePositions;
+        const payload = JSON.stringify(positions);
+        if (payload === canvasSavedRef.current) return;
+        canvasSavedRef.current = payload;
+        void fetch("/api/canvas", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ manifest: { version: 1, positions } }),
+        }).catch(() => {});
+      }, 500);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     void loadRepo();
     void refreshGitStatus();
     void loadFlowManifest();
+    void loadCanvasManifest();
     // Poll git only while the tab is visible; refresh once on return so a
     // backgrounded Studio doesn't spawn a git subprocess every 5s.
     const timer = setInterval(() => {
@@ -1726,7 +1756,7 @@ export default function App() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [loadFlowManifest, loadRepo, refreshGitStatus]);
+  }, [loadCanvasManifest, loadFlowManifest, loadRepo, refreshGitStatus]);
 
   // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
   // beside the sidecar whenever the token registry changes. Debounced and
@@ -1803,33 +1833,27 @@ export default function App() {
       { scope: "session" },
     );
 
-    const updateCanvasHistory = () => {
-      setCanvasCanUndo(editor.getCanUndo());
-      setCanvasCanRedo(editor.getCanRedo());
-    };
-    editor.store.listen(updateCanvasHistory, { scope: "document" });
-    updateCanvasHistory();
   }, []);
 
-  const undoAvailable = canUndo || canvasCanUndo || hasActiveInteraction;
-  const redoAvailable = canRedo || canvasCanRedo;
+  // The document store is the single undo history — frame moves live there too
+  // (framePositions), so tldraw's own history never surfaces in the UI.
+  const undoAvailable = canUndo || hasActiveInteraction;
+  const redoAvailable = canRedo;
 
   const undoLatest = useCallback(() => {
     const store = useDocumentStore.getState();
     if (store.interaction) store.commitInteraction();
     if (useDocumentStore.getState().canUndo()) undo();
-    else if (editorRef.current) stepCanvasHistory(editorRef.current, "undo");
   }, [undo]);
 
   const redoLatest = useCallback(() => {
     if (useDocumentStore.getState().canRedo()) redo();
-    else if (editorRef.current) stepCanvasHistory(editorRef.current, "redo");
   }, [redo]);
 
   const resetCanvasHistory = useCallback(() => {
+    // tldraw history is inert (never user-facing); clear it on document loads so
+    // it can't accumulate across sessions.
     editorRef.current?.clearHistory();
-    setCanvasCanUndo(false);
-    setCanvasCanRedo(false);
   }, []);
 
   const createToken = useCallback((category: "color" | "spacing" | "fontSize") => {
@@ -2197,23 +2221,17 @@ export default function App() {
       }
 
       if (modifier && event.key.toLowerCase() === "z") {
+        // Always intercept: the document store owns the only undo history, and
+        // letting tldraw's shortcut fire would replay its (inert) shape records
+        // against store-owned frame positions.
+        event.preventDefault();
+        event.stopImmediatePropagation();
         const redoRequested = event.shiftKey;
-        const documentAvailable = redoRequested ? store.canRedo() : store.canUndo();
-        const editor = editorRef.current;
-        const canvasAvailable = editor
-          ? redoRequested
-            ? editor.getCanRedo()
-            : editor.getCanUndo()
-          : false;
-        if (documentAvailable || canvasAvailable) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          if (documentAvailable) {
-            if (redoRequested) store.redo();
-            else store.undo();
-          } else {
-            stepCanvasHistory(editor!, redoRequested ? "redo" : "undo");
-          }
+        if (store.interaction) store.commitInteraction();
+        const live = useDocumentStore.getState();
+        if (redoRequested ? live.canRedo() : live.canUndo()) {
+          if (redoRequested) live.redo();
+          else live.undo();
           setStatus(redoRequested ? "Redid change" : "Undid change");
         }
         return;
@@ -2425,6 +2443,48 @@ export default function App() {
       reconcilingShapesRef.current = false;
     }
   }, [roots]);
+
+  // Mirror store-owned frame positions → shapes (undo/redo, canvas.json load).
+  // An imperative subscription, not an effect on framePositions: live drags
+  // write positions per pointermove and must not re-render the whole shell.
+  // During a drag tldraw has already moved the shape, so the equality guard
+  // makes this a no-op until an undo/redo or external load changes positions.
+  useEffect(() => {
+    let last = useDocumentStore.getState().framePositions;
+    const unsubscribe = useDocumentStore.subscribe((state) => {
+      if (state.framePositions === last) return;
+      last = state.framePositions;
+      const editor = editorRef.current;
+      if (!editor) return;
+      reconcilingShapesRef.current = true;
+      try {
+        editor.run(
+          () => {
+            for (const shape of editor.getCurrentPageShapes()) {
+              if (!isFrame(shape)) continue;
+              const position = state.framePositions[asFrame(shape).props.rootId];
+              if (!position) continue;
+              if (
+                Math.abs(shape.x - position.x) > 0.01 ||
+                Math.abs(shape.y - position.y) > 0.01
+              ) {
+                editor.updateShape({
+                  id: shape.id,
+                  type: FRAME_TYPE,
+                  x: position.x,
+                  y: position.y,
+                } as unknown as UpdatePartial);
+              }
+            }
+          },
+          { history: "ignore", ignoreShapeLock: true },
+        );
+      } finally {
+        reconcilingShapesRef.current = false;
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const addFrame = useCallback(() => {
     const store = useDocumentStore.getState();

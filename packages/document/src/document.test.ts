@@ -318,3 +318,41 @@ test("node index tracks structural ops (insert, move, remove)", () => {
   assert.equal(findNode(removed, "idx2-child"), undefined);
   assert.equal(getParent(removed, "idx2-child"), undefined);
 });
+
+test("frame positions are undoable and drag-batched via interactions", () => {
+  const root = createNode("View", { id: "pos-root" });
+  const store = useDocumentStore.getState();
+  store.loadRoots({ [root.id]: root }, [root.id]);
+  useDocumentStore.getState().seedFramePositions({ [root.id]: { x: 10, y: 20 } });
+  assert.equal(useDocumentStore.getState().past.length, 0); // seeds are not history
+
+  // A drag: many live writes inside one interaction → one undo entry.
+  useDocumentStore.getState().beginInteraction();
+  useDocumentStore.getState().setFramePosition(root.id, 50, 60);
+  useDocumentStore.getState().setFramePosition(root.id, 100, 120);
+  useDocumentStore.getState().commitInteraction();
+  assert.equal(useDocumentStore.getState().past.length, 1);
+  assert.deepEqual(useDocumentStore.getState().framePositions[root.id], { x: 100, y: 120 });
+
+  useDocumentStore.getState().undo();
+  assert.deepEqual(useDocumentStore.getState().framePositions[root.id], { x: 10, y: 20 });
+  useDocumentStore.getState().redo();
+  assert.deepEqual(useDocumentStore.getState().framePositions[root.id], { x: 100, y: 120 });
+});
+
+test("removing a root drops its frame position; seeding is idempotent", () => {
+  const root = createNode("View", { id: "pos-drop" });
+  const store = useDocumentStore.getState();
+  store.loadRoots({ [root.id]: root }, [root.id]);
+  useDocumentStore.getState().seedFramePositions({ [root.id]: { x: 1, y: 2 } });
+  const seeded = useDocumentStore.getState().framePositions;
+  // Re-seeding identical values must not produce a new state reference.
+  useDocumentStore.getState().seedFramePositions({ [root.id]: { x: 1, y: 2 } });
+  assert.equal(useDocumentStore.getState().framePositions, seeded);
+
+  useDocumentStore.getState().removeRoot(root.id);
+  assert.equal(useDocumentStore.getState().framePositions[root.id], undefined);
+  // Undo restores the root *and* its position together.
+  useDocumentStore.getState().undo();
+  assert.deepEqual(useDocumentStore.getState().framePositions[root.id], { x: 1, y: 2 });
+});

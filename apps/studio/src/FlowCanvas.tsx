@@ -359,7 +359,7 @@ export function FlowCanvas({
   }, [flow, ready, routeScreens, storedPositions]);
 
   return (
-    <div className="relative min-h-0 flex-1" data-testid="flow-canvas">
+    <div className="relative h-full min-h-0 flex-1" data-testid="flow-canvas">
       <Tldraw
         onMount={onMount}
         shapeUtils={shapeUtils}

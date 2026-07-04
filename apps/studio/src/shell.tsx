@@ -687,8 +687,24 @@ export function LeftPanel({
   const repoGitCode = firstGitCode(gitStatus);
   const repoScreens = repoContext?.screens ?? [];
   const repoAssets = repoContext?.assets ?? [];
+  // Keep this path-alias check in step with repo-project-model/workspace-store:
+  // repo screens may be addressed by either their TSX target or RNCanvas sidecar.
+  function loadedRepoScreenForRepoScreen(screen: RepoPanelScreen) {
+    return (
+      loadedRepoScreens[screen.path] ??
+      (screen.sidecarPath ? loadedRepoScreens[screen.sidecarPath] : undefined) ??
+      Object.values(loadedRepoScreens).find(
+        (loaded) =>
+          loaded.path === screen.path ||
+          loaded.path === screen.sidecarPath ||
+          loaded.sidecarPath === screen.path ||
+          loaded.sidecarPath === screen.sidecarPath,
+      )
+    );
+  }
+
   function loadedRootIdForRepoScreen(screen: RepoPanelScreen) {
-    return loadedRepoScreens[screen.path]?.rootId;
+    return loadedRepoScreenForRepoScreen(screen)?.rootId;
   }
 
   function isActiveRepoScreen(screen: RepoPanelScreen) {
@@ -710,7 +726,7 @@ export function LeftPanel({
     : undefined;
   const loadedRepoRootIds = new Set(
     repoScreens.flatMap((screen) => {
-      const loaded = loadedRepoScreens[screen.path];
+      const loaded = loadedRepoScreenForRepoScreen(screen);
       return loaded ? [loaded.rootId] : [];
     }),
   );

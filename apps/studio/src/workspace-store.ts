@@ -359,10 +359,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     workspaceFlags.skipTokenWrite = true;
     workspaceFlags.skipCodeSync = true;
     const state = useDocumentStore.getState();
-    const nextRoots =
-      opts.mode === "merge"
-        ? { ...state.roots, [opts.root.id]: opts.root }
-        : { [opts.root.id]: opts.root };
+    const previousLoadedScreen = Object.values(get().loadedRepoScreens).find(
+      (screen) =>
+        screen.path === opts.targetPath ||
+        screen.path === opts.sidecarPath ||
+        screen.sidecarPath === opts.targetPath ||
+        screen.sidecarPath === opts.sidecarPath,
+    );
+    const nextRoots = opts.mode === "merge" ? { ...state.roots } : {};
+    if (
+      opts.mode === "merge" &&
+      previousLoadedScreen &&
+      previousLoadedScreen.rootId !== opts.root.id
+    ) {
+      delete nextRoots[previousLoadedScreen.rootId];
+    }
+    nextRoots[opts.root.id] = opts.root;
     const nextComponents =
       opts.mode === "merge"
         ? { ...state.components, ...(opts.components ?? {}) }

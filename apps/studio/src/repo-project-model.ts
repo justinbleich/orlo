@@ -211,7 +211,17 @@ export function firstGitCode(status: GitStatus): string | undefined {
  * two panel rows claim the same canvas root (doubled active rows + layer
  * accordions) and the sync flush can write the wrong repo's file.
  */
-export function bindLoadedRepoScreen<S extends { rootId: string }>(
+function sameLoadedScreenPath<S extends { path?: string; sidecarPath?: string }>(
+  leftKey: string,
+  left: S,
+  rightKey: string,
+  right: S,
+) {
+  const leftPaths = new Set([leftKey, left.path, left.sidecarPath].filter(Boolean));
+  return [rightKey, right.path, right.sidecarPath].some((path) => !!path && leftPaths.has(path));
+}
+
+export function bindLoadedRepoScreen<S extends { rootId: string; path?: string; sidecarPath?: string }>(
   current: Record<string, S>,
   path: string,
   screen: S,
@@ -220,7 +230,9 @@ export function bindLoadedRepoScreen<S extends { rootId: string }>(
   if (mode === "replace") return { [path]: screen };
   const next: Record<string, S> = {};
   for (const [key, value] of Object.entries(current)) {
-    if (value.rootId !== screen.rootId) next[key] = value;
+    if (value.rootId !== screen.rootId && !sameLoadedScreenPath(key, value, path, screen)) {
+      next[key] = value;
+    }
   }
   next[path] = screen;
   return next;

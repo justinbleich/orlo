@@ -1,15 +1,35 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-28T16:41:11.373Z",
+  "updatedAt": "2026-06-30T21:55:57.252Z",
   "flows": [
     {
       "id": "onboarding",
       "label": "Onboarding Flow",
-      "entryRootId": "997b4bdb-04e9-4a01-be56-53d57bfd2355",
+      "entryRootId": "bca61dfb-d0d0-4963-bcc3-25224619ee65",
+      "entryName": "Screen 1",
       "routes": [
         {
-          "rootId": "997b4bdb-04e9-4a01-be56-53d57bfd2355",
-          "name": "Screen 1"
+          "rootId": "bca61dfb-d0d0-4963-bcc3-25224619ee65",
+          "name": "Screen 1",
+          "screenKey": "name:screen 1"
+        }
+      ]
+    },
+    {
+      "id": "new-flow",
+      "label": "New Flow",
+      "entryRootId": "bca61dfb-d0d0-4963-bcc3-25224619ee65",
+      "entryName": "Screen 1",
+      "routes": [
+        {
+          "rootId": "bca61dfb-d0d0-4963-bcc3-25224619ee65",
+          "name": "Screen 1",
+          "screenKey": "name:screen 1"
+        },
+        {
+          "rootId": "600b2385-d91d-43f7-8133-b0a9dbcebf29",
+          "name": "Screen 2",
+          "screenKey": "name:screen 2"
         }
       ]
     }

@@ -1,15 +1,29 @@
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 
+export type FlowEdge = {
+  from: { rootId: string; anchorNodeId?: string };
+  to: string;
+  kind: "primary" | "conditional" | "fallback";
+  condition?: string;
+};
+
+export type FlowManifestRoute = { rootId: string; name: string; screenKey?: string };
+
+export type FlowManifestFlow = {
+  id: string;
+  label: string;
+  description?: string;
+  entryRootId?: string;
+  entryName?: string;
+  successRootId?: string;
+  routes: FlowManifestRoute[];
+  edges: FlowEdge[];
+};
+
 export type FlowManifest = {
-  version: 1;
+  version: 2;
   updatedAt?: string;
-  flows: Array<{
-    id: string;
-    label: string;
-    entryRootId?: string;
-    entryName?: string;
-    routes: Array<{ rootId: string; name: string; screenKey?: string }>;
-  }>;
+  flows: FlowManifestFlow[];
 };
 
 export type GitFileStatus = {
@@ -89,20 +103,92 @@ export function resolveExternalSourcePath(root: string, input?: string) {
 }
 
 export function emptyFlowManifest(): FlowManifest {
-  return { version: 1, flows: [] };
+  return { version: 2, flows: [] };
+}
+
+function linearEdgesFromRoutes(routes: readonly FlowManifestRoute[]): FlowEdge[] {
+  const edges: FlowEdge[] = [];
+  for (let i = 0; i < routes.length - 1; i += 1) {
+    const from = routes[i]?.rootId;
+    const to = routes[i + 1]?.rootId;
+    if (from && to && from !== to) edges.push({ from: { rootId: from }, to, kind: "primary" });
+  }
+  return edges;
+}
+
+function normalizeFlow(flow: Partial<FlowManifestFlow>): FlowManifestFlow | null {
+  if (typeof flow.id !== "string" || typeof flow.label !== "string") return null;
+  const routes = Array.isArray(flow.routes)
+    ? flow.routes.flatMap((route) =>
+        route &&
+        typeof route.rootId === "string" &&
+        typeof route.name === "string"
+          ? [{ rootId: route.rootId, name: route.name, screenKey: route.screenKey }]
+          : [],
+      )
+    : [];
+  const routeIds = new Set(routes.map((route) => route.rootId));
+  const edges = Array.isArray(flow.edges)
+    ? flow.edges.flatMap((edge) => {
+        if (
+          !edge ||
+          !edge.from ||
+          typeof edge.from.rootId !== "string" ||
+          typeof edge.to !== "string" ||
+          !["primary", "conditional", "fallback"].includes(edge.kind)
+        ) {
+          return [];
+        }
+        if (!routeIds.has(edge.from.rootId) || !routeIds.has(edge.to)) return [];
+        return [
+          {
+            from: {
+              rootId: edge.from.rootId,
+              anchorNodeId:
+                typeof edge.from.anchorNodeId === "string" ? edge.from.anchorNodeId : undefined,
+            },
+            to: edge.to,
+            kind: edge.kind,
+            condition: typeof edge.condition === "string" ? edge.condition : undefined,
+          },
+        ];
+      })
+    : linearEdgesFromRoutes(routes);
+  return {
+    id: flow.id,
+    label: flow.label,
+    description: typeof flow.description === "string" ? flow.description : undefined,
+    entryRootId: typeof flow.entryRootId === "string" ? flow.entryRootId : undefined,
+    entryName: typeof flow.entryName === "string" ? flow.entryName : undefined,
+    successRootId: typeof flow.successRootId === "string" ? flow.successRootId : undefined,
+    routes,
+    edges,
+  };
 }
 
 export function parseFlowManifest(raw: string): FlowManifest {
-  const parsed = JSON.parse(raw) as FlowManifest;
-  if (parsed.version === 1 && Array.isArray(parsed.flows)) return parsed;
+  const parsed = JSON.parse(raw) as Partial<FlowManifest>;
+  if ((parsed.version === 1 || parsed.version === 2) && Array.isArray(parsed.flows)) {
+    return {
+      version: 2,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : undefined,
+      flows: parsed.flows.flatMap((flow) => {
+        const normalized = normalizeFlow(flow);
+        return normalized ? [normalized] : [];
+      }),
+    };
+  }
   return emptyFlowManifest();
 }
 
 export function serializeFlowManifest(manifest: FlowManifest, updatedAt = new Date().toISOString()) {
   const next: FlowManifest = {
-    version: 1,
+    version: 2,
     updatedAt,
-    flows: manifest.flows,
+    flows: manifest.flows.flatMap((flow) => {
+      const normalized = normalizeFlow(flow);
+      return normalized ? [normalized] : [];
+    }),
   };
   return { manifest: next, json: `${JSON.stringify(next, null, 2)}\n` };
 }

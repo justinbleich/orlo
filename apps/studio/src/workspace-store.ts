@@ -23,6 +23,48 @@ import {
   type GitStatus,
 } from "./code-artifacts";
 import { bindLoadedRepoScreen, type RepoPanelContext } from "./repo-project-model";
+import {
+  deriveLinearEdges,
+  flowRouteScreens,
+  flowScreenKey,
+  flowScreenName,
+  resolveFlowRouteIds,
+} from "./flow-model";
+import type { FlowEdge, FlowManifest } from "./repo-contract";
+
+export type FlowDefinition = {
+  id: string;
+  label: string;
+  description?: string;
+  entryRootId?: NodeId;
+  successRootId?: NodeId;
+  routes: NodeId[];
+  edges: FlowEdge[];
+};
+
+export const DEFAULT_FLOWS: FlowDefinition[] = [
+  {
+    id: "onboarding",
+    label: "Onboarding Flow",
+    description: "Default stack order for first-run screens.",
+    routes: [],
+    edges: [],
+  },
+  {
+    id: "main",
+    label: "Main App Flow",
+    description: "Primary app route order from the current screen tree.",
+    routes: [],
+    edges: [],
+  },
+  {
+    id: "auth",
+    label: "Auth Flow",
+    description: "Authentication screens inferred from screen names when present.",
+    routes: [],
+    edges: [],
+  },
+];
 
 export type SyncState =
   | { status: "idle" }
@@ -86,6 +128,83 @@ let syncRootHint: NodeId | null = null;
 const dirtyRoots = new Set<NodeId>();
 let nextToastId = 1;
 
+function defaultFlowsById(): Record<string, FlowDefinition> {
+  return Object.fromEntries(DEFAULT_FLOWS.map((flow) => [flow.id, { ...flow }]));
+}
+
+function flowsFromState(state: Pick<WorkspaceState, "flowsById" | "flowOrder">): FlowDefinition[] {
+  return state.flowOrder.flatMap((id) => {
+    const flow = state.flowsById[id];
+    return flow ? [flow] : [];
+  });
+}
+
+function screenRootsFromDocument(): Node[] {
+  const state = useDocumentStore.getState();
+  return Object.values(state.roots).filter((root) => root.id !== state.editingComponentId);
+}
+
+function manifestFlowToDefinition(
+  flow: FlowManifest["flows"][number],
+  screenRoots: readonly Node[],
+): FlowDefinition {
+  const routes = resolveFlowRouteIds(screenRoots, flow.routes);
+  const routeSet = new Set(routes);
+  const entryRootId =
+    (flow.entryRootId && routes.find((rootId) => rootId === flow.entryRootId)) ??
+    (flow.entryName
+      ? resolveFlowRouteIds(screenRoots, [{ rootId: flow.entryRootId, name: flow.entryName }])[0]
+      : undefined);
+  return {
+    id: flow.id,
+    label: flow.label,
+    description: flow.description,
+    entryRootId,
+    successRootId:
+      flow.successRootId && routeSet.has(flow.successRootId) ? flow.successRootId : undefined,
+    routes,
+    edges: flow.edges.filter((edge) => routeSet.has(edge.from.rootId) && routeSet.has(edge.to)),
+  };
+}
+
+function flowDefinitionsToManifest(
+  flows: readonly FlowDefinition[],
+  screenRoots: readonly Node[],
+): FlowManifest {
+  return {
+    version: 2,
+    flows: flows.map((flow) => {
+      const routeScreens = flowRouteScreens(screenRoots, flow.id, flow.routes);
+      const routeIds = routeScreens.map((root) => root.id);
+      const routeSet = new Set(routeIds);
+      const entry =
+        (flow.entryRootId
+          ? routeScreens.find((root) => root.id === flow.entryRootId)
+          : undefined) ?? routeScreens[0];
+      const success = flow.successRootId
+        ? routeScreens.find((root) => root.id === flow.successRootId)
+        : undefined;
+      return {
+        id: flow.id,
+        label: flow.label,
+        description: flow.description,
+        entryRootId: entry?.id,
+        entryName: entry?.design?.name,
+        successRootId: success?.id,
+        routes: routeScreens.map((root, index) => ({
+          rootId: root.id,
+          name: flowScreenName(root, index),
+          screenKey: flowScreenKey(root, index),
+        })),
+        edges:
+          flow.edges.length > 0
+            ? flow.edges.filter((edge) => routeSet.has(edge.from.rootId) && routeSet.has(edge.to))
+            : deriveLinearEdges(routeIds),
+      };
+    }),
+  };
+}
+
 export function setSyncRootHint(rootId: NodeId | null) {
   syncRootHint = rootId;
 }
@@ -128,6 +247,8 @@ interface WorkspaceState {
   repoContext: RepoPanelContext | null;
   activeRepoScreen: ActiveRepoScreen | null;
   loadedRepoScreens: LoadedRepoScreens;
+  flowsById: Record<string, FlowDefinition>;
+  flowOrder: string[];
 
   /** Persistent error notices (sync/repo/git failures). Transient confirmations
    *  stay in the status strip; errors stack here until dismissed. */
@@ -151,6 +272,16 @@ interface WorkspaceState {
   loadRepo(): Promise<void>;
   loadRepoContext(): Promise<void>;
   loadCanvasManifest(): Promise<void>;
+  applyFlowManifest(body: FlowManifest): void;
+  loadFlowManifest(): Promise<void>;
+  persistFlowManifest(
+    nextFlows?: FlowDefinition[],
+    screenRootsOverride?: Node[],
+  ): Promise<void>;
+  setFlowEntryRoot(flowId: string, rootId: NodeId): Promise<void>;
+  updateFlowRoutes(flowId: string, routeIds: NodeId[], screenRoots?: Node[]): Promise<void>;
+  upsertFlow(flow: FlowDefinition): Promise<void>;
+  removeFlow(flowId: string): Promise<void>;
   requestCodegen(
     mode: "preview" | "sync",
     source?: "manual" | "auto",
@@ -431,6 +562,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     repoContext: null,
     activeRepoScreen: null,
     loadedRepoScreens: {},
+    flowsById: defaultFlowsById(),
+    flowOrder: DEFAULT_FLOWS.map((flow) => flow.id),
 
     toasts: [],
     pushToast: (message) =>
@@ -577,6 +710,102 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       } catch {
         // No canvas manifest is the normal first-run state.
       }
+    },
+
+    applyFlowManifest: (body) => {
+      const screenRoots = screenRootsFromDocument();
+      const manifestFlows = body.flows
+        .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
+        .map((flow) => manifestFlowToDefinition(flow, screenRoots));
+      if (manifestFlows.length === 0) return;
+      set({
+        flowsById: Object.fromEntries(manifestFlows.map((flow) => [flow.id, flow])),
+        flowOrder: manifestFlows.map((flow) => flow.id),
+      });
+    },
+
+    loadFlowManifest: async () => {
+      try {
+        const res = await fetch("/api/flows");
+        const body = (await res.json()) as FlowManifest & { error?: string };
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        get().applyFlowManifest(body);
+      } catch {
+        // A missing flow manifest is fine; flows start from inferred screen order.
+      }
+    },
+
+    persistFlowManifest: async (nextFlows, screenRootsOverride) => {
+      const screenRoots = screenRootsOverride ?? screenRootsFromDocument();
+      const flows = nextFlows ?? flowsFromState(get());
+      const manifest = flowDefinitionsToManifest(flows, screenRoots);
+      const res = await fetch("/api/flows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manifest }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      void get().refreshGitStatus();
+      void get().loadRepoContext();
+    },
+
+    setFlowEntryRoot: async (flowId, rootId) => {
+      const flow = get().flowsById[flowId];
+      if (!flow) return;
+      const nextFlow = { ...flow, entryRootId: rootId };
+      const nextFlows = flowsFromState(get()).map((item) =>
+        item.id === flowId ? nextFlow : item,
+      );
+      set((state) => ({ flowsById: { ...state.flowsById, [flowId]: nextFlow } }));
+      await get().persistFlowManifest(nextFlows);
+    },
+
+    updateFlowRoutes: async (flowId, routeIds, screenRoots = screenRootsFromDocument()) => {
+      const flow = get().flowsById[flowId];
+      if (!flow) return;
+      const routes = routeIds.filter((rootId, index) => routeIds.indexOf(rootId) === index);
+      const routeSet = new Set(routes);
+      const nextFlow = {
+        ...flow,
+        routes,
+        entryRootId: flow.entryRootId && routeSet.has(flow.entryRootId) ? flow.entryRootId : routes[0],
+        successRootId:
+          flow.successRootId && routeSet.has(flow.successRootId) ? flow.successRootId : undefined,
+        edges: deriveLinearEdges(routes),
+      };
+      const nextFlows = flowsFromState(get()).map((item) =>
+        item.id === flowId ? nextFlow : item,
+      );
+      set((state) => ({ flowsById: { ...state.flowsById, [flowId]: nextFlow } }));
+      await get().persistFlowManifest(nextFlows, screenRoots);
+    },
+
+    upsertFlow: async (flow) => {
+      const current = flowsFromState(get());
+      const exists = current.some((item) => item.id === flow.id);
+      const nextFlows = exists
+        ? current.map((item) => (item.id === flow.id ? flow : item))
+        : [...current, flow];
+      set((state) => ({
+        flowsById: { ...state.flowsById, [flow.id]: flow },
+        flowOrder: exists ? state.flowOrder : [...state.flowOrder, flow.id],
+      }));
+      await get().persistFlowManifest(nextFlows);
+    },
+
+    removeFlow: async (flowId) => {
+      const nextFlows = flowsFromState(get()).filter((flow) => flow.id !== flowId);
+      if (nextFlows.length === 0) return;
+      set((state) => {
+        const flowsById = { ...state.flowsById };
+        delete flowsById[flowId];
+        return {
+          flowsById,
+          flowOrder: state.flowOrder.filter((id) => id !== flowId),
+        };
+      });
+      await get().persistFlowManifest(nextFlows);
     },
 
     requestCodegen: async (mode, source = "manual") => {

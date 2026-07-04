@@ -3,14 +3,20 @@ import { test } from "node:test";
 import { createNode } from "@rn-canvas/document";
 import {
   addFlowRoute,
+  addFlowEdge,
+  deriveLinearEdges,
   flowAvailableScreens,
+  flowGraphLayers,
   flowRouteScreens,
   flowScreenKey,
   inferredFlowScreens,
   moveFlowRouteToIndex,
+  pruneFlowEdges,
+  removeFlowEdge,
   removeFlowRoute,
   reorderFlowRoute,
   resolveFlowRouteIds,
+  updateFlowEdge,
 } from "./flow-model";
 
 const screens = [
@@ -76,5 +82,65 @@ test("flow route descriptors recover unnamed screens from display order", () => 
       { rootId: before[0].id, screenKey: flowScreenKey(before[0], 0), name: "Screen 1" },
     ]),
     ["fresh-root"],
+  );
+});
+
+test("flow graph helpers derive and prune route edges", () => {
+  assert.deepEqual(deriveLinearEdges(["welcome", "login", "home"]), [
+    { from: { rootId: "welcome" }, to: "login", kind: "primary" },
+    { from: { rootId: "login" }, to: "home", kind: "primary" },
+  ]);
+  assert.deepEqual(
+    pruneFlowEdges(
+      [
+        { from: { rootId: "welcome" }, to: "login", kind: "primary" },
+        { from: { rootId: "missing" }, to: "home", kind: "primary" },
+      ],
+      ["welcome", "login"],
+    ),
+    [{ from: { rootId: "welcome" }, to: "login", kind: "primary" }],
+  );
+});
+
+test("flow edge mutations are deduped and endpoint-safe", () => {
+  const routes = ["welcome", "login", "home"];
+  const first = addFlowEdge([], routes, {
+    from: { rootId: "welcome", anchorNodeId: "button" },
+    to: "login",
+    kind: "primary",
+  });
+  assert.equal(addFlowEdge(first, routes, first[0]).length, 1);
+  assert.equal(addFlowEdge(first, routes, { from: { rootId: "home" }, to: "missing", kind: "primary" }).length, 1);
+  const updated = updateFlowEdge(first, routes, 0, {
+    to: "home",
+    kind: "conditional",
+    condition: "email verified",
+  });
+  assert.deepEqual(updated, [
+    {
+      from: { rootId: "welcome", anchorNodeId: "button" },
+      to: "home",
+      kind: "conditional",
+      condition: "email verified",
+    },
+  ]);
+  assert.deepEqual(removeFlowEdge(updated, routes, { kind: "conditional", to: "home" }), []);
+});
+
+test("flowGraphLayers layers reachable branches from the entry", () => {
+  assert.deepEqual(
+    flowGraphLayers(
+      "welcome",
+      [
+        { from: { rootId: "welcome" }, to: "login", kind: "primary" },
+        { from: { rootId: "welcome" }, to: "home", kind: "conditional" },
+        { from: { rootId: "login" }, to: "home", kind: "primary" },
+      ],
+      ["welcome", "login", "home", "settings"],
+    ),
+    [
+      { depth: 0, rootIds: ["welcome", "settings"] },
+      { depth: 1, rootIds: ["login", "home"] },
+    ],
   );
 });

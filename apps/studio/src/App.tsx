@@ -48,6 +48,7 @@ import {
   useWorkspaceStore,
   workspaceFlags,
   type ActiveRepoScreen,
+  type FlowDefinition,
 } from "./workspace-store";
 import { Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -93,14 +94,12 @@ import {
   addFlowRoute,
   flowAvailableScreens,
   flowRouteScreens,
-  flowScreenKey,
   flowScreenName,
   moveFlowRouteToIndex,
   removeFlowRoute,
   reorderFlowRoute,
-  resolveFlowRouteIds,
-  type FlowRoutes,
 } from "./flow-model";
+import type { FlowManifest } from "./repo-contract";
 import {
   firstSelectableChild,
   nextLayerSelection,
@@ -154,19 +153,6 @@ type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 type RepoContext = RepoPanelContext;
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
-type FlowDefinition = { id: FlowId; label: string; description?: string };
-
-type FlowManifest = {
-  version: 1;
-  flows: Array<{
-    id: FlowId;
-    label: string;
-    description?: string;
-    entryRootId?: NodeId;
-    entryName?: string;
-    routes: Array<{ rootId: NodeId; name: string; screenKey?: string }>;
-  }>;
-};
 
 function rootSize(root: Node): { w: number; h: number } {
   const w = typeof root.style.width === "number" ? root.style.width : 320;
@@ -272,24 +258,6 @@ function syncCanvasFrameSelection(editor: Editor, rootId: NodeId, selectFrame: b
   if (selected) editor.deselect(shape.id);
   return true;
 }
-
-const DEFAULT_FLOWS: FlowDefinition[] = [
-  {
-    id: "onboarding",
-    label: "Onboarding Flow",
-    description: "Default stack order for first-run screens.",
-  },
-  {
-    id: "main",
-    label: "Main App Flow",
-    description: "Primary app route order from the current screen tree.",
-  },
-  {
-    id: "auth",
-    label: "Auth Flow",
-    description: "Authentication screens inferred from screen names when present.",
-  },
-];
 
 const TOKEN_IDENTIFIER = /^[A-Za-z_$][\w$]*(\.[\w$]+)*$/;
 
@@ -1418,10 +1386,7 @@ export default function App() {
 
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
-  const [flows, setFlows] = useState<FlowDefinition[]>(DEFAULT_FLOWS);
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
-  const [flowEntrypoints, setFlowEntrypoints] = useState<Partial<Record<FlowId, NodeId>>>({});
-  const [flowRoutes, setFlowRoutes] = useState<FlowRoutes>({});
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
@@ -1436,12 +1401,18 @@ export default function App() {
   const sidecarPath = useWorkspaceStore((s) => s.sidecarPath);
   const activeRepoScreen = useWorkspaceStore((s) => s.activeRepoScreen);
   const loadedRepoScreens = useWorkspaceStore((s) => s.loadedRepoScreens);
+  const flowsById = useWorkspaceStore((s) => s.flowsById);
+  const flowOrder = useWorkspaceStore((s) => s.flowOrder);
   const setStatus = useWorkspaceStore((s) => s.setStatus);
   const setActiveRepoScreen = useWorkspaceStore((s) => s.setActiveRepoScreen);
   const refreshGitStatus = useWorkspaceStore((s) => s.refreshGitStatus);
   const loadRepo = useWorkspaceStore((s) => s.loadRepo);
-  const loadRepoContext = useWorkspaceStore((s) => s.loadRepoContext);
   const loadCanvasManifest = useWorkspaceStore((s) => s.loadCanvasManifest);
+  const applyFlowManifestToStore = useWorkspaceStore((s) => s.applyFlowManifest);
+  const setStoredFlowEntryRoot = useWorkspaceStore((s) => s.setFlowEntryRoot);
+  const updateStoredFlowRoutes = useWorkspaceStore((s) => s.updateFlowRoutes);
+  const upsertStoredFlow = useWorkspaceStore((s) => s.upsertFlow);
+  const removeStoredFlow = useWorkspaceStore((s) => s.removeFlow);
   const openSidecar = useWorkspaceStore((s) => s.openSidecar);
   const importSource = useWorkspaceStore((s) => s.importSource);
   const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
@@ -1462,14 +1433,18 @@ export default function App() {
     [roots, selection],
   );
   const focusedRootId = focusedRoot?.id ?? null;
+  const flows = useMemo(
+    () => flowOrder.flatMap((id) => (flowsById[id] ? [flowsById[id]] : [])),
+    [flowOrder, flowsById],
+  );
   const flowPanelItems = useMemo<FlowPanelItem[]>(() => {
     const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
     return flows.map((flow) => ({
       id: flow.id,
       label: flow.label,
-      screenCount: flowRouteScreens(screenRoots, flow.id, flowRoutes[flow.id]).length,
+      screenCount: flowRouteScreens(screenRoots, flow.id, flow.routes).length,
     }));
-  }, [editingComponentId, flowRoutes, flows, roots]);
+  }, [editingComponentId, flows, roots]);
   const repoFlowItems = useMemo(
     () => repoFlowItemsForContext(repoContext),
     [repoContext],
@@ -1512,13 +1487,11 @@ export default function App() {
     const hasManualFlow = flows.some((flow) => flow.id === activeFlow);
     const hasRepoFlow = repoFlowItems.some((flow) => flow.id === activeFlow);
     if (!hasManualFlow && !hasRepoFlow) {
-      setActiveFlow(flows[0].id);
+      setActiveFlow(flows[0].id as FlowId);
     }
   }, [activeFlow, flows, repoFlowItems]);
 
   const applyFlowManifest = useCallback((body: FlowManifest) => {
-    const next: Partial<Record<FlowId, NodeId>> = {};
-    const nextRoutes: FlowRoutes = {};
     const state = useDocumentStore.getState();
     const screenRoots = Object.values(state.roots).filter(
       (root) => root.id !== state.editingComponentId,
@@ -1526,49 +1499,26 @@ export default function App() {
     const hasRoutes = body.flows.some(
       (flow) => Array.isArray(flow.routes) && flow.routes.length > 0,
     );
-    const manifestFlows = Array.isArray(body.flows)
-      ? body.flows
-          .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
-          .map((flow) => ({
-            id: flow.id,
-            label: flow.label,
-            description: typeof flow.description === "string" ? flow.description : undefined,
-          }))
-      : [];
     if (hasRoutes && screenRoots.length === 0) {
       pendingFlowManifestRef.current = body;
-      if (manifestFlows.length > 0) {
-        setFlows(manifestFlows);
-        setActiveFlow((current) =>
-          manifestFlows.some((flow) => flow.id === current) ? current : manifestFlows[0].id,
-        );
-      }
       return;
     }
-    for (const flow of body.flows ?? []) {
-      if (Array.isArray(flow.routes)) {
-        const routeIds = resolveFlowRouteIds(screenRoots, flow.routes);
-        nextRoutes[flow.id] = routeIds;
-        const entryId =
-          (flow.entryRootId && routeIds.find((rootId) => rootId === flow.entryRootId)) ??
-          (flow.entryName
-            ? resolveFlowRouteIds(screenRoots, [{ rootId: flow.entryRootId, name: flow.entryName }])[0]
-            : undefined);
-        if (entryId) next[flow.id] = entryId;
-      } else if (flow.entryRootId) {
-        next[flow.id] = flow.entryRootId;
-      }
-    }
     pendingFlowManifestRef.current = null;
-    if (manifestFlows.length > 0) {
-      setFlows(manifestFlows);
+    applyFlowManifestToStore(body);
+    const firstFlowId = body.flows[0]?.id;
+    if (firstFlowId) {
       setActiveFlow((current) =>
-        manifestFlows.some((flow) => flow.id === current) ? current : manifestFlows[0].id,
+        body.flows.some((flow) => flow.id === current) ? current : (firstFlowId as FlowId),
       );
     }
-    setFlowEntrypoints(next);
-    setFlowRoutes(nextRoutes);
-  }, []);
+  }, [applyFlowManifestToStore]);
+
+  useEffect(() => {
+    if (!pendingFlowManifestRef.current) return;
+    const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+    if (screenRoots.length === 0) return;
+    applyFlowManifest(pendingFlowManifestRef.current);
+  }, [applyFlowManifest, editingComponentId, roots]);
 
   const loadFlowManifest = useCallback(async () => {
     try {
@@ -1580,58 +1530,6 @@ export default function App() {
       // A missing flow manifest is fine; flows start from inferred screen order.
     }
   }, [applyFlowManifest]);
-
-  useEffect(() => {
-    if (!pendingFlowManifestRef.current) return;
-    const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
-    if (screenRoots.length === 0) return;
-    applyFlowManifest(pendingFlowManifestRef.current);
-  }, [applyFlowManifest, editingComponentId, roots]);
-
-  const persistFlowManifest = useCallback(
-    async (
-      nextFlows: FlowDefinition[] = flows,
-      entrypoints: Partial<Record<FlowId, NodeId>> = flowEntrypoints,
-      routesByFlow: FlowRoutes = flowRoutes,
-      screenRootsOverride?: Node[],
-    ) => {
-      const screenRoots =
-        screenRootsOverride ??
-        Object.values(roots).filter((root) => root.id !== editingComponentId);
-      const manifest: FlowManifest = {
-        version: 1,
-        flows: nextFlows.map((flow) => {
-          const routeScreens = flowRouteScreens(screenRoots, flow.id, routesByFlow[flow.id]);
-          const entry =
-            (entrypoints[flow.id]
-              ? routeScreens.find((root) => root.id === entrypoints[flow.id])
-              : undefined) ?? routeScreens[0];
-          return {
-            id: flow.id,
-            label: flow.label,
-            description: flow.description,
-            entryRootId: entry?.id,
-            entryName: entry?.design?.name,
-            routes: routeScreens.map((root, index) => ({
-              rootId: root.id,
-              name: flowScreenName(root, index),
-              screenKey: flowScreenKey(root, index),
-            })),
-          };
-        }),
-      };
-      const res = await fetch("/api/flows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manifest }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      void refreshGitStatus();
-      void loadRepoContext();
-    },
-    [editingComponentId, flowEntrypoints, flowRoutes, flows, loadRepoContext, refreshGitStatus, roots],
-  );
 
   useEffect(() => {
     void loadRepo();
@@ -1747,43 +1645,26 @@ export default function App() {
   }, []);
 
   const setFlowEntryRoot = useCallback((rootId: NodeId) => {
-    setFlowEntrypoints((current) => {
-      const next = { ...current, [activeFlow]: rootId };
-      void persistFlowManifest(flows, next, flowRoutes).then(
-        () => setStatus("Updated flow entrypoint"),
-        (error) =>
-          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
-      );
-      return next;
-    });
-  }, [activeFlow, flowRoutes, flows, persistFlowManifest]);
+    void setStoredFlowEntryRoot(activeFlow, rootId).then(
+      () => setStatus("Updated flow entrypoint"),
+      (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+    );
+  }, [activeFlow, setStoredFlowEntryRoot]);
 
   const updateFlowRoutes = useCallback(
     (
       updater: (current: NodeId[] | undefined, screens: Node[]) => NodeId[],
       status: string,
-      entrypointUpdater?: (
-        current: Partial<Record<FlowId, NodeId>>,
-        nextRouteIds: NodeId[],
-      ) => Partial<Record<FlowId, NodeId>>,
     ) => {
       const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
-      setFlowRoutes((current) => {
-        const nextRouteIds = updater(current[activeFlow], screenRoots);
-        const nextRoutes = { ...current, [activeFlow]: nextRouteIds };
-        const nextEntrypoints = entrypointUpdater
-          ? entrypointUpdater(flowEntrypoints, nextRouteIds)
-          : flowEntrypoints;
-        if (nextEntrypoints !== flowEntrypoints) setFlowEntrypoints(nextEntrypoints);
-        void persistFlowManifest(flows, nextEntrypoints, nextRoutes).then(
-          () => setStatus(status),
-          (error) =>
-            setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
-        );
-        return nextRoutes;
-      });
+      const current = flowsById[activeFlow]?.routes;
+      const nextRouteIds = updater(current, screenRoots);
+      void updateStoredFlowRoutes(activeFlow, nextRouteIds, screenRoots).then(
+        () => setStatus(status),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
     },
-    [activeFlow, editingComponentId, flowEntrypoints, flows, persistFlowManifest, roots],
+    [activeFlow, editingComponentId, flowsById, roots, updateStoredFlowRoutes],
   );
 
   const addScreenToFlow = useCallback(
@@ -1801,14 +1682,6 @@ export default function App() {
       updateFlowRoutes(
         (current, screenRoots) => removeFlowRoute(screenRoots, activeFlow, current, rootId),
         "Removed screen from flow",
-        (current, nextRouteIds) => {
-          if (current[activeFlow] !== rootId) return current;
-          const next = { ...current };
-          const fallbackEntry = nextRouteIds[0];
-          if (fallbackEntry) next[activeFlow] = fallbackEntry;
-          else delete next[activeFlow];
-          return next;
-        },
       );
     },
     [activeFlow, updateFlowRoutes],
@@ -1836,30 +1709,25 @@ export default function App() {
   );
 
   const addFlow = useCallback(() => {
-    setFlows((current) => {
-      const labelBase = "New Flow";
-      const takenLabels = new Set(current.map((flow) => flow.label));
-      let label = labelBase;
-      for (let i = 2; takenLabels.has(label); i += 1) label = `${labelBase} ${i}`;
-      const nextFlow: FlowDefinition = {
-        id: slugFlowId(label, new Set(current.map((flow) => flow.id))),
-        label,
-        description: "Prototype route order for this screen group.",
-      };
-      const next = [...current, nextFlow];
-      const nextRoutes = { ...flowRoutes, [nextFlow.id]: [] };
-      setFlowRoutes(nextRoutes);
-      void persistFlowManifest(next, flowEntrypoints, nextRoutes).then(
-        () => setStatus(`Added ${label}`),
-        (error) =>
-          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
-      );
-      setActiveFlow(nextFlow.id);
-      setPendingRemoveFlowId(null);
-      setWorkspace("Flow");
-      return next;
-    });
-  }, [flowEntrypoints, flowRoutes, persistFlowManifest]);
+    const labelBase = "New Flow";
+    const takenLabels = new Set(flows.map((flow) => flow.label));
+    let label = labelBase;
+    for (let i = 2; takenLabels.has(label); i += 1) label = `${labelBase} ${i}`;
+    const nextFlow: FlowDefinition = {
+      id: slugFlowId(label, new Set(flows.map((flow) => flow.id))),
+      label,
+      description: "Prototype route order for this screen group.",
+      routes: [],
+      edges: [],
+    };
+    void upsertStoredFlow(nextFlow).then(
+      () => setStatus(`Added ${label}`),
+      (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+    );
+    setActiveFlow(nextFlow.id as FlowId);
+    setPendingRemoveFlowId(null);
+    setWorkspace("Flow");
+  }, [flows, upsertStoredFlow]);
 
   const renameFlow = useCallback(
     (flowId: FlowId, label: string) => {
@@ -1868,31 +1736,22 @@ export default function App() {
         setStatus("Flow name required");
         return false;
       }
-      let nextFlows: FlowDefinition[] | null = null;
-      setFlows((current) => {
-        const currentFlow = current.find((flow) => flow.id === flowId);
-        if (!currentFlow || currentFlow.label === nextLabel) return current;
-        const duplicate = current.some(
-          (flow) => flow.id !== flowId && flow.label.toLowerCase() === nextLabel.toLowerCase(),
-        );
-        if (duplicate) {
-          setStatus("Flow name already exists");
-          return current;
-        }
-        nextFlows = current.map((flow) =>
-          flow.id === flowId ? { ...flow, label: nextLabel } : flow,
-        );
-        return nextFlows;
-      });
-      if (!nextFlows) return false;
-      void persistFlowManifest(nextFlows, flowEntrypoints, flowRoutes).then(
+      const currentFlow = flows.find((flow) => flow.id === flowId);
+      if (!currentFlow || currentFlow.label === nextLabel) return false;
+      const duplicate = flows.some(
+        (flow) => flow.id !== flowId && flow.label.toLowerCase() === nextLabel.toLowerCase(),
+      );
+      if (duplicate) {
+        setStatus("Flow name already exists");
+        return false;
+      }
+      void upsertStoredFlow({ ...currentFlow, label: nextLabel }).then(
         () => setStatus(`Renamed flow to ${nextLabel}`),
-        (error) =>
-          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
       return true;
     },
-    [flowEntrypoints, flowRoutes, persistFlowManifest],
+    [flows, upsertStoredFlow],
   );
 
   const removeFlow = useCallback(
@@ -1903,41 +1762,32 @@ export default function App() {
       }
       const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
       const screenCount =
-        flow.screenCount ?? flowRouteScreens(screenRoots, flow.id, flowRoutes[flow.id]).length;
+        flow.screenCount ?? flowRouteScreens(screenRoots, flow.id, flowsById[flow.id]?.routes).length;
       if (screenCount > 1 && pendingRemoveFlowId !== flow.id) {
         setPendingRemoveFlowId(flow.id);
         setStatus(`Confirm removal of ${flow.label}`);
         return;
       }
       const nextFlows = flows.filter((item) => item.id !== flow.id);
-      const nextEntrypoints = { ...flowEntrypoints };
-      const nextRoutes = { ...flowRoutes };
-      delete nextEntrypoints[flow.id];
-      delete nextRoutes[flow.id];
       const nextActiveFlow = activeFlow === flow.id ? nextFlows[0]?.id : activeFlow;
       if (!nextActiveFlow) {
         setStatus("Keep at least one flow.");
         return;
       }
-      setFlows(nextFlows);
-      setFlowEntrypoints(nextEntrypoints);
-      setFlowRoutes(nextRoutes);
       setPendingRemoveFlowId(null);
-      setActiveFlow(nextActiveFlow);
-      void persistFlowManifest(nextFlows, nextEntrypoints, nextRoutes).then(
+      setActiveFlow(nextActiveFlow as FlowId);
+      void removeStoredFlow(flow.id).then(
         () => setStatus(`Removed ${flow.label}`),
-        (error) =>
-          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
     },
     [
       activeFlow,
       editingComponentId,
-      flowEntrypoints,
-      flowRoutes,
+      flowsById,
       flows,
       pendingRemoveFlowId,
-      persistFlowManifest,
+      removeStoredFlow,
       roots,
     ],
   );
@@ -2359,19 +2209,13 @@ export default function App() {
     const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
       (item) => item.id !== useDocumentStore.getState().editingComponentId,
     );
-    setFlowRoutes((current) => {
-      const nextRoutes = {
-        ...current,
-        [activeFlow]: addFlowRoute(screenRoots, activeFlow, current[activeFlow], root.id),
-      };
-      void persistFlowManifest(flows, flowEntrypoints, nextRoutes, screenRoots).then(
-        () => setStatus("Added screen to flow"),
-        (error) =>
-          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
-      );
-      return nextRoutes;
-    });
-  }, [activeFlow, addFrame, flowEntrypoints, flows, persistFlowManifest]);
+    const current = flowsById[activeFlow]?.routes;
+    const nextRoutes = addFlowRoute(screenRoots, activeFlow, current, root.id);
+    void updateStoredFlowRoutes(activeFlow, nextRoutes, screenRoots).then(
+      () => setStatus("Added screen to flow"),
+      (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+    );
+  }, [activeFlow, addFrame, flowsById, updateStoredFlowRoutes]);
 
   const setCanvasTool = useCallback((tool: CanvasTool) => {
     useStudioStore.getState().setCanvasTool(tool);
@@ -2401,6 +2245,7 @@ export default function App() {
 
 
   // Read-only context crumb mirroring the active workspace (and its object where known).
+  const activeFlowDefinition = flowsById[activeFlow];
   const workspaceContext =
     workspace === "Component"
       ? `Component · ${editingComponentName ?? "Untitled"}`
@@ -2457,8 +2302,8 @@ export default function App() {
               flows={flows}
               repoFlows={repoFlowItems}
               activeFlow={activeFlow}
-              entryRootId={flowEntrypoints[activeFlow]}
-              routeIds={flowRoutes[activeFlow]}
+              entryRootId={activeFlowDefinition?.entryRootId}
+              routeIds={activeFlowDefinition?.routes}
               onSelectScreen={selectScreenFromWorkspace}
               onOpenRepoScreen={openRepoScreen}
               onEntryRootChange={setFlowEntryRoot}

@@ -1,8 +1,10 @@
 import type { Node, NodeId } from "@rn-canvas/document";
+import type { FlowEdge } from "./repo-contract";
 
 export type FlowDefinitionLike = { id: string };
 export type FlowRoutes = Partial<Record<string, NodeId[]>>;
 export type FlowRouteDescriptor = { rootId?: NodeId; name?: string; screenKey?: string };
+export type FlowGraphLayer = { depth: number; rootIds: NodeId[] };
 
 export function flowScreenName(root: Node, index: number) {
   return root.design?.name ?? `Screen ${index + 1}`;
@@ -129,4 +131,126 @@ export function moveFlowRouteToIndex(
   const [moved] = next.splice(from, 1);
   next.splice(clamped, 0, moved);
   return next;
+}
+
+export function deriveLinearEdges(routes: readonly NodeId[]): FlowEdge[] {
+  const edges: FlowEdge[] = [];
+  for (let i = 0; i < routes.length - 1; i += 1) {
+    const from = routes[i];
+    const to = routes[i + 1];
+    if (from && to && from !== to) edges.push({ from: { rootId: from }, to, kind: "primary" });
+  }
+  return edges;
+}
+
+function edgeKey(edge: FlowEdge) {
+  return [
+    edge.from.rootId,
+    edge.from.anchorNodeId ?? "",
+    edge.to,
+    edge.kind,
+    edge.condition ?? "",
+  ].join("\u0000");
+}
+
+export function pruneFlowEdges(edges: readonly FlowEdge[], routeIds: readonly NodeId[]): FlowEdge[] {
+  const routeSet = new Set(routeIds);
+  return edges.filter((edge) => routeSet.has(edge.from.rootId) && routeSet.has(edge.to));
+}
+
+export function addFlowEdge(
+  edges: readonly FlowEdge[],
+  routeIds: readonly NodeId[],
+  edge: FlowEdge,
+): FlowEdge[] {
+  if (edge.from.rootId === edge.to) return pruneFlowEdges(edges, routeIds);
+  const routeSet = new Set(routeIds);
+  if (!routeSet.has(edge.from.rootId) || !routeSet.has(edge.to)) {
+    return pruneFlowEdges(edges, routeIds);
+  }
+  const next = pruneFlowEdges(edges, routeIds);
+  const key = edgeKey(edge);
+  if (next.some((item) => edgeKey(item) === key)) return next;
+  return [...next, edge];
+}
+
+export function removeFlowEdge(
+  edges: readonly FlowEdge[],
+  routeIds: readonly NodeId[],
+  match: Partial<FlowEdge> & { from?: Partial<FlowEdge["from"]>; to?: NodeId },
+): FlowEdge[] {
+  return pruneFlowEdges(edges, routeIds).filter((edge) => {
+    if (match.from?.rootId && edge.from.rootId !== match.from.rootId) return true;
+    if (match.from?.anchorNodeId && edge.from.anchorNodeId !== match.from.anchorNodeId) return true;
+    if (match.to && edge.to !== match.to) return true;
+    if (match.kind && edge.kind !== match.kind) return true;
+    if (match.condition && edge.condition !== match.condition) return true;
+    return false;
+  });
+}
+
+export function updateFlowEdge(
+  edges: readonly FlowEdge[],
+  routeIds: readonly NodeId[],
+  index: number,
+  patch: Partial<FlowEdge> & { from?: Partial<FlowEdge["from"]> },
+): FlowEdge[] {
+  const current = pruneFlowEdges(edges, routeIds);
+  const existing = current[index];
+  if (!existing) return current;
+  const updated: FlowEdge = {
+    ...existing,
+    ...patch,
+    from: { ...existing.from, ...(patch.from ?? {}) },
+  };
+  const without = current.filter((_, itemIndex) => itemIndex !== index);
+  return addFlowEdge(without, routeIds, updated);
+}
+
+export function flowGraphLayers(
+  entryRootId: NodeId | undefined,
+  edges: readonly FlowEdge[],
+  routeIds: readonly NodeId[] = [],
+): FlowGraphLayer[] {
+  const nodes = new Set<NodeId>(routeIds);
+  for (const edge of edges) {
+    nodes.add(edge.from.rootId);
+    nodes.add(edge.to);
+  }
+  if (nodes.size === 0) return [];
+  const entry = entryRootId && nodes.has(entryRootId) ? entryRootId : [...nodes][0];
+  const adjacency = new Map<NodeId, NodeId[]>();
+  for (const edge of edges) {
+    if (!nodes.has(edge.from.rootId) || !nodes.has(edge.to)) continue;
+    const next = adjacency.get(edge.from.rootId) ?? [];
+    if (!next.includes(edge.to)) next.push(edge.to);
+    adjacency.set(edge.from.rootId, next);
+  }
+  const depthByRoot = new Map<NodeId, number>([[entry, 0]]);
+  const queue = [entry];
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const rootId = queue[cursor];
+    const nextDepth = (depthByRoot.get(rootId) ?? 0) + 1;
+    for (const target of adjacency.get(rootId) ?? []) {
+      if (depthByRoot.has(target)) continue;
+      depthByRoot.set(target, nextDepth);
+      queue.push(target);
+    }
+  }
+  for (const rootId of nodes) {
+    if (!depthByRoot.has(rootId)) depthByRoot.set(rootId, 0);
+  }
+  const layers = new Map<number, NodeId[]>();
+  const routeOrder = new Map(routeIds.map((rootId, index) => [rootId, index]));
+  for (const [rootId, depth] of depthByRoot) {
+    layers.set(depth, [...(layers.get(depth) ?? []), rootId]);
+  }
+  return [...layers.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([depth, rootIds]) => ({
+      depth,
+      rootIds: rootIds.sort(
+        (a, b) => (routeOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (routeOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
+      ),
+    }));
 }

@@ -202,3 +202,26 @@ export function firstGitCode(status: GitStatus): string | undefined {
   if (status.status !== "ready") return undefined;
   return status.files.map(gitStatusCodeForFile).find(Boolean);
 }
+
+/**
+ * Bind an opened document's path → root association. A root id can hold only
+ * one document at a time (the document store's loadRoots merges by id), so any
+ * prior binding of the same rootId under another path is superseded. Copied
+ * sidecar fixtures share embedded node ids across repos; without this eviction
+ * two panel rows claim the same canvas root (doubled active rows + layer
+ * accordions) and the sync flush can write the wrong repo's file.
+ */
+export function bindLoadedRepoScreen<S extends { rootId: string }>(
+  current: Record<string, S>,
+  path: string,
+  screen: S,
+  mode: "replace" | "merge",
+): Record<string, S> {
+  if (mode === "replace") return { [path]: screen };
+  const next: Record<string, S> = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (value.rootId !== screen.rootId) next[key] = value;
+  }
+  next[path] = screen;
+  return next;
+}

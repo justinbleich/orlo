@@ -22,7 +22,7 @@ import {
   type CodegenResult,
   type GitStatus,
 } from "./code-artifacts";
-import type { RepoPanelContext } from "./repo-project-model";
+import { bindLoadedRepoScreen, type RepoPanelContext } from "./repo-project-model";
 
 export type SyncState =
   | { status: "idle" }
@@ -383,10 +383,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       sidecarPath: opts.sidecarPath,
       ...(opts.repoPath ? { repoPath: opts.repoPath, repoDraft: opts.repoPath } : {}),
       activeRepoScreen: repoScreen,
-      loadedRepoScreens:
-        opts.mode === "merge"
-          ? { ...current.loadedRepoScreens, [opts.targetPath]: repoScreen }
-          : { [opts.targetPath]: repoScreen },
+      // Injective on rootId: a prior binding of this root under another path is
+      // superseded (loadRoots just replaced that root's document).
+      loadedRepoScreens: bindLoadedRepoScreen(
+        current.loadedRepoScreens,
+        opts.targetPath,
+        repoScreen,
+        opts.mode,
+      ),
     }));
     workspaceFlags.managedDocument = true;
     applyCodegenResult(null);

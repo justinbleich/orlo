@@ -1,6 +1,10 @@
-import { StyleSheet, Text, View } from "react-native";
-export default function HomeScreen() {
-  return <View style={styles.view}><Text style={styles.text}>Hello RN Canvas</Text></View>;
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { TextComponent } from "./components/TextComponent";
+import { theme } from "./theme";
+export default function Screen() {
+  return <View style={styles.view}><Image style={styles.image} source={{
+      uri: ""
+    }} resizeMode={"cover"} /><TextComponent /><Pressable style={styles.pressable}><Text style={styles.text}>Next</Text></Pressable></View>;
 }
 const styles = StyleSheet.create({
   view: {
@@ -13,9 +17,29 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
     gap: 14
   },
+  image: {
+    height: 144,
+    alignSelf: "stretch",
+    borderRadius: theme.spacing.space1,
+    backgroundColor: theme.color.canvas
+  },
+  pressable: {
+    padding: theme.spacing.space1,
+    backgroundColor: "#3a3a45",
+    borderRadius: theme.spacing["full.radius"],
+    position: "absolute",
+    left: 16,
+    bottom: 40,
+    height: 64,
+    right: 16,
+    justifyContent: "center",
+    alignItems: "center"
+  },
   text: {
     fontFamily: "Inter",
-    fontSize: 14,
-    color: "#111111"
+    fontSize: theme.fontSize.text2,
+    color: theme.color.color1,
+    textAlign: "center",
+    fontWeight: "600"
   }
 });

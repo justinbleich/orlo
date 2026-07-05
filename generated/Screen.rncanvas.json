@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "screenName": "HomeScreen",
+  "screenName": "Screen",
   "root": {
     "id": "c1b1d45c-b115-4330-ac39-963831a9fcae",
     "props": {},
@@ -15,10 +15,32 @@
       "gap": 14
     },
     "design": {
-      "name": "Screen 1"
+      "name": "HomeScreen"
     },
     "type": "View",
     "children": [
+      {
+        "id": "b9be6171-e9f0-4391-87d9-5f8802a818b1",
+        "props": {
+          "source": {
+            "uri": ""
+          },
+          "resizeMode": "cover"
+        },
+        "style": {
+          "height": 144,
+          "alignSelf": "stretch",
+          "borderRadius": 8,
+          "backgroundColor": "#F7F8FB"
+        },
+        "type": "Image",
+        "design": {
+          "tokens": {
+            "borderRadius": "c5b0a54d-bbf5-4f94-a55e-6a824cea04eb",
+            "backgroundColor": "color-canvas"
+          }
+        }
+      },
       {
         "id": "dcaaa9df-476a-417f-85a0-19ae6f66f7ba",
         "props": {
@@ -27,11 +49,87 @@
         "style": {
           "fontFamily": "Inter",
           "fontSize": 14,
-          "color": "#111111"
+          "color": "#111111",
+          "textAlign": "left"
         },
-        "type": "Text"
+        "type": "Text",
+        "design": {
+          "hidden": true
+        }
+      },
+      {
+        "id": "06206284-bb16-4e30-8932-47e99e0034f2",
+        "type": "ComponentInstance",
+        "componentId": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
+        "overrides": {},
+        "style": {}
+      },
+      {
+        "id": "dd82ca9c-e23b-442b-8a5c-0eb94ca7fa77",
+        "props": {},
+        "style": {
+          "padding": 8,
+          "backgroundColor": "#3a3a45",
+          "borderRadius": 999,
+          "position": "absolute",
+          "left": 16,
+          "bottom": 40,
+          "height": 64,
+          "right": 16,
+          "justifyContent": "center",
+          "alignItems": "center"
+        },
+        "type": "Pressable",
+        "children": [
+          {
+            "id": "da144436-da89-48d2-a5b4-e911337265a8",
+            "props": {
+              "text": "Next"
+            },
+            "style": {
+              "fontFamily": "Inter",
+              "fontSize": 20,
+              "color": "#ffffff",
+              "textAlign": "center",
+              "fontWeight": "600"
+            },
+            "type": "Text",
+            "design": {
+              "tokens": {
+                "color": "9aa6484d-7a8c-419a-9252-95f26cd9ef01",
+                "fontSize": "dfb1f16d-c196-48b9-8b99-79706a7c921a"
+              }
+            }
+          }
+        ],
+        "design": {
+          "tokens": {
+            "padding": "c5b0a54d-bbf5-4f94-a55e-6a824cea04eb",
+            "borderRadius": "3253d704-6ccd-4819-9542-4ce4bf3cb220"
+          }
+        }
       }
     ]
+  },
+  "components": {
+    "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a": {
+      "id": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
+      "name": "TextComponent",
+      "template": {
+        "id": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
+        "props": {
+          "text": "A guided checklist for the first session."
+        },
+        "style": {
+          "fontFamily": "Inter",
+          "fontSize": 16,
+          "lineHeight": 22,
+          "color": "#667085"
+        },
+        "type": "Text"
+      },
+      "props": []
+    }
   },
   "tokens": {
     "9aa6484d-7a8c-419a-9252-95f26cd9ef01": {
@@ -39,6 +137,36 @@
       "name": "color1",
       "category": "color",
       "value": "#ffffff"
+    },
+    "color-canvas": {
+      "id": "color-canvas",
+      "name": "canvas",
+      "category": "color",
+      "value": "#F7F8FB"
+    },
+    "c5b0a54d-bbf5-4f94-a55e-6a824cea04eb": {
+      "id": "c5b0a54d-bbf5-4f94-a55e-6a824cea04eb",
+      "name": "space1",
+      "category": "spacing",
+      "value": 8
+    },
+    "3253d704-6ccd-4819-9542-4ce4bf3cb220": {
+      "id": "3253d704-6ccd-4819-9542-4ce4bf3cb220",
+      "name": "full.radius",
+      "category": "spacing",
+      "value": 999
+    },
+    "bcec33ab-f8c1-45fd-abc8-ade0f96bbeff": {
+      "id": "bcec33ab-f8c1-45fd-abc8-ade0f96bbeff",
+      "name": "text1",
+      "category": "fontSize",
+      "value": 16
+    },
+    "dfb1f16d-c196-48b9-8b99-79706a7c921a": {
+      "id": "dfb1f16d-c196-48b9-8b99-79706a7c921a",
+      "name": "text2",
+      "category": "fontSize",
+      "value": 20
     }
   }
 }

@@ -1,78 +1,55 @@
 {
-  "version": 2,
-  "updatedAt": "2026-07-05T02:41:25.087Z",
+  "version": 3,
+  "updatedAt": "2026-07-05T18:33:28.781Z",
   "flows": [
     {
       "id": "onboarding",
       "label": "Onboarding Flow",
-      "entryRootId": "f5394a13-1c2a-41ca-8f3f-7ae57a603858",
-      "entryName": "Screen 1",
+      "entryRootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+      "entryPath": "generated/Screen.tsx",
+      "entryName": "HomeScreen",
       "routes": [
         {
-          "rootId": "f5394a13-1c2a-41ca-8f3f-7ae57a603858",
-          "name": "Screen 1",
-          "screenKey": "name:screen 1"
-        }
-      ],
-      "edges": []
-    },
-    {
-      "id": "new-flow",
-      "label": "New Flow",
-      "entryRootId": "f5394a13-1c2a-41ca-8f3f-7ae57a603858",
-      "entryName": "Screen 1",
-      "routes": [
-        {
-          "rootId": "f5394a13-1c2a-41ca-8f3f-7ae57a603858",
-          "name": "Screen 1",
-          "screenKey": "name:screen 1"
-        }
-      ],
-      "edges": []
-    },
-    {
-      "id": "repo-flow:examples",
-      "label": "Examples",
-      "description": "Examples journey inferred from repo routes.",
-      "entryRootId": "8e3a4b59-5f0c-4b6d-a599-b2ddbc5652b2",
-      "entryName": "Screen 2",
-      "routes": [
-        {
-          "rootId": "8e3a4b59-5f0c-4b6d-a599-b2ddbc5652b2",
-          "name": "Screen 2",
-          "screenKey": "name:screen 2"
+          "rootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+          "path": "generated/Screen.tsx",
+          "name": "Screen",
+          "screenKey": "name:homescreen"
         },
         {
-          "rootId": "settings-root",
-          "name": "Account Settings",
-          "screenKey": "name:account settings"
-        },
-        {
-          "rootId": "home-root",
-          "name": "Home",
-          "screenKey": "name:home"
-        },
-        {
-          "rootId": "onboarding-details-root",
-          "name": "Checklist Details",
-          "screenKey": "name:checklist details"
-        },
-        {
-          "rootId": "onboarding-root",
-          "name": "Onboarding Start",
-          "screenKey": "name:onboarding start"
+          "rootId": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
+          "path": "generated/screen-1.tsx",
+          "name": "Hero",
+          "screenKey": "name:hero"
         }
       ],
       "edges": [
         {
           "from": {
-            "rootId": "home-root",
-            "anchorNodeId": "activation-value"
+            "rootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+            "path": "generated/Screen.tsx"
           },
-          "to": "settings-root",
+          "to": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
+          "toPath": "generated/screen-1.tsx",
           "kind": "primary"
         }
       ]
+    },
+    {
+      "id": "new-flow",
+      "label": "New Flow",
+      "description": "Prototype route order for this screen group.",
+      "entryRootId": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
+      "entryPath": "generated/screen-1.tsx",
+      "entryName": "Hero",
+      "routes": [
+        {
+          "rootId": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
+          "path": "generated/screen-1.tsx",
+          "name": "Hero",
+          "screenKey": "name:hero"
+        }
+      ],
+      "edges": []
     }
   ]
 }

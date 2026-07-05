@@ -15,6 +15,7 @@ import {
   moveFlowRouteToIndex,
   pruneFlowEdges,
   removeFlowEdge,
+  removeFlowEdgeAtIndex,
   removeFlowRoute,
   reorderFlowRoute,
   resolveFlowRouteIds,
@@ -140,6 +141,15 @@ test("flow edge mutations are deduped and endpoint-safe", () => {
     },
   ]);
   assert.deepEqual(removeFlowEdge(updated, routes, { kind: "conditional", to: "home" }), []);
+});
+
+test("flow edge removal by index removes empty-condition branches", () => {
+  const routes = ["welcome", "login", "home"];
+  const edges = [
+    { from: { rootId: "welcome" }, to: "login", kind: "conditional" as const, condition: "" },
+    { from: { rootId: "welcome" }, to: "home", kind: "conditional" as const, condition: "else" },
+  ];
+  assert.deepEqual(removeFlowEdgeAtIndex(edges, routes, 0), [edges[1]]);
 });
 
 test("flowGraphLayers layers reachable branches from the entry", () => {

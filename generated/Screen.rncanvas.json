@@ -62,7 +62,10 @@
         "type": "ComponentInstance",
         "componentId": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
         "overrides": {},
-        "style": {}
+        "style": {},
+        "design": {
+          "hidden": true
+        }
       },
       {
         "id": "dd82ca9c-e23b-442b-8a5c-0eb94ca7fa77",

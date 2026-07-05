@@ -66,6 +66,10 @@ function flattenLayout(box: LayoutBox, out: LayoutBox[] = []) {
   return out;
 }
 
+function isRoutableElement(box: LayoutBox) {
+  return box.node.type === "Pressable";
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
@@ -262,6 +266,7 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
           layoutResult &&
           flattenLayout(layoutResult.layout)
             .filter((box) => box.node.id !== root.id)
+            .filter((box) => isRoutableElement(box))
             .filter((box) => wiredAnchorIds.has(box.node.id) || showUnusedAnchors)
             .map((box) => {
               const wired = wiredAnchorIds.has(box.node.id);
@@ -280,6 +285,7 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
                   key={box.instanceKey}
                   type="button"
                   data-flow-anchor-id={box.node.id}
+                  data-flow-root-id={root.id}
                   data-flow-anchor-state={wired ? "wired" : "available"}
                   className="flow-anchor"
                   title={wired ? `Wired from ${label}` : `Connect from ${label}`}

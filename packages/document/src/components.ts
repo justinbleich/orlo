@@ -246,9 +246,22 @@ function expand(node: Node, registry: ComponentRegistry, prefix: string): Node {
     const definition = registry[node.componentId];
     if (!definition) {
       // Unresolved component → empty placeholder so layout never crashes.
-      return { id, type: "View", props: {}, style: clone(node.style), children: [] };
+      return {
+        id,
+        type: "View",
+        props: {},
+        style: clone(node.style),
+        design: clone(node.design),
+        children: [],
+      };
     }
-    return expand(applyOverrides(definition, node), registry, `${id}::`);
+    const resolved = applyOverrides(definition, node);
+    const resolvedRoot: Node = {
+      ...resolved,
+      style: { ...resolved.style, ...node.style },
+      design: node.design ? { ...resolved.design, ...clone(node.design) } : resolved.design,
+    };
+    return expand(resolvedRoot, registry, `${id}::`);
   }
   if (isContainer(node)) {
     // Identity-preserving: only clone the ancestor path of an actual expansion, so

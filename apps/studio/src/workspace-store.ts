@@ -700,7 +700,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     if (codegenInFlight) {
       const message = "Wait for the current sync to finish before changing repositories.";
       set({ repoError: message, status: message });
-        get().pushToast(message);
+      get().pushToast(message);
       return false;
     }
     if (autoSyncTimer) {
@@ -822,6 +822,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       set({ screenName });
       const focused = syncRoot();
       if (focused) {
+        if (focused.design?.name !== screenName) {
+          useDocumentStore.getState().updateDesign(focused.id, focused.id, {
+            name: screenName.trim() || undefined,
+          });
+        }
         dirtyRoots.add(focused.id);
         get().scheduleAutoSync();
       }
@@ -1351,7 +1356,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     requestCodegen: async (mode, source = "manual") => {
       if (mode === "sync") {
-        // Every sync goes through the dirty-root flush; a manual Sync also
+        // Every sync goes through the dirty-root flush; a manual sync also
         // covers the focused screen even if nothing marked it dirty yet.
         const focused = syncRoot();
         if (focused) dirtyRoots.add(focused.id);
@@ -1359,7 +1364,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }
       const root = syncRoot();
       if (!root) {
-        const message = "Select a screen before syncing.";
+        const message = "Select a screen before previewing.";
         set({ codegenError: message, status: message });
         get().pushToast(message);
         return null;
@@ -1378,7 +1383,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         });
         applyCodegenResult(body);
         if (source === "manual") set({ activeArtifactId: "screen" });
-        set({ status: `Previewed sync for ${body.targetPath}` });
+        set({ status: `Previewed generated files for ${body.targetPath}` });
         return body;
       } catch (e) {
         const message = e instanceof Error ? e.message : "Preview failed";

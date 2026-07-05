@@ -113,6 +113,27 @@ test("expandComponents replaces instances and namespaces inner ids per placement
   assert.equal(ownerInstanceId("screen"), null);
 });
 
+test("expandComponents carries instance visibility to the expanded root", () => {
+  const registry = { comp1: cardDef() };
+  const screen = createNode("View", {
+    id: "screen",
+    children: [
+      {
+        id: "inst",
+        type: "ComponentInstance",
+        componentId: "comp1",
+        overrides: {},
+        style: {},
+        design: { hidden: true },
+      },
+    ],
+  });
+  const expanded = expandComponents(screen, registry);
+  assert.equal(expanded.type, "View");
+  if (expanded.type !== "View") throw new Error("expected expanded screen root");
+  assert.equal(expanded.children[0]?.design?.hidden, true);
+});
+
 test("expandComponents recurses through a nested instance", () => {
   const inner = cardDef();
   const outer: ComponentDefinition = {

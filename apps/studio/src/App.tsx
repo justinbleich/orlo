@@ -4,10 +4,10 @@ import {
   FileCode2,
   FileJson2,
   FolderOpen,
+  GitCommitHorizontal,
   Play,
   RefreshCw,
   Redo2,
-  Save,
   Trash2,
   Undo2,
   X,
@@ -697,6 +697,8 @@ function TopBar({
   const repoContext = useWorkspaceStore((s) => s.repoContext);
   const codegenBusy = useWorkspaceStore((s) => s.codegenBusy);
   const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
+  const commitChanges = useWorkspaceStore((s) => s.commitChanges);
+  const screenName = useWorkspaceStore((s) => s.screenName);
   const setStatus = useWorkspaceStore((s) => s.setStatus);
   const canUndo = useDocumentStore((s) => s.past.length > 0);
   const canRedo = useDocumentStore((s) => s.future.length > 0);
@@ -734,6 +736,9 @@ function TopBar({
     gitStatus.status === "error" ? "amber" : gitStatus.status === "ready" && !gitStatus.clean ? "accent" : "neutral";
   const syncTone =
     syncState.status === "error" ? "amber" : syncState.status === "syncing" || syncState.status === "scheduled" ? "accent" : "neutral";
+  const canCommit =
+    gitStatus.status === "ready" &&
+    (!gitStatus.clean || hasFocusedRoot || syncState.status === "scheduled");
   const repoName = repoContext?.repoName ?? "Repository";
   const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
   const syncTarget = repoContext?.designSession?.syncTarget;
@@ -814,11 +819,14 @@ function TopBar({
         </IconButton>
         <Button
           variant="primary"
-          disabled={codegenBusy || !hasFocusedRoot}
-          title="Sync generated files"
-          onClick={() => void requestCodegen("sync")}
+          disabled={codegenBusy || !canCommit}
+          title="Commit changes on the active branch"
+          onClick={async () => {
+            if (hasFocusedRoot) await requestCodegen("sync");
+            await commitChanges(`Update ${screenName || "design"}`);
+          }}
         >
-          <Save size={14} aria-hidden="true" /> Sync
+          <GitCommitHorizontal size={14} aria-hidden="true" /> Commit
         </Button>
       </div>
     </header>
@@ -869,6 +877,9 @@ function Toasts() {
 const RIGHT_COLUMN_WIDTH_KEY = "rn-canvas.rightColumnWidth";
 const RIGHT_COLUMN_MIN = 300;
 const RIGHT_COLUMN_MAX = 640;
+const LEFT_COLUMN_WIDTH_KEY = "rn-canvas.leftColumnWidth";
+const LEFT_COLUMN_MIN = 240;
+const LEFT_COLUMN_MAX = 420;
 
 function readStoredRightColumnWidth(): number {
   try {
@@ -878,6 +889,37 @@ function readStoredRightColumnWidth(): number {
     /* storage unavailable */
   }
   return layout.rightColumn;
+}
+
+function readStoredLeftColumnWidth(): number {
+  try {
+    const raw = Number(window.localStorage.getItem(LEFT_COLUMN_WIDTH_KEY));
+    if (Number.isFinite(raw) && raw >= LEFT_COLUMN_MIN && raw <= LEFT_COLUMN_MAX) return raw;
+  } catch {
+    /* storage unavailable */
+  }
+  return layout.leftPanel;
+}
+
+function preserveCanvasViewport(editor: Editor | null, action: () => void) {
+  if (!editor) {
+    action();
+    return;
+  }
+  const center = editor.getViewportPageBounds().center;
+  const zoom = editor.getCamera().z;
+  action();
+  requestAnimationFrame(() => {
+    const next = editor.getViewportPageBounds();
+    editor.setCamera(
+      {
+        x: next.w / 2 - center.x * zoom,
+        y: next.h / 2 - center.y * zoom,
+        z: zoom,
+      },
+      { immediate: true },
+    );
+  });
 }
 
 function ChangesTimeline({ onOpenCode }: { onOpenCode: () => void }) {
@@ -1001,6 +1043,7 @@ export default function App() {
   const [confirmDeleteScreen, setConfirmDeleteScreen] = useState<RepoPanelScreen | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
+  const [leftColumnWidth, setLeftColumnWidth] = useState(readStoredLeftColumnWidth);
   const [rightColumnWidth, setRightColumnWidth] = useState(readStoredRightColumnWidth);
   const [panelUiHidden, setPanelUiHidden] = useState(false);
 
@@ -1278,6 +1321,11 @@ export default function App() {
         if (!isFrame(sel)) return;
         const rootId = asFrame(sel).props.rootId;
         const s = useDocumentStore.getState();
+        if (s.editingComponentId && rootId !== s.editingComponentId) {
+          syncCanvasFrameSelection(editor, s.editingComponentId, true);
+          s.setSelection([s.editingComponentId]);
+          return;
+        }
         const curRoot = findRootContaining(Object.values(s.roots), s.selection[0] ?? "");
         if (curRoot?.id !== rootId) s.setSelection([rootId]);
       },
@@ -1319,6 +1367,14 @@ export default function App() {
     // it can't accumulate across sessions.
     editorRef.current?.clearHistory();
   }, []);
+
+  useEffect(() => {
+    if (!editingComponentId) return;
+    if (workspace === "Flow" || workspace === "Design System") return;
+    pendingFocusRootIdRef.current = editingComponentId;
+    const editor = editorRef.current;
+    if (editor) focusRootFrame(editor, editingComponentId);
+  }, [editingComponentId, workspace]);
 
   const createToken = useCallback((category: "color" | "spacing" | "fontSize") => {
     const state = useDocumentStore.getState();
@@ -1527,10 +1583,12 @@ export default function App() {
       ) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        setPanelUiHidden((hidden) => {
-          const next = !hidden;
-          setStatus(next ? "Panel UI hidden" : "Panel UI visible");
-          return next;
+        preserveCanvasViewport(editorRef.current, () => {
+          setPanelUiHidden((hidden) => {
+            const next = !hidden;
+            setStatus(next ? "Panel UI hidden" : "Panel UI visible");
+            return next;
+          });
         });
         return;
       }
@@ -2076,29 +2134,66 @@ export default function App() {
       {/* WORKBENCH: left panel · canvas (with floating bottom toolbar) · right column */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {!panelUiHidden && (
-          <LeftPanel
-            workspace={workspace}
-            onWorkspaceChange={setWorkspace}
-            onAddFrame={addFrame}
-            activeFlow={activeFlow}
-            onFlowChange={setActiveFlow}
-            flows={flowPanelItems}
-            onAddFlow={addFlow}
-            onRemoveFlow={removeFlow}
-            onCancelRemoveFlow={() => setPendingRemoveFlowId(null)}
-            pendingRemoveFlowId={pendingRemoveFlowId}
-            activeDesignSystemView={activeDesignSystemView}
-            onDesignSystemViewChange={setActiveDesignSystemView}
-            onOpenChanges={openChangesPanel}
-            onOpenRepoScreen={openRepoScreen}
-            onRenameRepoScreen={renameRepoScreen}
-            screenFlowBadges={screenFlowBadges}
-            gitStatus={gitStatus}
-            sidecarPath={sidecarPath}
-            activeRepoScreen={activeRepoScreen}
-            loadedRepoScreens={loadedRepoScreens}
-            repoContext={repoContext}
-          />
+          <>
+            <div
+              className="studio-chrome"
+              style={{
+                flex: `0 0 ${leftColumnWidth}px`,
+                width: leftColumnWidth,
+                minHeight: 0,
+                display: "flex",
+              }}
+            >
+              <LeftPanel
+                workspace={workspace}
+                onWorkspaceChange={setWorkspace}
+                onAddFrame={addFrame}
+                activeFlow={activeFlow}
+                onFlowChange={setActiveFlow}
+                flows={flowPanelItems}
+                onAddFlow={addFlow}
+                onRemoveFlow={removeFlow}
+                onCancelRemoveFlow={() => setPendingRemoveFlowId(null)}
+                pendingRemoveFlowId={pendingRemoveFlowId}
+                activeDesignSystemView={activeDesignSystemView}
+                onDesignSystemViewChange={setActiveDesignSystemView}
+                onOpenChanges={openChangesPanel}
+                onOpenRepoScreen={openRepoScreen}
+                onRenameRepoScreen={renameRepoScreen}
+                screenFlowBadges={screenFlowBadges}
+                gitStatus={gitStatus}
+                sidecarPath={sidecarPath}
+                activeRepoScreen={activeRepoScreen}
+                loadedRepoScreens={loadedRepoScreens}
+                repoContext={repoContext}
+              />
+            </div>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize navigation"
+              title="Drag to resize"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerMove={(event) => {
+                if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                const width = Math.min(
+                  LEFT_COLUMN_MAX,
+                  Math.max(LEFT_COLUMN_MIN, event.clientX),
+                );
+                setLeftColumnWidth(width);
+                try {
+                  window.localStorage.setItem(LEFT_COLUMN_WIDTH_KEY, String(width));
+                } catch {
+                  /* storage unavailable */
+                }
+              }}
+              onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+              className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-accent-line"
+            />
+          </>
         )}
 
         <div className="relative flex min-w-0 flex-1 flex-col">
@@ -2277,30 +2372,51 @@ export default function App() {
         )}
       </div>
       {confirmDeleteScreen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-md">
-          <div className="studio-chrome w-full max-w-sm rounded-md border border-line bg-chrome p-lg shadow-popover">
-            <div className="mb-sm flex items-center gap-sm">
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-amber/40 bg-amber/10 text-amber">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setConfirmDeleteScreen(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-screen-title"
+            className="studio-chrome w-[min(420px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-amber/50 bg-amber/10 text-amber">
                 <AlertTriangle size={16} aria-hidden="true" />
               </div>
               <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-ink">
+                <div id="delete-screen-title" className="break-words text-sm font-semibold text-ink">
                   Delete {displayScreenName(confirmDeleteScreen)}?
                 </div>
-                <div className="text-xs text-ink-faint">This removes real repo files.</div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  This removes real repo files from the connected project.
+                </div>
               </div>
             </div>
-            <div className="mb-md rounded-sm border border-line-soft bg-chrome-2 p-sm text-xs text-ink-dim">
-              <div className="truncate">{confirmDeleteScreen.path}</div>
-              {confirmDeleteScreen.sidecarPath && (
-                <div className="truncate">{confirmDeleteScreen.sidecarPath}</div>
-              )}
+            <div className="flex flex-col gap-xs p-lg">
+              <div className="rounded-sm border border-line-soft bg-chrome-2 p-sm font-mono text-xs text-ink-dim">
+                <div className="break-all">{confirmDeleteScreen.path}</div>
+                {confirmDeleteScreen.sidecarPath && (
+                  <div className="mt-2xs break-all text-ink-faint">
+                    {confirmDeleteScreen.sidecarPath}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex justify-end gap-xs">
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
               <Button variant="ghost" onClick={() => setConfirmDeleteScreen(null)}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={confirmDeleteRepoScreen}>
+              <Button
+                variant="primary"
+                className="border-amber bg-amber text-chrome hover:bg-amber"
+                onClick={confirmDeleteRepoScreen}
+              >
                 Delete
               </Button>
             </div>

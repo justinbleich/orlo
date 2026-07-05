@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { type Node, type NodeId } from "@rn-canvas/document";
 import { Field, IconButton, Section, Select, TextField, cn } from "./studio-ui";
 import { controlClass } from "./studio-ui/controls";
-import { flowScreenName } from "./flow-model";
+import { flowScreenName, removeFlowEdgeAtIndex, updateFlowEdge } from "./flow-model";
 import type { FlowDefinition } from "./workspace-store";
 import type { FlowEdge } from "./repo-contract";
 
@@ -83,16 +83,18 @@ export function FlowInspector({
   };
 
   const updateCondition = (index: number, patch: Partial<FlowEdge>) => {
+    const routeIds = routeScreens.map((screen) => screen.id);
     updateEdges(
-      flow.edges.map((edge, edgeIndex) =>
-        edgeIndex === index ? { ...edge, ...patch, from: { ...edge.from, ...(patch.from ?? {}) } } : edge,
-      ),
+      updateFlowEdge(flow.edges, routeIds, index, patch),
       "Updated flow condition",
     );
   };
 
   const removeCondition = (index: number) => {
-    updateEdges(flow.edges.filter((_, edgeIndex) => edgeIndex !== index), "Removed flow condition");
+    updateEdges(
+      removeFlowEdgeAtIndex(flow.edges, routeScreens.map((screen) => screen.id), index),
+      "Removed flow condition",
+    );
   };
 
   return (

@@ -1,10 +1,9 @@
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { TextComponent } from "./components/TextComponent";
 import { theme } from "./theme";
 export default function Screen() {
   return <View style={styles.view}><Image style={styles.image} source={{
       uri: ""
-    }} resizeMode={"cover"} /><TextComponent /><Pressable style={styles.pressable}><Text style={styles.text}>Next</Text></Pressable></View>;
+    }} resizeMode={"cover"} /><Pressable style={styles.pressable}><Text style={styles.text}>Next</Text></Pressable></View>;
 }
 const styles = StyleSheet.create({
   view: {

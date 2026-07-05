@@ -152,6 +152,25 @@ function elbowPath(from: { x: number; y: number }, to: { x: number; y: number })
   return `M ${from.x} ${from.y} L ${midX} ${from.y} L ${midX} ${to.y} L ${to.x} ${to.y}`;
 }
 
+function flowAnchorPagePoint(
+  editor: Editor,
+  edge: FlowEdge,
+  source: FlowScreenShape,
+): { x: number; y: number } {
+  const anchorNodeId = edge.from.anchorNodeId;
+  if (!anchorNodeId) {
+    return { x: source.x + source.props.w, y: source.y + source.props.h / 2 };
+  }
+  const anchor = document.querySelector<HTMLElement>(
+    `[data-flow-anchor-id="${CSS.escape(anchorNodeId)}"][data-flow-root-id="${CSS.escape(edge.from.rootId)}"]`,
+  );
+  if (!anchor) {
+    return { x: source.x + source.props.w, y: source.y + source.props.h / 2 };
+  }
+  const rect = anchor.getBoundingClientRect();
+  return editor.screenToPage({ x: rect.right, y: rect.top + rect.height / 2 });
+}
+
 function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
   const editor = useEditor();
   const addStoredFlowEdge = useWorkspaceStore((s) => s.addFlowEdge);
@@ -279,7 +298,7 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
           const source = shapeMap.get(edge.from.rootId);
           const target = shapeMap.get(edge.to);
           if (!source || !target) return null;
-          const from = { x: source.x + source.props.w, y: source.y + source.props.h / 2 };
+          const from = flowAnchorPagePoint(editor, edge, source);
           const to = { x: target.x, y: target.y + target.props.h / 2 };
           const dashed = edge.kind !== "primary";
           return (

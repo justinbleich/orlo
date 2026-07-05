@@ -240,6 +240,16 @@ export function removeFlowEdge(
   });
 }
 
+export function removeFlowEdgeAtIndex(
+  edges: readonly FlowEdge[],
+  routeIds: readonly NodeId[],
+  index: number,
+): FlowEdge[] {
+  const current = pruneFlowEdges(edges, routeIds);
+  if (!current[index]) return current;
+  return current.filter((_, itemIndex) => itemIndex !== index);
+}
+
 export function updateFlowEdge(
   edges: readonly FlowEdge[],
   routeIds: readonly NodeId[],

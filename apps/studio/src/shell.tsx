@@ -42,7 +42,7 @@ import {
   type RNPrimitive,
 } from "@rn-canvas/document";
 import { Menu } from "@base-ui/react/menu";
-import { color, layout, radius, space, text } from "./studio-theme";
+import { color, radius, space, text } from "./studio-theme";
 import { type CanvasTool, useStudioStore } from "./studio-store";
 import { cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
 import { DocumentTree } from "./DocumentTree";
@@ -848,13 +848,7 @@ export function LeftPanel({
   }
 
   return (
-    <aside
-      className="studio-chrome flex border-r border-line bg-chrome"
-      style={{
-        flex: `0 0 ${layout.leftPanel}px`,
-        width: layout.leftPanel,
-      }}
-    >
+    <aside className="studio-chrome flex min-w-0 flex-1 border-r border-line bg-chrome">
       <div className="flex w-14 shrink-0 flex-col items-center gap-sm border-r border-line-soft py-md">
         <div className="flex size-8 items-center justify-center rounded-sm bg-accent text-chrome text-sm font-semibold">
           RN

@@ -99,6 +99,7 @@ import {
   distributionDeltas,
   type ArrangeAlignment,
 } from "./canvas-arrange";
+import { resolveStyleEditTarget } from "./variant-workspace";
 
 const TYPE_ICON: Record<RNPrimitive, LucideIcon> = {
   View: Square,
@@ -195,11 +196,16 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
       ? componentRegistry[editingComponentId]
       : undefined;
   const variantProperties = editingDef?.variants ?? [];
-  const activeValues = variantProperties.length ? resolveVariant(editingDef!, activeVariant) : null;
-  const isDefaultVariant =
-    !activeValues || variantProperties.every((p) => activeValues[p.name] === p.values[0]);
-  const variantEditing =
-    !!activeValues && !isDefaultVariant && !multi && !!primary && primary.type !== "ComponentInstance";
+  const editTarget = resolveStyleEditTarget({
+    editingComponentId,
+    definition: editingDef,
+    activeVariant,
+    nodeId: primary?.id,
+    nodeType: primary?.type,
+    multi,
+  });
+  const activeValues = editTarget.kind === "variant" ? editTarget.values : null;
+  const variantEditing = editTarget.kind === "variant" && !!primary;
   const variantOverrideStyle = variantEditing
     ? (editingDef!.combinations ?? [])
         .find((c) => variantProperties.every((p) => c.values[p.name] === activeValues![p.name]))

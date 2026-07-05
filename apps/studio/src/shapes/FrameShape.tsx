@@ -13,15 +13,12 @@ import { BatteryFull, Signal, Wifi } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
-  applyOverrides,
   collectUsedComponentIds,
-  createInstance,
   findNode,
   resolveVariant,
   useDocumentStore,
   type ComponentDefinition,
   type ComponentRegistry,
-  type Node,
 } from "@rn-canvas/document";
 import {
   FrameRenderer,
@@ -30,12 +27,18 @@ import {
 import { LayerOverlay } from "../LayerOverlay";
 import { useStudioStore } from "../studio-store";
 import { color, font, radius, space, text } from "../studio-theme";
+import {
+  MAX_VARIANT_PREVIEWS,
+  variantPreviewCombinations,
+  variantPreviewKey,
+  variantPreviewLabel,
+  variantPreviewRoot,
+} from "../variant-workspace";
 
 // Below this on-screen width the rnw detail isn't legible, so we render a cheap
 // proxy instead of running Yoga + react-native-web. (PRD §7.2 LOD / §8: keep only a
 // limited set of frames live; render the rest as lightweight proxies.)
 const LOD_MIN_ONSCREEN_WIDTH = 160;
-const MAX_VARIANT_PREVIEWS = 12;
 const DEVICE_FRAME_RADIUS = 32;
 const IOS_STATUS_BAR_HEIGHT = 54;
 
@@ -115,50 +118,6 @@ function IOSDeviceChrome({ w, h }: { w: number; h: number }) {
       />
     </div>
   );
-}
-
-function variantPreviewCombinations(
-  definition: ComponentDefinition,
-): Record<string, string>[] {
-  const axes = (definition.variants ?? []).filter((axis) => axis.values.length > 0);
-  let combos: Record<string, string>[] = [{}];
-  for (const axis of axes) {
-    combos = combos.flatMap((combo) =>
-      axis.values.map((value) => ({ ...combo, [axis.name]: value })),
-    );
-  }
-  return combos;
-}
-
-function variantPreviewKey(
-  definition: ComponentDefinition,
-  values: Record<string, string>,
-): string {
-  return (definition.variants ?? [])
-    .filter((axis) => axis.values.length > 0)
-    .map((axis) => `${axis.name}:${values[axis.name]}`)
-    .join("|");
-}
-
-function variantPreviewLabel(
-  definition: ComponentDefinition,
-  values: Record<string, string>,
-): string {
-  const axes = (definition.variants ?? []).filter((axis) => axis.values.length > 0);
-  const base = axes.every((axis) => values[axis.name] === axis.values[0]);
-  if (base) return "Base";
-  return axes.map((axis) => values[axis.name]).join(" / ");
-}
-
-function variantPreviewRoot(
-  definition: ComponentDefinition,
-  values: Record<string, string>,
-): Node {
-  const key = variantPreviewKey(definition, values).replace(/[^A-Za-z0-9_-]/g, "_");
-  return applyOverrides(definition, {
-    ...createInstance(definition.id, { id: `${definition.id}-preview-${key}` }),
-    variant: values,
-  });
 }
 
 function ComponentVariantWorkspace({

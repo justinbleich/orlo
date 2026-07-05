@@ -177,6 +177,13 @@ export interface DocumentState {
     styleKey: string;
     kind: "style" | "override";
   }[];
+  /** Every placed instance of `componentId` across screen roots and other
+   *  component templates. The transient edit root is skipped because it mirrors
+   *  the definition being edited, not a real placement. */
+  getComponentUsage(componentId: NodeId): {
+    rootId: NodeId;
+    nodeId: NodeId;
+  }[];
 
   insertChild(rootId: NodeId, parentId: NodeId, child: Node, index?: number): void;
   removeNode(rootId: NodeId, id: NodeId): void;
@@ -819,6 +826,31 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         }
       };
       for (const [rootId, root] of Object.entries(roots)) walk(rootId, root);
+      return out;
+    },
+    getComponentUsage: (componentId) => {
+      const out: { rootId: NodeId; nodeId: NodeId }[] = [];
+      const { roots, components, editingComponentId } = get();
+      const walk = (rootId: NodeId, node: Node) => {
+        if (node.type === "ComponentInstance") {
+          if (node.componentId === componentId) out.push({ rootId, nodeId: node.id });
+          if (node.slots) {
+            for (const kids of Object.values(node.slots)) {
+              for (const kid of kids) walk(rootId, kid);
+            }
+          }
+          return;
+        }
+        if (isContainer(node)) {
+          for (const child of node.children) walk(rootId, child);
+        }
+      };
+      for (const [rootId, root] of Object.entries(roots)) {
+        if (rootId !== editingComponentId) walk(rootId, root);
+      }
+      for (const [rootId, definition] of Object.entries(components)) {
+        if (rootId !== componentId) walk(rootId, definition.template);
+      }
       return out;
     },
 

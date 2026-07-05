@@ -103,7 +103,7 @@ function intersects(
 }
 
 export function nextFreeFramePosition(
-  occupied: readonly Array<FramePosition & FrameSize>,
+  occupied: ReadonlyArray<FramePosition & FrameSize>,
   frame: FrameSize,
   gutter: number,
   origin: FramePosition,

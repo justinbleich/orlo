@@ -239,7 +239,7 @@ export async function inferRepoFlowsFromNavigation(
         if (tag === "Link" || tag === "Redirect") {
           const href = node.attributes.properties.find(
             (prop): prop is ts.JsxAttribute =>
-              ts.isJsxAttribute(prop) && prop.name.text === "href",
+              ts.isJsxAttribute(prop) && prop.name.getText() === "href",
           );
           record(href?.initializer ? staticString(href.initializer) : undefined, node, tag === "Redirect" ? "conditional" : "primary");
         }

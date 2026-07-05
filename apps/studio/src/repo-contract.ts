@@ -224,7 +224,7 @@ function normalizeFlow(flow: Partial<FlowManifestFlow>): FlowManifestFlow | null
 }
 
 export function parseFlowManifest(raw: string): FlowManifest {
-  const parsed = JSON.parse(raw) as Partial<FlowManifest>;
+  const parsed = JSON.parse(raw) as Omit<Partial<FlowManifest>, "version"> & { version?: number };
   if (
     (parsed.version === 1 || parsed.version === 2 || parsed.version === 3) &&
     Array.isArray(parsed.flows)

@@ -29,6 +29,7 @@ interface StudioState {
    *  edits into that variant's override. UI-only; cleared when focus mode ends. */
   activeVariant: Record<string, string>;
   setActiveVariant(propertyName: string, value: string): void;
+  setActiveVariantAll(values: Record<string, string>): void;
   resetActiveVariant(): void;
   /** Collapsed layer-tree rows, keyed by node id. Lifted here (not per-row
    *  React state) so expand state survives tree remounts. */
@@ -54,6 +55,7 @@ export const useStudioStore = create<StudioState>((set) => ({
   activeVariant: {},
   setActiveVariant: (propertyName, value) =>
     set((state) => ({ activeVariant: { ...state.activeVariant, [propertyName]: value } })),
+  setActiveVariantAll: (values) => set({ activeVariant: values }),
   resetActiveVariant: () => set({ activeVariant: {} }),
   collapsedLayers: {},
   toggleLayerCollapsed: (nodeId) =>

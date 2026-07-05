@@ -25,6 +25,7 @@ import {
   findNode,
   findRootContaining,
   getParent,
+  resolveVariant,
   useDocumentStore,
   type DesignToken,
   type Node,
@@ -33,6 +34,7 @@ import {
   type TokenCategory,
 } from "@rn-canvas/document";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
+import { VariantPreviewShapeUtil, type VariantPreviewShape } from "./shapes/VariantPreviewShape";
 import { FlowCanvas } from "./FlowCanvas";
 import { FlowInspector } from "./FlowInspector";
 import { CodePanel } from "./CodePanel";
@@ -103,9 +105,16 @@ import {
   parentLayerSelection,
 } from "./selection";
 import { type CanvasTool, useStudioStore } from "./studio-store";
+import {
+  MAX_VARIANT_PREVIEWS,
+  variantFrameLayout,
+  variantPreviewCombinations,
+  variantPreviewKey,
+} from "./variant-workspace";
 
-const shapeUtils = [FrameShapeUtil];
+const shapeUtils = [FrameShapeUtil, VariantPreviewShapeUtil];
 const FRAME_TYPE = FrameShapeUtil.type;
+const VARIANT_PREVIEW_TYPE = VariantPreviewShapeUtil.type;
 
 // Lockdown: tldraw is a frame host, not a whiteboard. Hide its default chrome so
 // users can't reach tldraw-native shapes/styles (which aren't RN nodes and can't
@@ -143,6 +152,8 @@ const overrides: TLUiOverrides = {
 type EditorShape = ReturnType<Editor["getCurrentPageShapes"]>[number];
 const isFrame = (s: EditorShape) => (s.type as string) === FRAME_TYPE;
 const asFrame = (s: EditorShape) => s as unknown as FrameShape;
+const isVariantPreview = (s: EditorShape) => (s.type as string) === VARIANT_PREVIEW_TYPE;
+const asVariantPreview = (s: EditorShape) => s as unknown as VariantPreviewShape;
 type CreatePartial = Parameters<Editor["createShape"]>[0];
 type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
@@ -197,11 +208,106 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   store.seedFramePositions(seeded);
 }
 
+function syncVariantPreviewShapes(editor: Editor) {
+  const store = useDocumentStore.getState();
+  const { editingComponentId, components, roots } = store;
+  const existingPreviewShapes = editor.getCurrentPageShapes().filter(isVariantPreview);
+  const removeAllPreviews = () => {
+    if (existingPreviewShapes.length > 0) {
+      editor.deleteShapes(existingPreviewShapes.map((shape) => shape.id));
+    }
+  };
+
+  if (!editingComponentId) {
+    removeAllPreviews();
+    return;
+  }
+  const definition = components[editingComponentId];
+  const editingRoot = roots[editingComponentId];
+  const axes = definition?.variants?.filter((axis) => axis.values.length > 0) ?? [];
+  const baseShape = findFrameShapeForRoot(editor, editingComponentId);
+  if (!definition || !editingRoot || axes.length === 0 || !baseShape) {
+    removeAllPreviews();
+    return;
+  }
+
+  const baseFrame = asFrame(baseShape);
+  const defaultKey = variantPreviewKey(definition, resolveVariant(definition, {}));
+  const combos = variantPreviewCombinations(definition)
+    .filter((values) => variantPreviewKey(definition, values) !== defaultKey)
+    .slice(0, MAX_VARIANT_PREVIEWS);
+  const boxes = variantFrameLayout(
+    { x: baseFrame.x, y: baseFrame.y, w: baseFrame.props.w, h: baseFrame.props.h },
+    combos,
+  );
+  const desired = new Map(
+    combos.map((values, index) => [
+      variantPreviewKey(definition, values),
+      { values, box: boxes[index] },
+    ]),
+  );
+  const existing = new Map<string, VariantPreviewShape>();
+
+  for (const shape of existingPreviewShapes) {
+    const preview = asVariantPreview(shape);
+    const key = variantPreviewKey(definition, preview.props.variantValues);
+    if (preview.props.componentId !== editingComponentId || !desired.has(key) || existing.has(key)) {
+      editor.deleteShapes([shape.id]);
+      continue;
+    }
+    existing.set(key, preview);
+  }
+
+  for (const [key, item] of desired) {
+    const current = existing.get(key);
+    if (current) {
+      const needsUpdate =
+        Math.abs(current.x - item.box.x) > 0.01 ||
+        Math.abs(current.y - item.box.y) > 0.01 ||
+        current.props.w !== item.box.w ||
+        current.props.h !== item.box.h ||
+        current.props.componentId !== editingComponentId;
+      if (needsUpdate) {
+        editor.updateShape({
+          id: current.id,
+          type: VARIANT_PREVIEW_TYPE,
+          x: item.box.x,
+          y: item.box.y,
+          props: {
+            componentId: editingComponentId,
+            variantValues: item.values,
+            w: item.box.w,
+            h: item.box.h,
+          },
+          isLocked: true,
+        } as unknown as UpdatePartial);
+      }
+      continue;
+    }
+    editor.createShape({
+      id: createShapeId(),
+      type: VARIANT_PREVIEW_TYPE,
+      x: item.box.x,
+      y: item.box.y,
+      props: {
+        componentId: editingComponentId,
+        variantValues: item.values,
+        w: item.box.w,
+        h: item.box.h,
+      },
+      isLocked: true,
+    } as unknown as CreatePartial);
+  }
+}
+
 /** Frame records derive from document roots, so reconciliation must never
  *  become an independent tldraw undo entry. */
 function syncShapes(editor: Editor) {
   editor.run(
-    () => createMissingShapes(editor, useDocumentStore.getState().roots),
+    () => {
+      createMissingShapes(editor, useDocumentStore.getState().roots);
+      syncVariantPreviewShapes(editor);
+    },
     { history: "ignore", ignoreShapeLock: true },
   );
 }
@@ -1909,10 +2015,10 @@ export default function App() {
     reconcilingShapesRef.current = true;
     try {
       editor.run(
-        () => {
-          createMissingShapes(editor, roots);
-          for (const shape of editor.getCurrentPageShapes()) {
-            if (!isFrame(shape)) continue;
+          () => {
+            createMissingShapes(editor, roots);
+            for (const shape of editor.getCurrentPageShapes()) {
+              if (!isFrame(shape)) continue;
             const root = roots[asFrame(shape).props.rootId];
             if (!root) {
               editor.deleteShapes([shape.id]);
@@ -1948,13 +2054,14 @@ export default function App() {
               syncCanvasFrameSelection(editor, selectedRoot.id, selectedId === selectedRoot.id);
             }
           }
+          syncVariantPreviewShapes(editor);
         },
         { history: "ignore", ignoreShapeLock: true },
       );
     } finally {
       reconcilingShapesRef.current = false;
     }
-  }, [roots]);
+  }, [componentRegistry, editingComponentId, roots]);
 
   // Mirror store-owned frame positions → shapes (undo/redo, canvas.json load).
   // An imperative subscription, not an effect on framePositions: live drags
@@ -1988,6 +2095,7 @@ export default function App() {
                 } as unknown as UpdatePartial);
               }
             }
+            syncVariantPreviewShapes(editor);
           },
           { history: "ignore", ignoreShapeLock: true },
         );

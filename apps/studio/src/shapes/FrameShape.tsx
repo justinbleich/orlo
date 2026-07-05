@@ -10,14 +10,12 @@ import {
   type TLBaseShape,
 } from "tldraw";
 import { BatteryFull, Signal, Wifi } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   collectUsedComponentIds,
   findNode,
-  resolveVariant,
   useDocumentStore,
-  type ComponentDefinition,
   type ComponentRegistry,
 } from "@rn-canvas/document";
 import {
@@ -26,14 +24,7 @@ import {
 } from "@rn-canvas/render-web";
 import { LayerOverlay } from "../LayerOverlay";
 import { useStudioStore } from "../studio-store";
-import { color, font, radius, space, text } from "../studio-theme";
-import {
-  MAX_VARIANT_PREVIEWS,
-  variantPreviewCombinations,
-  variantPreviewKey,
-  variantPreviewLabel,
-  variantPreviewRoot,
-} from "../variant-workspace";
+import { color, font, radius, text } from "../studio-theme";
 
 // Below this on-screen width the rnw detail isn't legible, so we render a cheap
 // proxy instead of running Yoga + react-native-web. (PRD §7.2 LOD / §8: keep only a
@@ -116,133 +107,6 @@ function IOSDeviceChrome({ w, h }: { w: number; h: number }) {
           opacity: 0.86,
         }}
       />
-    </div>
-  );
-}
-
-function ComponentVariantWorkspace({
-  definition,
-  activeVariant,
-  components,
-  activeWidth,
-  activeHeight,
-}: {
-  definition: ComponentDefinition;
-  activeVariant: Record<string, string> | undefined;
-  components: ComponentRegistry;
-  activeWidth: number;
-  activeHeight: number;
-}) {
-  const setActiveVariant = useStudioStore((state) => state.setActiveVariant);
-  const axes = (definition.variants ?? []).filter((axis) => axis.values.length > 0);
-  const combos = useMemo(() => variantPreviewCombinations(definition), [definition]);
-  if (axes.length === 0 || combos.length <= 1) return null;
-
-  const resolved = resolveVariant(definition, activeVariant);
-  const activeKey = variantPreviewKey(definition, resolved);
-  const previewCombos = combos.slice(0, MAX_VARIANT_PREVIEWS);
-  const hiddenCount = Math.max(0, combos.length - previewCombos.length);
-  const baseStyle: React.CSSProperties = {
-    position: "absolute",
-    left: activeWidth + 32,
-    top: 0,
-    width: Math.max(260, Math.min(520, activeWidth * 1.6)),
-    maxHeight: Math.max(320, activeHeight),
-    overflow: "auto",
-    padding: space.md,
-    borderRadius: radius.base,
-    border: `1px solid ${color.line}`,
-    background: color.chrome,
-    boxShadow: "var(--shadow-popover)",
-    color: color.inkDim,
-    fontFamily: font.sans,
-    pointerEvents: "auto",
-  };
-
-  return (
-    <div style={baseStyle}>
-      <div style={{ display: "flex", alignItems: "center", gap: space.sm, marginBottom: space.sm }}>
-        <div style={{ color: color.ink, fontSize: text.sm, fontWeight: 600 }}>
-          {definition.name} variants
-        </div>
-        <div style={{ marginLeft: "auto", color: color.inkFaint, fontSize: text["2xs"] }}>
-          {combos.length} states
-        </div>
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-          gap: space.sm,
-        }}
-      >
-        {previewCombos.map((values) => {
-          const key = variantPreviewKey(definition, values);
-          const active = key === activeKey;
-          const previewRoot = variantPreviewRoot(definition, values);
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => {
-                for (const axis of axes) setActiveVariant(axis.name, values[axis.name]);
-              }}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: space.sm,
-                minWidth: 0,
-                padding: space.sm,
-                borderRadius: radius.sm,
-                border: `1px solid ${active ? color.accentLine : color.line}`,
-                background: active ? color.accentSoft : color.chrome2,
-                color: active ? color.accent : color.inkDim,
-                textAlign: "left",
-              }}
-            >
-              <span
-                style={{
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  fontSize: text["2xs"],
-                  fontWeight: 600,
-                }}
-              >
-                {variantPreviewLabel(definition, values)}
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  height: 84,
-                  overflow: "hidden",
-                  borderRadius: radius.xs,
-                  background: color.art,
-                  pointerEvents: "none",
-                }}
-              >
-                <span
-                  style={{
-                    display: "block",
-                    transform: "scale(0.5)",
-                    transformOrigin: "top left",
-                    width: "200%",
-                    height: "200%",
-                  }}
-                >
-                  <FrameRenderer root={previewRoot} components={components} />
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      {hiddenCount > 0 && (
-        <div style={{ marginTop: space.sm, color: color.inkFaint, fontSize: text["2xs"] }}>
-          {hiddenCount} more states hidden for performance
-        </div>
-      )}
     </div>
   );
 }
@@ -409,7 +273,6 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
         return out;
       }),
     );
-    const activeVariant = useStudioStore((state) => state.activeVariant);
     const outOfFocus = !!editingComponentId && shape.props.rootId !== editingComponentId;
     const editingDefinition =
       editingComponentId === shape.props.rootId ? components[shape.props.rootId] : undefined;
@@ -468,13 +331,28 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
           <LayerOverlay root={root} result={layoutResult} active={interactive} />
         )}
         {editingDefinition && !outOfFocus && live && (
-          <ComponentVariantWorkspace
-            definition={editingDefinition}
-            activeVariant={activeVariant}
-            components={components}
-            activeWidth={shape.props.w}
-            activeHeight={shape.props.h}
-          />
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: -28,
+              maxWidth: shape.props.w,
+              borderRadius: radius.sm,
+              border: `1px solid ${color.accentLine}`,
+              background: color.accentSoft,
+              color: color.accent,
+              padding: "3px 8px",
+              fontFamily: font.sans,
+              fontSize: text["2xs"],
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              pointerEvents: "none",
+            }}
+          >
+            Base
+          </div>
         )}
       </HTMLContainer>
     );

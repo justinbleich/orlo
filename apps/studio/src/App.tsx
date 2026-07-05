@@ -49,7 +49,7 @@ import {
   type ActiveRepoScreen,
   type FlowDefinition,
 } from "./workspace-store";
-import { Inspector } from "./Inspector";
+import { ComponentPropsPanel, Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { color, layout, radius, space, text } from "./studio-theme";
@@ -1391,9 +1391,11 @@ export default function App() {
 
   useEffect(() => startMcpBridge(handleMcpCommand), []);
 
+  // Props only exists while the Component workspace is open; fall back when the
+  // workspace changes underneath it.
   useEffect(() => {
-    if (inspectorTab === "Props") setInspectorTab("Inspect");
-  }, [inspectorTab]);
+    if (inspectorTab === "Props" && workspace !== "Component") setInspectorTab("Inspect");
+  }, [inspectorTab, workspace]);
 
   useEffect(() => {
     if (flows.length === 0) return;
@@ -1521,6 +1523,7 @@ export default function App() {
     if (!editingComponentId) return;
     setWorkspace("Component");
     setComponentWorkspaceTab("Canvas");
+    setInspectorTab("Props");
     if (workspace === "Flow" || workspace === "Design System") return;
     pendingFocusRootIdRef.current = editingComponentId;
     const editor = editorRef.current;
@@ -2545,7 +2548,11 @@ export default function App() {
                     </div>
                     {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
                     <Tabs
-                      tabs={["Inspect", "Code", "History"]}
+                      tabs={
+                        workspace === "Component"
+                          ? ["Inspect", "Props", "Code", "History"]
+                          : ["Inspect", "Code", "History"]
+                      }
                       active={inspectorTab}
                       onSelect={setInspectorTab}
                       variant="underline"
@@ -2555,6 +2562,10 @@ export default function App() {
                     {inspectorTab === "Inspect" ? (
                       <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
                         <Inspector rootId={focusedRootId} />
+                      </ErrorBoundary>
+                    ) : inspectorTab === "Props" && editingComponentId ? (
+                      <ErrorBoundary label="Props" resetKey={editingComponentId}>
+                        <ComponentPropsPanel componentId={editingComponentId} />
                       </ErrorBoundary>
                     ) : inspectorTab === "Code" ? (
                       <CodePanel />

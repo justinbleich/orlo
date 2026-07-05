@@ -34,6 +34,7 @@ import {
   Trash2,
   Type as TypeIcon,
   Ungroup as UngroupIcon,
+  Unlink,
   Unlock,
   X,
   type LucideIcon,
@@ -544,18 +545,8 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         />
       )}
 
-      {/* In focus mode: manage variant properties/values, and expose the selected
-          template layer's value as a component prop. */}
-      {editingComponentId === root.id && (
-        <VariantControls
-          componentId={root.id}
-          selectedNodeId={!multi && primary && primary.type !== "ComponentInstance" ? primary.id : null}
-        />
-      )}
-      {editingComponentId === root.id && (
-        <PropertiesControls componentId={root.id} node={!multi ? primary : null} />
-      )}
-
+      {/* Prop exposure, variant axes, and token links moved to the Props tab
+          (ComponentPropsPanel) — Inspect stays layout/style only. */}
       {(canArrangeAbsolute || canArrangeFlex) && (
         <Section title="Arrange">
           <div className="flex items-center gap-xs">
@@ -2116,5 +2107,103 @@ function NumberTokenSlot({
       onUnlink={() => unlink(rootId, nodeId, styleKey)}
       onPromote={(name) => promote(rootId, nodeId, styleKey, name)}
     />
+  );
+}
+
+// --- Props tab (Component workspace) -------------------------------------------
+
+/**
+ * The right column's Props tab while a component is being edited: the
+ * definition's exposed props, its variant axes (radio selection routes style
+ * edits into the active combination), and the template's token links — the
+ * component-shaped controls that used to sit inside the Inspect flow.
+ */
+export function ComponentPropsPanel({ componentId }: { componentId: NodeId }) {
+  const root = useDocumentStore((s) => s.roots[componentId]);
+  const selection = useDocumentStore((s) => s.selection);
+  if (!root) {
+    return (
+      <Shell>
+        <Empty>Open a component to edit its properties.</Empty>
+      </Shell>
+    );
+  }
+  const nodes = normalizeNodeSelection(root, selection)
+    .map((id) => findNode(root, id))
+    .filter((n): n is Node => !!n);
+  const primary = nodes[0];
+  const templateNode =
+    nodes.length === 1 && primary && primary.type !== "ComponentInstance" ? primary : null;
+  return (
+    <Shell>
+      <PropertiesControls componentId={componentId} node={templateNode} />
+      <VariantControls componentId={componentId} selectedNodeId={templateNode?.id ?? null} />
+      <TemplateTokensSection componentId={componentId} />
+    </Shell>
+  );
+}
+
+/** Token links inside the editing template, grouped per token with an unlink-all. */
+function TemplateTokensSection({ componentId }: { componentId: NodeId }) {
+  const root = useDocumentStore((s) => s.roots[componentId]);
+  const tokens = useDocumentStore((s) => s.tokens);
+  if (!root) return null;
+
+  const links = new Map<string, { nodeId: NodeId; styleKey: string }[]>();
+  const walk = (node: Node) => {
+    for (const [styleKey, tokenId] of Object.entries(node.design?.tokens ?? {})) {
+      const list = links.get(tokenId) ?? [];
+      list.push({ nodeId: node.id, styleKey });
+      links.set(tokenId, list);
+    }
+    for (const child of childrenOf(node)) walk(child);
+  };
+  walk(root);
+  const rows = [...links.entries()].flatMap(([tokenId, uses]) => {
+    const token = tokens[tokenId];
+    return token ? [{ token, uses }] : [];
+  });
+
+  const unlinkAll = (uses: { nodeId: NodeId; styleKey: string }[]) => {
+    const store = useDocumentStore.getState();
+    const ownsInteraction = !store.interaction;
+    try {
+      if (ownsInteraction) store.beginInteraction();
+      for (const use of uses) store.unlinkStyleToken(componentId, use.nodeId, use.styleKey);
+      if (ownsInteraction) store.commitInteraction();
+    } catch {
+      store.cancelInteraction();
+    }
+  };
+
+  return (
+    <Section title="Tokens">
+      {rows.length === 0 ? (
+        <p className="m-0 text-sm text-ink-faint">No token links in this template.</p>
+      ) : (
+        <div className="flex flex-col gap-control">
+          {rows.map(({ token, uses }) => (
+            <div key={token.id} className="flex h-7 items-center gap-sm">
+              {token.category === "color" ? (
+                <span
+                  className="size-4 shrink-0 rounded-xs border border-line"
+                  style={{ background: String(token.value) }}
+                  aria-hidden="true"
+                />
+              ) : (
+                <span className="w-6 shrink-0 text-right text-2xs tabular-nums text-ink-faint">
+                  {String(token.value)}
+                </span>
+              )}
+              <span className="min-w-0 flex-1 truncate text-sm text-ink">{token.name}</span>
+              <span className="text-2xs tabular-nums text-ink-faint">×{uses.length}</span>
+              <IconButton title={`Unlink ${token.name}`} onClick={() => unlinkAll(uses)}>
+                <Unlink size={12} aria-hidden="true" />
+              </IconButton>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }

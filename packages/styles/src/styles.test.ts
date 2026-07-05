@@ -193,6 +193,44 @@ test("default text uses pinned Inter metrics", () => {
   assert.equal(measured.height, 17);
 });
 
+test("repeated measures are cached and identical", () => {
+  const m = createCanvasTextMeasurer();
+  const input = {
+    text: "the quick brown fox jumps over the lazy dog",
+    style: { fontSize: 16 },
+    maxWidth: 120,
+  };
+  const first = m.measure(input);
+  const second = m.measure(input);
+  // Same object back = the result cache answered, not a fresh wrap pass.
+  assert.equal(second, first);
+});
+
+test("cache keys distinguish text, style, and wrap constraints", () => {
+  const m = createCanvasTextMeasurer();
+  const base = m.measure({ text: "Hello world", style: { fontSize: 16 }, maxWidth: 40 });
+  const otherText = m.measure({ text: "Hello there", style: { fontSize: 16 }, maxWidth: 40 });
+  const otherSize = m.measure({ text: "Hello world", style: { fontSize: 24 }, maxWidth: 40 });
+  const otherWidth = m.measure({ text: "Hello world", style: { fontSize: 16 }, maxWidth: 400 });
+  const clamped = m.measure({
+    text: "Hello world",
+    style: { fontSize: 16 },
+    maxWidth: 40,
+    numberOfLines: 1,
+  });
+  assert.notEqual(otherText, base);
+  assert.ok(otherSize.width > base.width);
+  assert.ok(otherWidth.height < base.height);
+  assert.ok(clamped.height < base.height);
+});
+
+test("sub-pixel maxWidth jitter reuses the cached result", () => {
+  const m = createCanvasTextMeasurer();
+  const a = m.measure({ text: "jitter test string", style: { fontSize: 16 }, maxWidth: 100 });
+  const b = m.measure({ text: "jitter test string", style: { fontSize: 16 }, maxWidth: 100.04 });
+  assert.equal(b, a);
+});
+
 test("pinned metrics produce deterministic wrapping and line height", () => {
   const measure = () =>
     createCanvasTextMeasurer().measure({

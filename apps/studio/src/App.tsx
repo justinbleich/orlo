@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   FileCode2,
   FileJson2,
   FolderOpen,
@@ -9,6 +10,7 @@ import {
   Save,
   Trash2,
   Undo2,
+  X,
 } from "lucide-react";
 import {
   Tldraw,
@@ -24,17 +26,29 @@ import {
   findRootContaining,
   getParent,
   useDocumentStore,
-  type ComponentRegistry,
   type DesignToken,
   type Node,
   type NodeId,
   type RNPrimitive,
   type TokenCategory,
 } from "@rn-canvas/document";
-import { FrameRenderer } from "@rn-canvas/render-web";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
+import { FlowCanvas } from "./FlowCanvas";
+import { FlowInspector } from "./FlowInspector";
+import { CodePanel } from "./CodePanel";
+import { gitFileStatusLabel, type GitFileStatus, type GitStatus } from "./code-artifacts";
+import {
+  initWorkspaceSubscriptions,
+  registerStudioHooks,
+  setSyncRootHint,
+  useWorkspaceStore,
+  workspaceFlags,
+  type ActiveRepoScreen,
+  type FlowDefinition,
+} from "./workspace-store";
 import { Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { LayerContextMenu } from "./LayerContextMenu";
 import { color, layout, radius, space, text } from "./studio-theme";
 import {
   Eyebrow,
@@ -47,8 +61,12 @@ import {
 } from "./shell";
 import {
   displayScreenName,
+  firstGitCode,
+  gitSummary,
+  pathLabel,
   repoChangesForContext,
   repoFlowItemsForContext,
+  scopedPathLabel,
   type RepoFlowPanelItem,
   type RepoPanelContext,
   type RepoPanelScreen,
@@ -64,9 +82,19 @@ import {
   TooltipProvider,
   cn,
 } from "./studio-ui";
+import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
 import { handleMcpCommand } from "./mcp-command-handler";
+import {
+  addFlowRoute,
+  flowAvailableScreens,
+  flowRouteScreens,
+  flowScreenName,
+  removeFlowRoute,
+  reorderFlowRoute,
+} from "./flow-model";
+import type { FlowManifest } from "./repo-contract";
 import {
   firstSelectableChild,
   nextLayerSelection,
@@ -117,79 +145,9 @@ const asFrame = (s: EditorShape) => s as unknown as FrameShape;
 type CreatePartial = Parameters<Editor["createShape"]>[0];
 type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
-type CodegenResult = {
-  screenName: string;
-  code: string;
-  sidecar: string;
-  targetPath: string;
-  sidecarPath: string;
-  components?: { name: string; fileName: string; code: string }[];
-  componentPaths?: string[];
-  theme?: { fileName: string; code: string };
-  themePath?: string;
-  wrote?: boolean;
-};
-
-type CodeArtifact = {
-  id: string;
-  label: string;
-  path: string;
-  kind: "tsx" | "json" | "theme";
-  code: string;
-};
-
-type SyncState =
-  | { status: "idle" }
-  | { status: "scheduled" }
-  | { status: "syncing" }
-  | { status: "synced"; path: string }
-  | { status: "error"; message: string };
-
-type GitFileStatus = {
-  path: string;
-  index: string;
-  workingTree: string;
-};
-
-type GitStatus =
-  | { status: "loading" }
-  | { status: "ready"; repoPath: string; branch: string; clean: boolean; files: GitFileStatus[] }
-  | { status: "error"; message: string };
-
 type RepoContext = RepoPanelContext;
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
-type FlowDefinition = { id: FlowId; label: string; description?: string };
-
-type FlowManifest = {
-  version: 1;
-  flows: Array<{
-    id: FlowId;
-    label: string;
-    entryRootId?: NodeId;
-    entryName?: string;
-    routes: Array<{ rootId: NodeId; name: string }>;
-  }>;
-};
-
-type OpenDocumentResult = {
-  version: 1;
-  screenName: string;
-  root: Node;
-  components?: import("@rn-canvas/document").ComponentRegistry;
-  tokens?: import("@rn-canvas/document").TokenRegistry;
-  repoPath?: string;
-  targetPath: string;
-  sidecarPath: string;
-};
-
-type ImportSourceResult = {
-  screenName: string;
-  root: Node;
-  repoPath?: string;
-  sourcePath: string;
-  sidecarPath: string;
-};
 
 function rootSize(root: Node): { w: number; h: number } {
   const w = typeof root.style.width === "number" ? root.style.width : 320;
@@ -205,7 +163,7 @@ const DEVICE_SAFE_AREA = { top: 64, bottom: 48, side: 16 } as const;
  * A blank full-bleed mobile screen: device-sized, top-aligned column, white,
  * no card border/radius. The starting point for authoring a real screen.
  */
-function createScreenFrame(children: Node[] = []): Node {
+function createScreenFrame(children: Node[] = [], name?: string): Node {
   return createNode("View", {
     style: {
       width: DEVICE_FRAME.width,
@@ -217,79 +175,9 @@ function createScreenFrame(children: Node[] = []): Node {
       paddingBottom: DEVICE_SAFE_AREA.bottom,
       gap: 12,
     },
+    design: name ? { name } : undefined,
     children,
   });
-}
-
-function codeArtifacts(result: CodegenResult | null): CodeArtifact[] {
-  if (!result) return [];
-  const artifacts: CodeArtifact[] = [
-    {
-      id: "screen",
-      label: result.targetPath.split("/").pop() ?? result.targetPath,
-      path: result.targetPath,
-      kind: "tsx",
-      code: result.code,
-    },
-    {
-      id: "document",
-      label: result.sidecarPath.split("/").pop() ?? result.sidecarPath,
-      path: result.sidecarPath,
-      kind: "json",
-      code: result.sidecar,
-    },
-  ];
-  if (result.theme) {
-    artifacts.push({
-      id: "theme",
-      label: result.theme.fileName,
-      path: result.themePath ?? result.theme.fileName,
-      kind: "theme",
-      code: result.theme.code,
-    });
-  }
-  result.components?.forEach((component, index) => {
-    artifacts.push({
-      id: `component-${index}-${component.name}`,
-      label: component.fileName,
-      path: result.componentPaths?.[index] ?? `components/${component.fileName}`,
-      kind: "tsx",
-      code: component.code,
-    });
-  });
-  return artifacts;
-}
-
-function gitFileStatusLabel(file: GitFileStatus): string {
-  const code = `${file.index}${file.workingTree}`;
-  if (code === "??") return "Untracked";
-  if (file.workingTree === "M" || file.index === "M") return "Modified";
-  if (file.workingTree === "D" || file.index === "D") return "Deleted";
-  if (file.workingTree === "A" || file.index === "A") return "Added";
-  if (file.workingTree === "R" || file.index === "R") return "Renamed";
-  return code.trim() || "Changed";
-}
-
-function gitSummary(status: GitStatus): string {
-  if (status.status === "loading") return "Git loading";
-  if (status.status === "error") return "Git unavailable";
-  if (status.clean) return `${status.branch} clean`;
-  return `${status.branch} ${status.files.length} changed`;
-}
-
-function gitStatusCode(file: GitFileStatus): string {
-  const code = `${file.index}${file.workingTree}`;
-  if (code === "??") return "U";
-  if (file.workingTree === "M" || file.index === "M") return "M";
-  if (file.workingTree === "D" || file.index === "D") return "D";
-  if (file.workingTree === "A" || file.index === "A") return "A";
-  if (file.workingTree === "R" || file.index === "R") return "R";
-  return code.trim() || "";
-}
-
-function firstGitCode(status: GitStatus): string | undefined {
-  if (status.status !== "ready") return undefined;
-  return status.files.map(gitStatusCode).find(Boolean);
 }
 
 /** Create a tldraw shape for any document root that doesn't have one yet. */
@@ -300,20 +188,29 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
       .filter(isFrame)
       .map((s) => asFrame(s).props.rootId),
   );
+  const store = useDocumentStore.getState();
+  const seeded: Record<NodeId, { x: number; y: number }> = {};
   let i = existing.size;
   for (const root of Object.values(roots)) {
     if (existing.has(root.id)) continue;
     const { w, h } = rootSize(root);
+    // Stored position wins (persisted arrangement / undo state); new frames get
+    // the grid slot, recorded back so the layout is durable from the start.
+    const stored = store.framePositions[root.id];
+    const x = stored?.x ?? 80 + (i % 3) * (DEVICE_FRAME.width + 50);
+    const y = stored?.y ?? 80 + Math.floor(i / 3) * (DEVICE_FRAME.height + 56);
+    if (!stored) seeded[root.id] = { x, y };
     editor.createShape({
       id: createShapeId(),
       type: FRAME_TYPE,
-      x: 80 + (i % 3) * (DEVICE_FRAME.width + 50),
-      y: 80 + Math.floor(i / 3) * (DEVICE_FRAME.height + 56),
+      x,
+      y,
       props: { rootId: root.id, w, h },
       isLocked: !!root.design?.locked,
     } as unknown as CreatePartial);
     i += 1;
   }
+  store.seedFramePositions(seeded);
 }
 
 /** Frame records derive from document roots, so reconciliation must never
@@ -323,29 +220,6 @@ function syncShapes(editor: Editor) {
     () => createMissingShapes(editor, useDocumentStore.getState().roots),
     { history: "ignore", ignoreShapeLock: true },
   );
-}
-
-function canvasGeometrySignature(editor: Editor) {
-  return editor
-    .getCurrentPageShapes()
-    .filter(isFrame)
-    .map((shape) => {
-      const frame = asFrame(shape);
-      return [frame.id, frame.x, frame.y, frame.rotation, frame.props.w, frame.props.h];
-    })
-    .sort(([a], [b]) => String(a).localeCompare(String(b)))
-    .map((parts) => parts.join(":"))
-    .join("|");
-}
-
-function stepCanvasHistory(editor: Editor, direction: "undo" | "redo") {
-  const before = canvasGeometrySignature(editor);
-  for (let skipped = 0; skipped < 100; skipped += 1) {
-    const available = direction === "undo" ? editor.getCanUndo() : editor.getCanRedo();
-    if (!available) return;
-    editor[direction]();
-    if (canvasGeometrySignature(editor) !== before) return;
-  }
 }
 
 function findFrameShapeForRoot(editor: Editor, rootId: NodeId): EditorShape | undefined {
@@ -380,24 +254,6 @@ function syncCanvasFrameSelection(editor: Editor, rootId: NodeId, selectFrame: b
   return true;
 }
 
-const DEFAULT_FLOWS: FlowDefinition[] = [
-  {
-    id: "onboarding",
-    label: "Onboarding Flow",
-    description: "Default stack order for first-run screens.",
-  },
-  {
-    id: "main",
-    label: "Main App Flow",
-    description: "Primary app route order from the current screen tree.",
-  },
-  {
-    id: "auth",
-    label: "Auth Flow",
-    description: "Authentication screens inferred from screen names when present.",
-  },
-];
-
 const TOKEN_IDENTIFIER = /^[A-Za-z_$][\w$]*(\.[\w$]+)*$/;
 
 function slugFlowId(label: string, taken: Set<string>) {
@@ -423,305 +279,127 @@ function flowDescription(flows: FlowDefinition[], id: FlowId) {
   );
 }
 
-function flowScreens(roots: Node[], flow: FlowId): Node[] {
-  if (flow === "onboarding") return roots;
-  const lowered = (root: Node) => (root.design?.name ?? "").toLowerCase();
-  const auth = roots.filter((root) =>
-    /auth|login|sign|create|verify|welcome/.test(lowered(root)),
+function nextScreenName(roots: Iterable<Node>) {
+  const taken = new Set(
+    Array.from(roots, (root) => root.design?.name).filter((name): name is string => !!name),
   );
-  const main = roots.filter((root) => !auth.includes(root));
-  if (flow === "auth") return auth.length ? auth : roots.slice(0, 1);
-  return main.length ? main : roots;
-}
-
-function orderedFlowScreens(screens: Node[], entryRootId?: NodeId): Node[] {
-  if (!entryRootId) return screens;
-  const entry = screens.find((root) => root.id === entryRootId);
-  if (!entry) return screens;
-  return [entry, ...screens.filter((root) => root.id !== entryRootId)];
-}
-
-function FlowScreenPreview({
-  root,
-  components,
-}: {
-  root: Node;
-  components: ComponentRegistry;
-}) {
-  const { w, h } = rootSize(root);
-  const scale = Math.min(144 / w, 256 / h);
-  const previewWidth = w * scale;
-  const previewHeight = h * scale;
-
-  return (
-    <div className="relative h-64 w-36 overflow-hidden rounded-sm bg-white shadow-inner">
-      <div
-        className="pointer-events-none absolute left-1/2 top-1/2 origin-top-left"
-        style={{
-          width: w,
-          height: h,
-          transform: `translate(-${previewWidth / 2}px, -${previewHeight / 2}px) scale(${scale})`,
-        }}
-      >
-        <FrameRenderer root={root} components={components} />
-      </div>
-    </div>
-  );
+  let index = 1;
+  while (taken.has(`Screen ${index}`)) index += 1;
+  return `Screen ${index}`;
 }
 
 function FlowWorkspace({
   roots,
-  components,
   flows,
-  repoFlows,
   activeFlow,
   entryRootId,
+  routeIds,
   onSelectScreen,
-  onOpenRepoScreen,
-  onEntryRootChange,
   onAddFrame,
+  onRenameFlow,
 }: {
   roots: Node[];
-  components: ComponentRegistry;
   flows: FlowDefinition[];
-  repoFlows: RepoFlowPanelItem[];
   activeFlow: FlowId;
   entryRootId?: NodeId;
+  routeIds?: NodeId[];
   onSelectScreen: (rootId: NodeId) => void;
-  onOpenRepoScreen: (screen: RepoPanelScreen) => void;
-  onEntryRootChange: (rootId: NodeId) => void;
   onAddFrame: () => void;
+  onRenameFlow: (flowId: FlowId, label: string) => boolean;
 }) {
   const screens = roots.filter(
     (root) =>
       !useDocumentStore.getState().editingComponentId ||
       root.id !== useDocumentStore.getState().editingComponentId,
   );
-  const routeScreens = orderedFlowScreens(flowScreens(screens, activeFlow), entryRootId);
-  const entryScreen = routeScreens[0];
+  const routeScreens = flowRouteScreens(screens, activeFlow, routeIds);
+  const entryScreen =
+    (entryRootId ? routeScreens.find((root) => root.id === entryRootId) : undefined) ??
+    routeScreens[0];
   const screenLabels = new Map(
-    screens.map((root, index) => [root.id, root.design?.name ?? `Screen ${index + 1}`]),
+    screens.map((root, index) => [root.id, flowScreenName(root, index)]),
   );
   const labelFor = (root: Node, fallbackIndex: number) =>
-    screenLabels.get(root.id) ?? root.design?.name ?? `Screen ${fallbackIndex + 1}`;
+    screenLabels.get(root.id) ?? flowScreenName(root, fallbackIndex);
   const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
   const flowViewportRef = useRef<HTMLDivElement | null>(null);
-  const repoFlow = repoFlows.find((flow) => flow.id === activeFlow);
+  const activeFlowDefinition = flows.find((flow) => flow.id === activeFlow);
+  const activeFlowLabel = activeFlowDefinition?.label ?? flowLabel(flows, activeFlow);
+  const [flowNameDraft, setFlowNameDraft] = useState(activeFlowLabel);
+  const skipNextFlowNameCommitRef = useRef(false);
 
   useEffect(() => {
     if (flowViewportRef.current) flowViewportRef.current.scrollLeft = 0;
-  }, [activeFlow, entryRootId]);
+  }, [activeFlow, entryRootId, routeIds]);
 
-  if (repoFlow) {
-    const entry = repoFlow.screens[0];
-    return (
-      <div className="studio-chrome flex h-full flex-col bg-canvas">
-        <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-ink">{repoFlow.name}</span>
-            <span className="text-xs text-ink-faint">
-              Repo-inferred journey from route order
-            </span>
-          </div>
-          {entry && (
-            <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-              Entry <span className="font-medium text-ink">{displayScreenName(entry)}</span>
-            </div>
-          )}
-        </div>
-        <div ref={flowViewportRef} className="relative flex-1 overflow-auto">
-          <div className="grid min-h-full min-w-[760px] grid-cols-[minmax(0,1fr)_280px]">
-            <div className="overflow-auto p-2xl">
-              <div className="flex min-w-max items-start gap-2xl">
-                {repoFlow.screens.map((screen, index) => (
-                  <div key={screen.path} className="relative flex w-44 flex-col items-center gap-sm">
-                    {index > 0 && (
-                      <div
-                        className="absolute -left-2xl top-20 h-px w-2xl bg-accent-line"
-                        aria-hidden="true"
-                      />
-                    )}
-                    <div className="flex h-5 items-center gap-xs text-xs font-medium text-ink-dim">
-                      <span>{displayScreenName(screen)}</span>
-                      {index === 0 && (
-                        <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                          Entry
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => onOpenRepoScreen(screen)}
-                      className="flex h-40 w-36 flex-col items-center justify-center gap-sm rounded-sm border border-line bg-chrome p-md text-center shadow-control transition-colors hover:border-accent-line hover:bg-raised"
-                      title={screen.path}
-                    >
-                      <span className="flex size-9 items-center justify-center rounded-sm bg-accent-soft text-sm font-semibold text-accent">
-                        {index + 1}
-                      </span>
-                      <span className="max-w-full truncate text-sm font-semibold text-ink">
-                        {displayScreenName(screen)}
-                      </span>
-                      <span className="max-w-full truncate text-2xs text-ink-faint">
-                        {screen.path}
-                      </span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <aside className="border-l border-line bg-chrome p-md">
-              <div className="flex flex-col gap-md">
-                <div>
-                  <div className="eyebrow">Route Wiring</div>
-                  <div className="mt-xs text-sm font-semibold text-ink">
-                    {repoFlow.screens.length} screens
-                  </div>
-                  <p className="m-0 mt-xs text-xs text-ink-faint">
-                    This sequence is inferred from matching route folders. Open a screen to edit its layers.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-xs">
-                  {repoFlow.screens.map((screen, index) => (
-                    <button
-                      key={screen.path}
-                      type="button"
-                      onClick={() => onOpenRepoScreen(screen)}
-                      className="flex min-h-8 items-center gap-xs rounded-sm px-sm py-xs text-left text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
-                    >
-                      <span className="w-5 shrink-0 text-2xs tabular-nums text-ink-faint">
-                        {index + 1}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{displayScreenName(screen)}</span>
-                        <span className="block truncate text-2xs text-ink-faint">{screen.path}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </aside>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  useEffect(() => {
+    setFlowNameDraft(activeFlowLabel);
+  }, [activeFlow, activeFlowLabel]);
+
+  const resetFlowNameDraft = () => setFlowNameDraft(activeFlowLabel);
+
+  const commitFlowNameDraft = () => {
+    if (skipNextFlowNameCommitRef.current) {
+      skipNextFlowNameCommitRef.current = false;
+      return;
+    }
+    const nextLabel = flowNameDraft.trim();
+    if (!nextLabel || nextLabel === activeFlowLabel) {
+      resetFlowNameDraft();
+      return;
+    }
+    if (!onRenameFlow(activeFlow, nextLabel)) resetFlowNameDraft();
+  };
 
   return (
     <div className="studio-chrome flex h-full flex-col bg-canvas">
       <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold text-ink">{flowLabel(flows, activeFlow)}</span>
+        <div className="flex min-w-0 flex-col">
+          <TextField
+            aria-label="Flow name"
+            value={flowNameDraft}
+            onChange={setFlowNameDraft}
+            onBlur={commitFlowNameDraft}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") {
+                skipNextFlowNameCommitRef.current = true;
+                resetFlowNameDraft();
+                event.currentTarget.blur();
+              }
+            }}
+            className="h-7 max-w-64 border-transparent bg-transparent px-2xs text-sm font-semibold text-ink shadow-none hover:border-line hover:bg-raised focus-visible:border-accent-line focus-visible:bg-chrome-2"
+          />
           <span className="text-xs text-ink-faint">{flowDescription(flows, activeFlow)}</span>
         </div>
         {entryScreen && (
           <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-            Entry <span className="font-medium text-ink">{entryLabel}</span>
+            Start <span className="font-medium text-ink">{entryLabel}</span>
           </div>
         )}
+        <div className="rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
+          Routes <span className="font-medium tabular-nums text-ink">{routeScreens.length}</span>
+        </div>
         <div className="ml-auto flex items-center gap-xs">
           <IconButton title="Add screen" onClick={onAddFrame}>
             <PlusIcon />
           </IconButton>
         </div>
       </div>
-      <div ref={flowViewportRef} className="relative flex-1 overflow-auto">
-        <div className="grid min-h-full min-w-[760px] grid-cols-[minmax(0,1fr)_260px]">
-          <div className="overflow-auto p-2xl">
-            <div className="flex min-w-max items-start gap-2xl">
-              {routeScreens.map((root, index) => (
-                <div key={root.id} className="relative flex flex-col items-center gap-sm">
-                  {index > 0 && (
-                    <div
-                      className="absolute -left-2xl top-28 h-px w-2xl bg-accent-line"
-                      aria-hidden="true"
-                    />
-                  )}
-                  <div className="flex h-5 items-center gap-xs text-xs font-medium text-ink-dim">
-                    <span>{labelFor(root, index)}</span>
-                    {root.id === entryScreen?.id && (
-                      <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                        Entry
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onSelectScreen(root.id)}
-                    className="flex h-64 w-36 items-center justify-center overflow-hidden rounded-sm border border-line bg-chrome shadow-control transition-colors hover:border-accent-line hover:bg-raised"
-                  >
-                    <FlowScreenPreview root={root} components={components} />
-                  </button>
-                </div>
-              ))}
-              {routeScreens.length === 0 && (
-                <div className="rounded-sm border border-line bg-chrome p-xl text-sm text-ink-faint">
-                  Add a screen to start mapping the flow.
-                </div>
-              )}
-            </div>
+      <div ref={flowViewportRef} className="relative min-h-0 flex-1 overflow-hidden">
+        {activeFlowDefinition ? (
+          <FlowCanvas
+            flow={activeFlowDefinition}
+            routeScreens={routeScreens}
+            onSelectScreen={onSelectScreen}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-ink-faint">
+            Select a flow to map screens.
           </div>
-          <aside className="border-l border-line bg-chrome p-md">
-            <div className="flex flex-col gap-md">
-              <div>
-                <div className="eyebrow">Navigator</div>
-                <div className="mt-xs text-sm font-semibold text-ink">
-                  Prototype route graph
-                </div>
-                <p className="m-0 mt-xs text-xs text-ink-faint">
-                  Route order follows the selected entrypoint. Router adapters can map this
-                  graph to React Navigation, Expo Router, or a custom stack later.
-                </p>
-              </div>
-              {entryScreen && (
-                <div className="rounded-sm bg-raised p-sm">
-                  <div className="text-2xs font-semibold uppercase tracking-[0.08em] text-ink-faint">
-                    Entry point
-                  </div>
-                  <div className="mt-xs truncate text-sm font-medium text-ink">
-                    {entryLabel}
-                  </div>
-                </div>
-              )}
-              <div className="flex flex-col gap-xs">
-                {routeScreens.map((root, index) => (
-                  <div
-                    key={root.id}
-                    className="flex h-8 items-center gap-xs rounded-sm px-sm text-sm text-ink-dim transition-colors hover:bg-raised hover:text-ink"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onSelectScreen(root.id)}
-                      className="flex min-w-0 flex-1 items-center gap-xs text-left"
-                    >
-                      <span className="w-5 shrink-0 text-2xs tabular-nums text-ink-faint">
-                        {index + 1}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">
-                        {labelFor(root, index)}
-                      </span>
-                    </button>
-                    {root.id === entryScreen?.id ? (
-                      <span className="shrink-0 text-2xs font-semibold text-accent">
-                        Entry
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => onEntryRootChange(root.id)}
-                        className="shrink-0 rounded-pill px-xs py-px text-2xs text-ink-faint transition-colors hover:bg-chrome hover:text-ink"
-                      >
-                        Set entry
-                      </button>
-                    )}
-                  </div>
-                ))}
-                {routeScreens.length === 0 && (
-                  <p className="m-0 text-xs text-ink-faint">No screens in this flow yet.</p>
-                )}
-              </div>
-            </div>
-          </aside>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -1030,19 +708,208 @@ function PlusIcon() {
   return <span className="text-base leading-none">+</span>;
 }
 
-function ChangesTimeline({
-  gitStatus,
-  repoPath,
-  repoContext,
-  onRefresh,
-  onOpenCode,
+function TopBar({
+  workspaceContext,
+  onOpenRepoSettings,
+  onOpenCodePanel,
 }: {
-  gitStatus: GitStatus;
-  repoPath: string;
-  repoContext: RepoContext | null;
-  onRefresh: () => void;
-  onOpenCode: () => void;
+  workspaceContext: string;
+  onOpenRepoSettings: () => void;
+  onOpenCodePanel: () => void;
 }) {
+  const gitStatus = useWorkspaceStore((s) => s.gitStatus);
+  const syncState = useWorkspaceStore((s) => s.syncState);
+  const repoContext = useWorkspaceStore((s) => s.repoContext);
+  const codegenBusy = useWorkspaceStore((s) => s.codegenBusy);
+  const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
+  const canUndo = useDocumentStore((s) => s.past.length > 0);
+  const canRedo = useDocumentStore((s) => s.future.length > 0);
+  const hasActiveInteraction = useDocumentStore((s) => !!s.interaction);
+  const hasFocusedRoot = useDocumentStore(
+    (s) => !!findRootContaining(Object.values(s.roots), s.selection[0] ?? ""),
+  );
+
+  // The document store is the single undo history — frame moves live there too
+  // (framePositions), so tldraw's own history never surfaces in the UI.
+  const undoAvailable = canUndo || hasActiveInteraction;
+  const redoAvailable = canRedo;
+  const undoLatest = () => {
+    const store = useDocumentStore.getState();
+    if (store.interaction) store.commitInteraction();
+    if (useDocumentStore.getState().canUndo()) store.undo();
+  };
+  const redoLatest = () => {
+    const store = useDocumentStore.getState();
+    if (store.canRedo()) store.redo();
+  };
+
+  const syncLabel =
+    syncState.status === "scheduled"
+      ? "Sync pending"
+      : syncState.status === "syncing"
+        ? "Syncing"
+        : syncState.status === "synced"
+          ? `Synced ${syncState.path}`
+          : syncState.status === "error"
+            ? "Sync failed"
+            : "Ready";
+  const gitLabel = gitSummary(gitStatus);
+  const gitTone =
+    gitStatus.status === "error" ? "amber" : gitStatus.status === "ready" && !gitStatus.clean ? "accent" : "neutral";
+  const syncTone =
+    syncState.status === "error" ? "amber" : syncState.status === "syncing" || syncState.status === "scheduled" ? "accent" : "neutral";
+  const repoName = repoContext?.repoName ?? "Repository";
+  const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
+  const syncTarget = repoContext?.designSession?.syncTarget;
+  const repoSubtitle =
+    frameworkLabels.length > 0
+      ? `${frameworkLabels.slice(0, 3).join(" · ")}${frameworkLabels.length > 3 ? ` +${frameworkLabels.length - 3}` : ""}${syncTarget ? ` · ${syncTarget}` : ""}`
+      : repoContext?.packageManager
+        ? `No app runtime detected · ${repoContext.packageManager}${syncTarget ? ` · ${syncTarget}` : ""}`
+        : "Attach a repo";
+  const repoGitCode = firstGitCode(gitStatus);
+
+  return (
+    <header
+      className="studio-chrome flex items-center gap-md border-b border-line bg-chrome px-xl"
+      style={{
+        flex: `0 0 ${layout.topbar}px`,
+        height: layout.topbar,
+      }}
+    >
+      <div className="flex min-w-0 items-center gap-xs">
+        <strong
+          className="min-w-0 truncate text-base font-semibold text-ink"
+          title={repoContext?.repoPath ? `${repoSubtitle} · ${repoContext.repoPath}` : repoSubtitle}
+        >
+          {repoName}
+        </strong>
+        {repoGitCode && (
+          <span
+            title="Repository has changes"
+            aria-label="Repository has changes"
+            className="flex size-1 shrink-0 rounded-full bg-accent"
+          />
+        )}
+        <IconButton
+          title={repoContext ? "Change connected repo" : "Connect repo"}
+          onClick={onOpenRepoSettings}
+        >
+          <FolderOpen size={14} aria-hidden="true" />
+        </IconButton>
+      </div>
+      <span className="h-4 w-px shrink-0 bg-line-soft" aria-hidden="true" />
+      <span className="min-w-0 truncate text-xs text-ink-faint" title={workspaceContext}>
+        {workspaceContext}
+      </span>
+      <div className="ml-auto flex min-w-0 items-center gap-sm">
+        <StatusPill
+          tone={gitTone}
+          title={gitStatus.status === "error" ? gitStatus.message : gitLabel}
+        >
+          {gitLabel}
+        </StatusPill>
+        <StatusPill
+          tone={syncTone}
+          title={syncState.status === "error" ? syncState.message : syncLabel}
+        >
+          {syncLabel}
+        </StatusPill>
+      </div>
+      <div className="flex items-center gap-xs border-l border-line-soft pl-md">
+        <IconButton disabled={!undoAvailable} onClick={undoLatest} title="Undo" kbd="⌘Z">
+          <Undo2 size={16} aria-hidden="true" />
+        </IconButton>
+        <IconButton disabled={!redoAvailable} onClick={redoLatest} title="Redo" kbd="⌘⇧Z">
+          <Redo2 size={16} aria-hidden="true" />
+        </IconButton>
+      </div>
+      <div className="flex min-w-0 items-center gap-sm border-l border-line-soft pl-md">
+        <IconButton
+          title="Preview generated code"
+          onClick={() => {
+            onOpenCodePanel();
+            setStatus("Previewing generated code");
+            void requestCodegen("preview");
+          }}
+          disabled={codegenBusy || !hasFocusedRoot}
+        >
+          <Play size={14} aria-hidden="true" />
+        </IconButton>
+        <Button
+          variant="primary"
+          disabled={codegenBusy || !hasFocusedRoot}
+          title="Sync generated files"
+          onClick={() => void requestCodegen("sync")}
+        >
+          <Save size={14} aria-hidden="true" /> Sync
+        </Button>
+      </div>
+    </header>
+  );
+}
+
+/** The one-line status readout. Its own subscriber so the near-constant status
+ *  churn (every tool action sets it) never re-renders the shell. */
+function StatusStrip() {
+  const status = useWorkspaceStore((s) => s.status);
+  return (
+    <div className="studio-chrome flex h-7 flex-none items-center gap-sm border-t border-line bg-chrome px-md text-xs text-ink-dim">
+      <span className="truncate">{status}</span>
+    </div>
+  );
+}
+
+/** Persistent error notices. Confirmations stay in the status strip; failures
+ *  stack here until dismissed so they can't scroll past unseen. */
+function Toasts() {
+  const toasts = useWorkspaceStore((s) => s.toasts);
+  const dismiss = useWorkspaceStore((s) => s.dismissToast);
+  if (toasts.length === 0) return null;
+  return (
+    <div className="studio-chrome fixed bottom-10 right-4 z-50 flex w-80 flex-col gap-xs">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          role="alert"
+          className="flex items-start gap-sm rounded-sm border border-amber/50 bg-chrome p-sm shadow-popover"
+        >
+          <AlertTriangle size={14} aria-hidden="true" className="mt-px shrink-0 text-amber" />
+          <div className="min-w-0 flex-1 break-words text-xs text-ink">{toast.message}</div>
+          <button
+            type="button"
+            title="Dismiss"
+            onClick={() => dismiss(toast.id)}
+            className="shrink-0 text-ink-faint transition-colors hover:text-ink"
+          >
+            <X size={13} aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const RIGHT_COLUMN_WIDTH_KEY = "rn-canvas.rightColumnWidth";
+const RIGHT_COLUMN_MIN = 300;
+const RIGHT_COLUMN_MAX = 640;
+
+function readStoredRightColumnWidth(): number {
+  try {
+    const raw = Number(window.localStorage.getItem(RIGHT_COLUMN_WIDTH_KEY));
+    if (Number.isFinite(raw) && raw >= RIGHT_COLUMN_MIN && raw <= RIGHT_COLUMN_MAX) return raw;
+  } catch {
+    /* storage unavailable */
+  }
+  return layout.rightColumn;
+}
+
+function ChangesTimeline({ onOpenCode }: { onOpenCode: () => void }) {
+  const gitStatus = useWorkspaceStore((s) => s.gitStatus);
+  const repoPath = useWorkspaceStore((s) => s.repoPath);
+  const repoContext = useWorkspaceStore((s) => s.repoContext);
+  const onRefresh = useWorkspaceStore((s) => s.refreshGitStatus);
   const entries: Array<{
     id: string;
     label: string;
@@ -1148,39 +1015,42 @@ function ChangesTimeline({
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
-  const codegenBusyRef = useRef(false);
-  const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const skipCodeSyncRef = useRef(false);
-  const skipNextPathSyncRef = useRef(false);
-  const managedDocumentRef = useRef(false);
-  const syncRootIdRef = useRef<NodeId | null>(null);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
+  const pendingFlowManifestRef = useRef<FlowManifest | null>(null);
+  const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
 
-  const [status, setStatus] = useState("Drag a frame · resize from handles · add from the toolbar");
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
-  const [flows, setFlows] = useState<FlowDefinition[]>(DEFAULT_FLOWS);
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
-  const [flowEntrypoints, setFlowEntrypoints] = useState<Partial<Record<FlowId, NodeId>>>({});
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
-  const [screenName, setScreenName] = useState("Screen");
-  const [targetPath, setTargetPath] = useState("generated/Screen.tsx");
-  const [sidecarPath, setSidecarPath] = useState("generated/Screen.rncanvas.json");
-  const [codegenResult, setCodegenResult] = useState<CodegenResult | null>(null);
-  const [activeArtifactId, setActiveArtifactId] = useState("screen");
-  const [codegenError, setCodegenError] = useState<string | null>(null);
-  const [codegenBusy, setCodegenBusy] = useState(false);
-  const [syncState, setSyncState] = useState<SyncState>({ status: "idle" });
-  const [gitStatus, setGitStatus] = useState<GitStatus>({ status: "loading" });
-  const [repoPath, setRepoPath] = useState("");
-  const [repoDraft, setRepoDraft] = useState("");
-  const [repoError, setRepoError] = useState<string | null>(null);
-  const [repoBusy, setRepoBusy] = useState(false);
-  const [repoContext, setRepoContext] = useState<RepoContext | null>(null);
-  const [canvasCanUndo, setCanvasCanUndo] = useState(false);
-  const [canvasCanRedo, setCanvasCanRedo] = useState(false);
+  const [rightColumnWidth, setRightColumnWidth] = useState(readStoredRightColumnWidth);
+
+  // Workspace slices App itself renders or orchestrates. Panels that own their
+  // display state (CodePanel, ChangesTimeline, TopBar, StatusStrip) subscribe
+  // to the workspace store directly — status/sync/codegen churn stays out of
+  // the shell render.
+  const gitStatus = useWorkspaceStore((s) => s.gitStatus);
+  const repoContext = useWorkspaceStore((s) => s.repoContext);
+  const sidecarPath = useWorkspaceStore((s) => s.sidecarPath);
+  const activeRepoScreen = useWorkspaceStore((s) => s.activeRepoScreen);
+  const loadedRepoScreens = useWorkspaceStore((s) => s.loadedRepoScreens);
+  const flowsById = useWorkspaceStore((s) => s.flowsById);
+  const flowOrder = useWorkspaceStore((s) => s.flowOrder);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
+  const setActiveRepoScreen = useWorkspaceStore((s) => s.setActiveRepoScreen);
+  const refreshGitStatus = useWorkspaceStore((s) => s.refreshGitStatus);
+  const loadRepo = useWorkspaceStore((s) => s.loadRepo);
+  const loadCanvasManifest = useWorkspaceStore((s) => s.loadCanvasManifest);
+  const applyFlowManifestToStore = useWorkspaceStore((s) => s.applyFlowManifest);
+  const updateStoredFlowRoutes = useWorkspaceStore((s) => s.updateFlowRoutes);
+  const hydrateRepoFlows = useWorkspaceStore((s) => s.hydrateRepoFlows);
+  const upsertStoredFlow = useWorkspaceStore((s) => s.upsertFlow);
+  const removeStoredFlow = useWorkspaceStore((s) => s.removeFlow);
+  const openSidecar = useWorkspaceStore((s) => s.openSidecar);
+  const importSource = useWorkspaceStore((s) => s.importSource);
+  const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
 
   // The document store's selection is the single source of truth. The focused
   // frame is *derived* from it (the root whose subtree holds the selection), and
@@ -1198,29 +1068,91 @@ export default function App() {
     [roots, selection],
   );
   const focusedRootId = focusedRoot?.id ?? null;
-  const artifacts = useMemo(() => codeArtifacts(codegenResult), [codegenResult]);
+  const flows = useMemo(
+    () => flowOrder.flatMap((id) => (flowsById[id] ? [flowsById[id]] : [])),
+    [flowOrder, flowsById],
+  );
   const flowPanelItems = useMemo<FlowPanelItem[]>(() => {
     const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
     return flows.map((flow) => ({
       id: flow.id,
       label: flow.label,
-      screenCount: flowScreens(screenRoots, flow.id).length,
+      screenCount: flowRouteScreens(screenRoots, flow.id, flow.routes).length,
     }));
   }, [editingComponentId, flows, roots]);
   const repoFlowItems = useMemo(
     () => repoFlowItemsForContext(repoContext),
     [repoContext],
   );
-  const activeArtifact =
-    artifacts.find((artifact) => artifact.id === activeArtifactId) ?? artifacts[0] ?? null;
   if (focusedRootId && focusedRootId !== editingComponentId) {
-    syncRootIdRef.current = focusedRootId;
+    setSyncRootHint(focusedRootId);
   }
-  const screenNameRef = useRef(screenName);
-  const targetPathRef = useRef(targetPath);
-  const pathSyncSignatureRef = useRef(`${screenName}|${targetPath}`);
-  screenNameRef.current = screenName;
-  targetPathRef.current = targetPath;
+
+  useEffect(() => {
+    if (!activeRepoScreen || roots[activeRepoScreen.rootId]) return;
+    setActiveRepoScreen(null);
+  }, [activeRepoScreen, roots, setActiveRepoScreen]);
+
+  useEffect(() => {
+    for (const flow of repoFlowItems) {
+      for (const screen of flow.screens) {
+        if (!screen.sidecarPath || repoFlowAutoloadedRef.current.has(screen.sidecarPath)) continue;
+        repoFlowAutoloadedRef.current.add(screen.sidecarPath);
+        void openSidecar(screen.sidecarPath, "merge");
+      }
+    }
+  }, [openSidecar, repoFlowItems]);
+
+  useEffect(() => {
+    const rootForPath = new Map<string, NodeId>();
+    for (const loaded of Object.values(loadedRepoScreens)) {
+      rootForPath.set(loaded.path, loaded.rootId);
+      if (loaded.sidecarPath) rootForPath.set(loaded.sidecarPath, loaded.rootId);
+    }
+    const repoFlows = repoFlowItems.flatMap((flow): FlowDefinition[] => {
+      const routes = flow.screens
+        .map((screen) => rootForPath.get(screen.path) ?? (screen.sidecarPath ? rootForPath.get(screen.sidecarPath) : undefined))
+        .filter((rootId): rootId is NodeId => !!rootId);
+      if (routes.length !== flow.screens.length) return [];
+      const rootByScreenPath = new Map(
+        flow.screens.map((screen, index) => [screen.path, routes[index]] as const),
+      );
+      return [{
+        id: flow.id,
+        label: flow.name,
+        description: flow.description,
+        routes,
+        entryRootId: flow.entryPath ? rootByScreenPath.get(flow.entryPath) : routes[0],
+        edges: flow.edges
+          .map((edge) => {
+            const fromRootId = rootByScreenPath.get(edge.fromPath);
+            const to = rootByScreenPath.get(edge.toPath);
+            return fromRootId && to
+              ? {
+                  from: { rootId: fromRootId, anchorNodeId: edge.anchorNodeId },
+                  to,
+                  kind: edge.kind,
+                  condition: edge.condition,
+                }
+              : null;
+          })
+          .filter((edge): edge is FlowDefinition["edges"][number] => !!edge),
+      }];
+    });
+    hydrateRepoFlows(repoFlows);
+  }, [hydrateRepoFlows, loadedRepoScreens, repoFlowItems]);
+
+  // Canvas-side effects for repo document opens: focus the new frame and clear
+  // tldraw's (inert) history.
+  useEffect(() => {
+    registerStudioHooks({
+      onRepoDocumentOpened: (rootId) => {
+        pendingFocusRootIdRef.current = rootId;
+        editorRef.current?.clearHistory();
+      },
+    });
+    return initWorkspaceSubscriptions();
+  }, []);
 
   const canUndo = useDocumentStore((s) => s.past.length > 0);
   const canRedo = useDocumentStore((s) => s.future.length > 0);
@@ -1239,265 +1171,69 @@ export default function App() {
     const hasManualFlow = flows.some((flow) => flow.id === activeFlow);
     const hasRepoFlow = repoFlowItems.some((flow) => flow.id === activeFlow);
     if (!hasManualFlow && !hasRepoFlow) {
-      setActiveFlow(flows[0].id);
+      setActiveFlow(flows[0].id as FlowId);
     }
   }, [activeFlow, flows, repoFlowItems]);
 
+  const applyFlowManifest = useCallback((body: FlowManifest) => {
+    const state = useDocumentStore.getState();
+    const screenRoots = Object.values(state.roots).filter(
+      (root) => root.id !== state.editingComponentId,
+    );
+    const hasRoutes = body.flows.some(
+      (flow) => Array.isArray(flow.routes) && flow.routes.length > 0,
+    );
+    if (hasRoutes && screenRoots.length === 0) {
+      pendingFlowManifestRef.current = body;
+      return;
+    }
+    pendingFlowManifestRef.current = null;
+    applyFlowManifestToStore(body);
+    const firstFlowId = body.flows[0]?.id;
+    if (firstFlowId) {
+      setActiveFlow((current) =>
+        body.flows.some((flow) => flow.id === current) ? current : (firstFlowId as FlowId),
+      );
+    }
+  }, [applyFlowManifestToStore]);
+
   useEffect(() => {
-    if (artifacts.length && !artifacts.some((artifact) => artifact.id === activeArtifactId)) {
-      setActiveArtifactId(artifacts[0].id);
-    }
-  }, [activeArtifactId, artifacts]);
-
-  const refreshGitStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/git/status");
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      if (body.repoPath) {
-        setRepoPath(body.repoPath);
-        setRepoDraft((draft) => draft || body.repoPath);
-      }
-      setGitStatus({
-        status: "ready",
-        repoPath: body.repoPath ?? repoPath,
-        branch: body.branch ?? "unknown",
-        clean: !!body.clean,
-        files: Array.isArray(body.files) ? body.files : [],
-      });
-    } catch (error) {
-      setGitStatus({
-        status: "error",
-        message: error instanceof Error ? error.message : "Git status failed",
-      });
-    }
-  }, [repoPath]);
-
-  const loadRepo = useCallback(async () => {
-    try {
-      const res = await fetch("/api/repo");
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      setRepoPath(body.repoPath ?? "");
-      setRepoDraft(body.repoPath ?? "");
-      setRepoContext(body.context ?? null);
-    } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "Repository load failed");
-    }
-  }, []);
-
-  const loadRepoContext = useCallback(async () => {
-    try {
-      const res = await fetch("/api/repo/context");
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      setRepoContext(body.context ?? body);
-    } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "Repository scan failed");
-    }
-  }, []);
-
-  const applyConnectedRepo = useCallback(
-    async (body: {
-      repoPath?: string;
-      git?: Partial<Extract<GitStatus, { status: "ready" }>>;
-      context?: RepoContext;
-    }, fallbackPath = repoDraft) => {
-      const nextPath = body.repoPath ?? fallbackPath;
-      setRepoPath(nextPath);
-      setRepoDraft(nextPath);
-      if (body.git) {
-        setGitStatus({
-          status: "ready",
-          repoPath: body.git.repoPath ?? nextPath,
-          branch: body.git.branch ?? "unknown",
-          clean: !!body.git.clean,
-          files: Array.isArray(body.git.files) ? body.git.files : [],
-        });
-      } else {
-        await refreshGitStatus();
-      }
-      if (body.context) setRepoContext(body.context);
-      else await loadRepoContext();
-      skipNextPathSyncRef.current = true;
-      managedDocumentRef.current = false;
-      const target = body.context?.designSession?.syncTarget ?? body.git?.branch ?? "current branch";
-      setStatus(`Connected ${nextPath} · open a screen to edit ${target}`);
-    },
-    [loadRepoContext, refreshGitStatus, repoDraft],
-  );
-
-  const connectRepo = useCallback(async () => {
-    if (codegenBusyRef.current) {
-      const message = "Wait for the current sync to finish before changing repositories.";
-      setRepoError(message);
-      setStatus(message);
-      return;
-    }
-    if (autoSyncTimerRef.current) {
-      clearTimeout(autoSyncTimerRef.current);
-      autoSyncTimerRef.current = null;
-    }
-    skipNextPathSyncRef.current = true;
-    setSyncState({ status: "idle" });
-    setRepoBusy(true);
-    setRepoError(null);
-    try {
-      const res = await fetch("/api/repo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repoPath: repoDraft }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      await applyConnectedRepo(body, repoDraft);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Repository connection failed";
-      setRepoError(message);
-      setStatus(message);
-    } finally {
-      setRepoBusy(false);
-    }
-  }, [applyConnectedRepo, repoDraft]);
-
-  const selectRepoFolder = useCallback(async () => {
-    if (codegenBusyRef.current) {
-      const message = "Wait for the current sync to finish before changing repositories.";
-      setRepoError(message);
-      setStatus(message);
-      return;
-    }
-    if (autoSyncTimerRef.current) {
-      clearTimeout(autoSyncTimerRef.current);
-      autoSyncTimerRef.current = null;
-    }
-    skipNextPathSyncRef.current = true;
-    setSyncState({ status: "idle" });
-    setRepoBusy(true);
-    setRepoError(null);
-    try {
-      const res = await fetch("/api/repo/select-folder", { method: "POST" });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      await applyConnectedRepo(body, repoDraft);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Folder selection failed";
-      setRepoError(message);
-      setStatus(message);
-    } finally {
-      setRepoBusy(false);
-    }
-  }, [applyConnectedRepo, repoDraft]);
+    if (!pendingFlowManifestRef.current) return;
+    const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+    if (screenRoots.length === 0) return;
+    applyFlowManifest(pendingFlowManifestRef.current);
+  }, [applyFlowManifest, editingComponentId, roots]);
 
   const loadFlowManifest = useCallback(async () => {
     try {
       const res = await fetch("/api/flows");
       const body = (await res.json()) as FlowManifest & { error?: string };
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const next: Partial<Record<FlowId, NodeId>> = {};
-      const manifestFlows = Array.isArray(body.flows)
-        ? body.flows
-            .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
-            .map((flow) => ({ id: flow.id, label: flow.label }))
-        : [];
-      for (const flow of body.flows ?? []) {
-        if (flow.entryRootId) next[flow.id] = flow.entryRootId;
-      }
-      if (manifestFlows.length > 0) {
-        setFlows(manifestFlows);
-        setActiveFlow((current) =>
-          manifestFlows.some((flow) => flow.id === current) ? current : manifestFlows[0].id,
-        );
-      }
-      setFlowEntrypoints(next);
+      applyFlowManifest(body);
     } catch {
       // A missing flow manifest is fine; flows start from inferred screen order.
     }
-  }, []);
-
-  const persistFlowManifest = useCallback(
-    async (
-      nextFlows: FlowDefinition[] = flows,
-      entrypoints: Partial<Record<FlowId, NodeId>> = flowEntrypoints,
-    ) => {
-      const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
-      const manifest: FlowManifest = {
-        version: 1,
-        flows: nextFlows.map((flow) => {
-          const routeScreens = orderedFlowScreens(
-            flowScreens(screenRoots, flow.id),
-            entrypoints[flow.id],
-          );
-          const entry = routeScreens[0];
-          return {
-            id: flow.id,
-            label: flow.label,
-            entryRootId: entry?.id,
-            entryName: entry?.design?.name,
-            routes: routeScreens.map((root, index) => ({
-              rootId: root.id,
-              name: root.design?.name ?? `Screen ${index + 1}`,
-            })),
-          };
-        }),
-      };
-      const res = await fetch("/api/flows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manifest }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      void refreshGitStatus();
-      void loadRepoContext();
-    },
-    [editingComponentId, flowEntrypoints, flows, loadRepoContext, refreshGitStatus, roots],
-  );
+  }, [applyFlowManifest]);
 
   useEffect(() => {
     void loadRepo();
     void refreshGitStatus();
     void loadFlowManifest();
-    const timer = setInterval(() => void refreshGitStatus(), 5_000);
-    return () => clearInterval(timer);
-  }, [loadFlowManifest, loadRepo, refreshGitStatus]);
-
-  // Single-writer canonical token file (Phase 2D-2b): the tool writes `theme.ts`
-  // beside the sidecar whenever the token registry changes. Debounced and
-  // fire-and-forget — token edits are occasional and this never touches the canvas
-  // interaction hot path (it fires only when the `tokens` slice reference changes).
-  const sidecarPathRef = useRef(sidecarPath);
-  sidecarPathRef.current = sidecarPath;
-  // Set just before a `loadRoots` so the writer does NOT echo a freshly *read*
-  // registry back to disk (which would clobber the file we just loaded — e.g. the
-  // empty seed registry overwriting an existing theme.ts on app start).
-  const skipTokenWriteRef = useRef(false);
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let lastTokens = useDocumentStore.getState().tokens;
-    const unsubscribe = useDocumentStore.subscribe((state) => {
-      if (state.tokens === lastTokens) return;
-      lastTokens = state.tokens;
-      if (skipTokenWriteRef.current) {
-        skipTokenWriteRef.current = false; // this change was a load, not an edit
-        return;
-      }
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        const path = sidecarPathRef.current;
-        if (!path) return;
-        void fetch("/api/tokens/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sidecarPath: path, tokens: useDocumentStore.getState().tokens }),
-        }).catch(() => {});
-      }, 400);
-    });
-    return () => {
-      if (timer) clearTimeout(timer);
-      unsubscribe();
+    void loadCanvasManifest();
+    // Poll git only while the tab is visible; refresh once on return so a
+    // backgrounded Studio doesn't spawn a git subprocess every 5s.
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void refreshGitStatus();
+    }, 5_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshGitStatus();
     };
-  }, []);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [loadCanvasManifest, loadFlowManifest, loadRepo, refreshGitStatus]);
 
   const onMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
@@ -1507,11 +1243,13 @@ export default function App() {
 
     const store = useDocumentStore.getState();
     if (Object.keys(store.roots).length === 0) {
-      const seed = createScreenFrame([
-        createNode("Text", { props: { text: "Hello RN Canvas" } }),
-      ]);
-      skipTokenWriteRef.current = true; // seed load — don't write theme.ts
-      skipCodeSyncRef.current = true; // seed load — don't write generated files
+      const seed = createScreenFrame(
+        [createNode("Text", { props: { text: "Hello RN Canvas" } })],
+        nextScreenName(Object.values(store.roots)),
+      );
+      workspaceFlags.skipTokenWrite = true; // seed load — don't write theme.ts
+      workspaceFlags.skipCodeSync = true; // seed load — don't write generated files
+      useWorkspaceStore.getState().setActiveRepoScreen(null);
       store.loadRoots({ [seed.id]: seed }, [seed.id]);
     }
     syncShapes(editor);
@@ -1535,33 +1273,27 @@ export default function App() {
       { scope: "session" },
     );
 
-    const updateCanvasHistory = () => {
-      setCanvasCanUndo(editor.getCanUndo());
-      setCanvasCanRedo(editor.getCanRedo());
-    };
-    editor.store.listen(updateCanvasHistory, { scope: "document" });
-    updateCanvasHistory();
   }, []);
 
-  const undoAvailable = canUndo || canvasCanUndo || hasActiveInteraction;
-  const redoAvailable = canRedo || canvasCanRedo;
+  // The document store is the single undo history — frame moves live there too
+  // (framePositions), so tldraw's own history never surfaces in the UI.
+  const undoAvailable = canUndo || hasActiveInteraction;
+  const redoAvailable = canRedo;
 
   const undoLatest = useCallback(() => {
     const store = useDocumentStore.getState();
     if (store.interaction) store.commitInteraction();
     if (useDocumentStore.getState().canUndo()) undo();
-    else if (editorRef.current) stepCanvasHistory(editorRef.current, "undo");
   }, [undo]);
 
   const redoLatest = useCallback(() => {
     if (useDocumentStore.getState().canRedo()) redo();
-    else if (editorRef.current) stepCanvasHistory(editorRef.current, "redo");
   }, [redo]);
 
   const resetCanvasHistory = useCallback(() => {
+    // tldraw history is inert (never user-facing); clear it on document loads so
+    // it can't accumulate across sessions.
     editorRef.current?.clearHistory();
-    setCanvasCanUndo(false);
-    setCanvasCanRedo(false);
   }, []);
 
   const createToken = useCallback((category: "color" | "spacing" | "fontSize") => {
@@ -1596,41 +1328,107 @@ export default function App() {
     setStatus("Showing changes");
   }, []);
 
-  const setFlowEntryRoot = useCallback((rootId: NodeId) => {
-    setFlowEntrypoints((current) => {
-      const next = { ...current, [activeFlow]: rootId };
-      void persistFlowManifest(flows, next).then(
-        () => setStatus("Updated flow entrypoint"),
-        (error) =>
-          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+  const updateFlowRoutes = useCallback(
+    (
+      updater: (current: NodeId[] | undefined, screens: Node[]) => NodeId[],
+      status: string,
+    ) => {
+      const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
+      const current = flowsById[activeFlow]?.routes;
+      const nextRouteIds = updater(current, screenRoots);
+      void updateStoredFlowRoutes(activeFlow, nextRouteIds, screenRoots).then(
+        () => setStatus(status),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
-      return next;
-    });
-  }, [activeFlow, flows, persistFlowManifest]);
+    },
+    [activeFlow, editingComponentId, flowsById, roots, updateStoredFlowRoutes],
+  );
+
+  const addScreenToFlow = useCallback(
+    (rootId: NodeId) => {
+      updateFlowRoutes(
+        (current, screenRoots) => addFlowRoute(screenRoots, activeFlow, current, rootId),
+        "Added screen to flow",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
+
+  const removeScreenFromFlow = useCallback(
+    (rootId: NodeId) => {
+      updateFlowRoutes(
+        (current, screenRoots) => removeFlowRoute(screenRoots, activeFlow, current, rootId),
+        "Removed screen from flow",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
+
+  const moveScreenInFlow = useCallback(
+    (rootId: NodeId, offset: -1 | 1) => {
+      updateFlowRoutes(
+        (current, screenRoots) => reorderFlowRoute(screenRoots, activeFlow, current, rootId, offset),
+        "Updated flow order",
+      );
+    },
+    [activeFlow, updateFlowRoutes],
+  );
 
   const addFlow = useCallback(() => {
-    setFlows((current) => {
-      const labelBase = "New Flow";
-      const takenLabels = new Set(current.map((flow) => flow.label));
-      let label = labelBase;
-      for (let i = 2; takenLabels.has(label); i += 1) label = `${labelBase} ${i}`;
-      const nextFlow: FlowDefinition = {
-        id: slugFlowId(label, new Set(current.map((flow) => flow.id))),
-        label,
-        description: "Prototype route order for this screen group.",
-      };
-      const next = [...current, nextFlow];
-      void persistFlowManifest(next, flowEntrypoints).then(
-        () => setStatus(`Added ${label}`),
-        (error) =>
-          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+    const labelBase = "New Flow";
+    const takenLabels = new Set(flows.map((flow) => flow.label));
+    let label = labelBase;
+    for (let i = 2; takenLabels.has(label); i += 1) label = `${labelBase} ${i}`;
+    const nextFlow: FlowDefinition = {
+      id: slugFlowId(label, new Set(flows.map((flow) => flow.id))),
+      label,
+      description: "Prototype route order for this screen group.",
+      routes: [],
+      edges: [],
+    };
+    void upsertStoredFlow(nextFlow).then(
+      () => setStatus(`Added ${label}`),
+      (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+    );
+    setActiveFlow(nextFlow.id as FlowId);
+    setPendingRemoveFlowId(null);
+    setWorkspace("Flow");
+  }, [flows, upsertStoredFlow]);
+
+  const renameFlow = useCallback(
+    (flowId: FlowId, label: string) => {
+      const nextLabel = label.trim();
+      if (!nextLabel) {
+        setStatus("Flow name required");
+        return false;
+      }
+      const currentFlow = flows.find((flow) => flow.id === flowId);
+      if (!currentFlow || currentFlow.label === nextLabel) return false;
+      const duplicate = flows.some(
+        (flow) => flow.id !== flowId && flow.label.toLowerCase() === nextLabel.toLowerCase(),
       );
-      setActiveFlow(nextFlow.id);
-      setPendingRemoveFlowId(null);
-      setWorkspace("Flow");
-      return next;
-    });
-  }, [flowEntrypoints, persistFlowManifest]);
+      if (duplicate) {
+        setStatus("Flow name already exists");
+        return false;
+      }
+      void upsertStoredFlow({ ...currentFlow, label: nextLabel }).then(
+        () => setStatus(`Renamed flow to ${nextLabel}`),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+      return true;
+    },
+    [flows, upsertStoredFlow],
+  );
+
+  const updateFlowDefinition = useCallback(
+    (flow: FlowDefinition, status: string) => {
+      void upsertStoredFlow(flow).then(
+        () => setStatus(status),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+    },
+    [setStatus, upsertStoredFlow],
+  );
 
   const removeFlow = useCallback(
     (flow: FlowPanelItem) => {
@@ -1639,31 +1437,35 @@ export default function App() {
         return;
       }
       const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
-      const screenCount = flow.screenCount ?? flowScreens(screenRoots, flow.id).length;
+      const screenCount =
+        flow.screenCount ?? flowRouteScreens(screenRoots, flow.id, flowsById[flow.id]?.routes).length;
       if (screenCount > 1 && pendingRemoveFlowId !== flow.id) {
         setPendingRemoveFlowId(flow.id);
         setStatus(`Confirm removal of ${flow.label}`);
         return;
       }
       const nextFlows = flows.filter((item) => item.id !== flow.id);
-      const nextEntrypoints = { ...flowEntrypoints };
-      delete nextEntrypoints[flow.id];
       const nextActiveFlow = activeFlow === flow.id ? nextFlows[0]?.id : activeFlow;
       if (!nextActiveFlow) {
         setStatus("Keep at least one flow.");
         return;
       }
-      setFlows(nextFlows);
-      setFlowEntrypoints(nextEntrypoints);
       setPendingRemoveFlowId(null);
-      setActiveFlow(nextActiveFlow);
-      void persistFlowManifest(nextFlows, nextEntrypoints).then(
+      setActiveFlow(nextActiveFlow as FlowId);
+      void removeStoredFlow(flow.id).then(
         () => setStatus(`Removed ${flow.label}`),
-        (error) =>
-          setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
       );
     },
-    [activeFlow, editingComponentId, flowEntrypoints, flows, pendingRemoveFlowId, persistFlowManifest, roots],
+    [
+      activeFlow,
+      editingComponentId,
+      flowsById,
+      flows,
+      pendingRemoveFlowId,
+      removeStoredFlow,
+      roots,
+    ],
   );
 
   // Store → canvas: keep the focused frame selected on the canvas. Guarded so it
@@ -1803,23 +1605,17 @@ export default function App() {
       }
 
       if (modifier && event.key.toLowerCase() === "z") {
+        // Always intercept: the document store owns the only undo history, and
+        // letting tldraw's shortcut fire would replay its (inert) shape records
+        // against store-owned frame positions.
+        event.preventDefault();
+        event.stopImmediatePropagation();
         const redoRequested = event.shiftKey;
-        const documentAvailable = redoRequested ? store.canRedo() : store.canUndo();
-        const editor = editorRef.current;
-        const canvasAvailable = editor
-          ? redoRequested
-            ? editor.getCanRedo()
-            : editor.getCanUndo()
-          : false;
-        if (documentAvailable || canvasAvailable) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          if (documentAvailable) {
-            if (redoRequested) store.redo();
-            else store.undo();
-          } else {
-            stepCanvasHistory(editor!, redoRequested ? "redo" : "undo");
-          }
+        if (store.interaction) store.commitInteraction();
+        const live = useDocumentStore.getState();
+        if (redoRequested ? live.canRedo() : live.canUndo()) {
+          if (redoRequested) live.redo();
+          else live.undo();
           setStatus(redoRequested ? "Redid change" : "Undid change");
         }
         return;
@@ -1841,12 +1637,69 @@ export default function App() {
       }
 
       // In Yoga flow, arrow keys reorder along the parent's visual flex axis.
-      // Absolute children keep the normal positional model and are not reordered.
+      // Absolute children keep the positional model: arrows nudge 1px (Shift 10px).
       if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
         const focused = findRootContaining(Object.values(store.roots), store.selection[0] ?? "");
         const nodeIds = focused
           ? normalizeNodeSelection(focused, store.selection, { excludeRoot: true })
           : [];
+        const absoluteIds = focused
+          ? nodeIds.filter((id) => {
+              const candidate = findNode(focused, id);
+              return candidate?.style.position === "absolute" && !candidate.design?.locked;
+            })
+          : [];
+        if (focused && absoluteIds.length > 0) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const step = event.shiftKey ? 10 : 1;
+          const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+          const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+          const snapshot = useStudioStore.getState().layouts[focused.id]?.snapshot;
+          store.beginInteraction();
+          try {
+            for (const id of absoluteIds) {
+              const node = findNode(focused, id);
+              if (!node) continue;
+              // Backfill unset start pins from the last layout so a nudge moves
+              // from the rendered position instead of jumping toward 0 (same
+              // backfill the canvas group drag does in LayerOverlay).
+              const style = { ...node.style };
+              const box = snapshot?.get(id)?.[0];
+              const parent = getParent(focused, id);
+              const parentBox = parent ? snapshot?.get(parent.id)?.[0] : undefined;
+              if (box && parentBox) {
+                const borderLeft =
+                  parent?.style.borderLeftWidth ?? parent?.style.borderWidth ?? 0;
+                const borderTop =
+                  parent?.style.borderTopWidth ?? parent?.style.borderWidth ?? 0;
+                if (
+                  absoluteConstraintMode(style, "horizontal") === "start" &&
+                  style.left === undefined
+                ) {
+                  style.left = box.left - parentBox.left - borderLeft;
+                }
+                if (
+                  absoluteConstraintMode(style, "vertical") === "start" &&
+                  style.top === undefined
+                ) {
+                  style.top = box.top - parentBox.top - borderTop;
+                }
+              }
+              useDocumentStore.getState().updateStyle(focused.id, id, {
+                ...(dx !== 0 ? absoluteMovePatch(style, "horizontal", dx) : {}),
+                ...(dy !== 0 ? absoluteMovePatch(style, "vertical", dy) : {}),
+              });
+            }
+            useDocumentStore.getState().commitInteraction();
+          } catch {
+            useDocumentStore.getState().cancelInteraction();
+          }
+          setStatus(
+            `Nudged ${absoluteIds.length} layer${absoluteIds.length === 1 ? "" : "s"}`,
+          );
+          return;
+        }
         const node = focused && nodeIds.length === 1 ? findNode(focused, nodeIds[0]) : undefined;
         const parent = focused && node ? getParent(focused, node.id) : undefined;
         if (focused && node && parent && node.style.position !== "absolute") {
@@ -1975,13 +1828,70 @@ export default function App() {
     }
   }, [roots]);
 
+  // Mirror store-owned frame positions → shapes (undo/redo, canvas.json load).
+  // An imperative subscription, not an effect on framePositions: live drags
+  // write positions per pointermove and must not re-render the whole shell.
+  // During a drag tldraw has already moved the shape, so the equality guard
+  // makes this a no-op until an undo/redo or external load changes positions.
+  useEffect(() => {
+    let last = useDocumentStore.getState().framePositions;
+    const unsubscribe = useDocumentStore.subscribe((state) => {
+      if (state.framePositions === last) return;
+      last = state.framePositions;
+      const editor = editorRef.current;
+      if (!editor) return;
+      reconcilingShapesRef.current = true;
+      try {
+        editor.run(
+          () => {
+            for (const shape of editor.getCurrentPageShapes()) {
+              if (!isFrame(shape)) continue;
+              const position = state.framePositions[asFrame(shape).props.rootId];
+              if (!position) continue;
+              if (
+                Math.abs(shape.x - position.x) > 0.01 ||
+                Math.abs(shape.y - position.y) > 0.01
+              ) {
+                editor.updateShape({
+                  id: shape.id,
+                  type: FRAME_TYPE,
+                  x: position.x,
+                  y: position.y,
+                } as unknown as UpdatePartial);
+              }
+            }
+          },
+          { history: "ignore", ignoreShapeLock: true },
+        );
+      } finally {
+        reconcilingShapesRef.current = false;
+      }
+    });
+    return unsubscribe;
+  }, []);
+
   const addFrame = useCallback(() => {
-    const root = createScreenFrame();
     const store = useDocumentStore.getState();
+    const root = createScreenFrame([], nextScreenName(Object.values(store.roots)));
     pendingFocusRootIdRef.current = root.id;
+    setActiveRepoScreen(null);
     store.addRoot(root);
     store.setSelection([root.id]);
+    return root;
   }, []);
+
+  const addFrameToActiveFlow = useCallback(() => {
+    const root = addFrame();
+    const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
+      (item) => item.id !== useDocumentStore.getState().editingComponentId,
+    );
+    const current = flowsById[activeFlow]?.routes;
+    const nextRoutes = addFlowRoute(screenRoots, activeFlow, current, root.id);
+    void updateStoredFlowRoutes(activeFlow, nextRoutes, screenRoots).then(
+      () => setStatus("Added screen to flow"),
+      (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+    );
+  }, [activeFlow, addFrame, flowsById, updateStoredFlowRoutes]);
 
   const setCanvasTool = useCallback((tool: CanvasTool) => {
     useStudioStore.getState().setCanvasTool(tool);
@@ -1990,160 +1900,6 @@ export default function App() {
     setStatus(`${label} tool active`);
   }, []);
 
-  const syncRoot = useCallback(() => {
-    const state = useDocumentStore.getState();
-    const rememberedRoot = syncRootIdRef.current ? state.roots[syncRootIdRef.current] : null;
-    if (rememberedRoot && rememberedRoot.id !== state.editingComponentId) return rememberedRoot;
-    return Object.values(state.roots).find((root) => root.id !== state.editingComponentId) ?? null;
-  }, []);
-
-  const requestCodegen = useCallback(
-    async (mode: "preview" | "sync", source: "manual" | "auto" = "manual") => {
-      if (mode === "sync" && source === "auto" && !managedDocumentRef.current) {
-        setSyncState({ status: "idle" });
-        return null;
-      }
-      const root = syncRoot();
-      if (!root) {
-        const message = "Select a screen before syncing.";
-        setCodegenError(message);
-        if (mode === "sync") setSyncState({ status: "error", message });
-        setStatus(message);
-        return null;
-      }
-      if (codegenBusyRef.current) return null;
-      codegenBusyRef.current = true;
-      setCodegenBusy(true);
-      setCodegenError(null);
-      if (mode === "sync") setSyncState({ status: "syncing" });
-      try {
-        const state = useDocumentStore.getState();
-        const res = await fetch(`/api/codegen/${mode}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            root,
-            screenName: screenNameRef.current,
-            targetPath: targetPathRef.current,
-            components: state.components,
-            tokens: state.tokens,
-          }),
-        });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-        setCodegenResult(body);
-        if (source === "manual") setActiveArtifactId("screen");
-        if (mode === "sync") setSyncState({ status: "synced", path: body.targetPath });
-        if (mode === "sync") managedDocumentRef.current = true;
-        if (mode === "sync") {
-          void refreshGitStatus();
-          void loadRepoContext();
-        }
-        setStatus(
-          mode === "sync"
-            ? `${source === "auto" ? "Autosynced" : "Synced"} ${body.targetPath} + ${body.sidecarPath}`
-            : `Previewed sync for ${body.targetPath}`,
-        );
-        return body as CodegenResult;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Sync failed";
-        setCodegenError(message);
-        if (mode === "sync") setSyncState({ status: "error", message });
-        setStatus(message);
-        return null;
-      } finally {
-        codegenBusyRef.current = false;
-        setCodegenBusy(false);
-      }
-    },
-    [loadRepoContext, refreshGitStatus, syncRoot],
-  );
-
-  const openSidecar = useCallback(async (path = sidecarPath) => {
-    setCodegenBusy(true);
-    setCodegenError(null);
-    try {
-      const res = await fetch("/api/documents/open", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sidecarPath: path }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const opened = body as OpenDocumentResult;
-      // The file is the canonical token source: we just read it, so don't echo it
-      // straight back out (the writer fires only on subsequent in-tool edits).
-      skipTokenWriteRef.current = true;
-      skipCodeSyncRef.current = true;
-      skipNextPathSyncRef.current = true;
-      useDocumentStore.getState().loadRoots(
-        { [opened.root.id]: opened.root },
-        [opened.root.id],
-        opened.components,
-        opened.tokens,
-      );
-      resetCanvasHistory();
-      setScreenName(opened.screenName);
-      if (opened.repoPath) {
-        setRepoPath(opened.repoPath);
-        setRepoDraft(opened.repoPath);
-      }
-      setTargetPath(opened.targetPath);
-      setSidecarPath(opened.sidecarPath);
-      managedDocumentRef.current = true;
-      setCodegenResult(null);
-      setActiveArtifactId("screen");
-      void loadRepoContext();
-      setStatus(`Opened ${opened.sidecarPath}`);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Document load failed";
-      setCodegenError(message);
-      setStatus(message);
-    } finally {
-      setCodegenBusy(false);
-    }
-  }, [loadRepoContext, resetCanvasHistory, sidecarPath]);
-
-  const importSource = useCallback(async (path = targetPath) => {
-    setCodegenBusy(true);
-    setCodegenError(null);
-    try {
-      const res = await fetch("/api/documents/import-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourcePath: path }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const imported = body as ImportSourceResult;
-      skipTokenWriteRef.current = true; // imported document load — not a token edit
-      skipCodeSyncRef.current = true; // imported document load — not a canvas edit
-      skipNextPathSyncRef.current = true;
-      useDocumentStore.getState().loadRoots(
-        { [imported.root.id]: imported.root },
-        [imported.root.id],
-      );
-      resetCanvasHistory();
-      setScreenName(imported.screenName);
-      if (imported.repoPath) {
-        setRepoPath(imported.repoPath);
-        setRepoDraft(imported.repoPath);
-      }
-      setTargetPath(imported.sourcePath);
-      setSidecarPath(imported.sidecarPath);
-      managedDocumentRef.current = true;
-      setCodegenResult(null);
-      setActiveArtifactId("screen");
-      void loadRepoContext();
-      setStatus(`Imported ${imported.sourcePath}`);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Code import failed";
-      setCodegenError(message);
-      setStatus(message);
-    } finally {
-      setCodegenBusy(false);
-    }
-  }, [loadRepoContext, resetCanvasHistory, targetPath]);
 
   const openRepoSettings = useCallback(() => {
     setInspectorTab("Code");
@@ -2154,107 +1910,25 @@ export default function App() {
     (screen: NonNullable<RepoContext>["screens"][number]) => {
       setWorkspace("Screen");
       if (screen.sidecarPath) {
-        void openSidecar(screen.sidecarPath);
+        void openSidecar(screen.sidecarPath, "merge");
         return;
       }
-      void importSource(screen.path);
+      void importSource(screen.path, "merge");
     },
     [importSource, openSidecar],
   );
 
-  const scheduleAutoSync = useCallback(() => {
-    if (!managedDocumentRef.current) {
-      setSyncState({ status: "idle" });
-      return;
-    }
-    if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
-    setSyncState({ status: "scheduled" });
-    autoSyncTimerRef.current = setTimeout(() => {
-      autoSyncTimerRef.current = null;
-      if (codegenBusyRef.current) {
-        scheduleAutoSync();
-        return;
-      }
-      void requestCodegen("sync", "auto");
-    }, 900);
-  }, [requestCodegen]);
 
-  useEffect(() => {
-    let lastRoots = useDocumentStore.getState().roots;
-    let lastComponents = useDocumentStore.getState().components;
-    let lastTokens = useDocumentStore.getState().tokens;
-    let lastInteraction = useDocumentStore.getState().interaction;
-    let dirtyDuringInteraction = false;
-    const unsubscribe = useDocumentStore.subscribe((state) => {
-      const documentChanged =
-        state.roots !== lastRoots ||
-        state.components !== lastComponents ||
-        state.tokens !== lastTokens;
-      const interactionJustEnded = !!lastInteraction && !state.interaction;
-      lastRoots = state.roots;
-      lastComponents = state.components;
-      lastTokens = state.tokens;
-      lastInteraction = state.interaction;
-      if (interactionJustEnded && dirtyDuringInteraction) {
-        dirtyDuringInteraction = false;
-        scheduleAutoSync();
-        return;
-      }
-      if (!documentChanged) return;
-      if (skipCodeSyncRef.current) {
-        skipCodeSyncRef.current = false;
-        return;
-      }
-      if (state.interaction) {
-        dirtyDuringInteraction = true;
-        return;
-      }
-      scheduleAutoSync();
-    });
-    return () => {
-      if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
-      unsubscribe();
-    };
-  }, [scheduleAutoSync]);
 
-  useEffect(() => {
-    const signature = `${screenName}|${targetPath}`;
-    if (signature === pathSyncSignatureRef.current) return;
-    pathSyncSignatureRef.current = signature;
-    if (skipNextPathSyncRef.current) {
-      skipNextPathSyncRef.current = false;
-      return;
-    }
-    if (!Object.keys(useDocumentStore.getState().roots).length) return;
-    scheduleAutoSync();
-  }, [screenName, targetPath, scheduleAutoSync]);
-
-  const syncLabel =
-    syncState.status === "scheduled"
-      ? "Sync pending"
-      : syncState.status === "syncing"
-        ? "Syncing"
-        : syncState.status === "synced"
-          ? `Synced ${syncState.path}`
-          : syncState.status === "error"
-            ? "Sync failed"
-            : "Ready";
-  const gitLabel = gitSummary(gitStatus);
-  const gitTone =
-    gitStatus.status === "error" ? "amber" : gitStatus.status === "ready" && !gitStatus.clean ? "accent" : "neutral";
-  const syncTone =
-    syncState.status === "error" ? "amber" : syncState.status === "syncing" || syncState.status === "scheduled" ? "accent" : "neutral";
-  const repoName = repoContext?.repoName ?? "Repository";
-  const frameworkLabels = repoContext?.frameworks.map((framework) => framework.label) ?? [];
-  const syncTarget = repoContext?.designSession?.syncTarget;
-  const repoSubtitle =
-    frameworkLabels.length > 0
-      ? `${frameworkLabels.slice(0, 3).join(" · ")}${frameworkLabels.length > 3 ? ` +${frameworkLabels.length - 3}` : ""}${syncTarget ? ` · ${syncTarget}` : ""}`
-      : repoContext?.packageManager
-        ? `No app runtime detected · ${repoContext.packageManager}${syncTarget ? ` · ${syncTarget}` : ""}`
-        : "Attach a repo";
-  const repoGitCode = firstGitCode(gitStatus);
   // Read-only context crumb mirroring the active workspace (and its object where known).
+  const activeFlowDefinition = flowsById[activeFlow];
+  const flowInspectorScreens = Object.values(roots).filter((root) => root.id !== editingComponentId);
+  const flowInspectorRouteScreens = activeFlowDefinition
+    ? flowRouteScreens(flowInspectorScreens, activeFlow, activeFlowDefinition.routes)
+    : [];
+  const flowInspectorAvailableScreens = activeFlowDefinition
+    ? flowAvailableScreens(flowInspectorScreens, activeFlow, activeFlowDefinition.routes)
+    : [];
   const workspaceContext =
     workspace === "Component"
       ? `Component · ${editingComponentName ?? "Untitled"}`
@@ -2275,92 +1949,8 @@ export default function App() {
         background: color.canvas,
       }}
     >
-      {/* TOP BAR */}
-      <header
-        className="studio-chrome flex items-center gap-md border-b border-line bg-chrome px-xl"
-        style={{
-          flex: `0 0 ${layout.topbar}px`,
-          height: layout.topbar,
-        }}
-      >
-        <div className="flex min-w-0 items-center gap-xs">
-          <strong
-            className="min-w-0 truncate text-base font-semibold text-ink"
-            title={repoContext?.repoPath ? `${repoSubtitle} · ${repoContext.repoPath}` : repoSubtitle}
-          >
-            {repoName}
-          </strong>
-          {repoGitCode && (
-            <span
-              title="Repository has changes"
-              aria-label="Repository has changes"
-              className="flex size-1 shrink-0 rounded-full bg-accent"
-            />
-          )}
-          <IconButton
-            title={repoContext ? "Change connected repo" : "Connect repo"}
-            onClick={openRepoSettings}
-          >
-            <FolderOpen size={14} aria-hidden="true" />
-          </IconButton>
-        </div>
-        <span className="h-4 w-px shrink-0 bg-line-soft" aria-hidden="true" />
-        <span className="min-w-0 truncate text-xs text-ink-faint" title={workspaceContext}>
-          {workspaceContext}
-        </span>
-        <div className="ml-auto flex min-w-0 items-center gap-sm">
-          <StatusPill
-            tone={gitTone}
-            title={gitStatus.status === "error" ? gitStatus.message : gitLabel}
-          >
-            {gitLabel}
-          </StatusPill>
-          <StatusPill
-            tone={syncTone}
-            title={syncState.status === "error" ? syncState.message : syncLabel}
-          >
-            {syncLabel}
-          </StatusPill>
-        </div>
-        <div className="flex items-center gap-xs border-l border-line-soft pl-md">
-          <IconButton
-            disabled={!undoAvailable}
-            onClick={undoLatest}
-            title="Undo"
-            kbd="⌘Z"
-          >
-            <Undo2 size={16} aria-hidden="true" />
-          </IconButton>
-          <IconButton
-            disabled={!redoAvailable}
-            onClick={redoLatest}
-            title="Redo"
-            kbd="⌘⇧Z"
-          >
-            <Redo2 size={16} aria-hidden="true" />
-          </IconButton>
-        </div>
-        <div className="flex min-w-0 items-center gap-sm border-l border-line-soft pl-md">
-          <IconButton
-            title="Preview generated code"
-            onClick={() => {
-              setInspectorTab("Code");
-              void requestCodegen("preview");
-            }}
-            disabled={codegenBusy || !focusedRoot}
-          >
-            <Play size={14} aria-hidden="true" />
-          </IconButton>
-          <Button
-            variant="primary"
-            disabled={codegenBusy || !focusedRoot}
-            title="Sync generated files"
-            onClick={() => void requestCodegen("sync")}
-          >
-            <Save size={14} aria-hidden="true" /> Sync
-          </Button>
-        </div>
-      </header>
+      {/* TOP BAR (self-subscribing: git/sync pills don't re-render the shell) */}
+      <TopBar workspaceContext={workspaceContext} onOpenRepoSettings={openRepoSettings} onOpenCodePanel={() => setInspectorTab("Code")} />
 
       {/* WORKBENCH: left panel · canvas (with floating bottom toolbar) · right column */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
@@ -2379,9 +1969,11 @@ export default function App() {
           onDesignSystemViewChange={setActiveDesignSystemView}
           onOpenChanges={openChangesPanel}
           onOpenRepoScreen={openRepoScreen}
+          onFocusCanvasScreen={() => setActiveRepoScreen(null)}
           gitStatus={gitStatus}
-          targetPath={targetPath}
           sidecarPath={sidecarPath}
+          activeRepoScreen={activeRepoScreen}
+          loadedRepoScreens={loadedRepoScreens}
           repoContext={repoContext}
         />
 
@@ -2389,15 +1981,13 @@ export default function App() {
           {workspace === "Flow" ? (
             <FlowWorkspace
               roots={Object.values(roots)}
-              components={componentRegistry}
               flows={flows}
-              repoFlows={repoFlowItems}
               activeFlow={activeFlow}
-              entryRootId={flowEntrypoints[activeFlow]}
+              entryRootId={activeFlowDefinition?.entryRootId}
+              routeIds={activeFlowDefinition?.routes}
               onSelectScreen={selectScreenFromWorkspace}
-              onOpenRepoScreen={openRepoScreen}
-              onEntryRootChange={setFlowEntryRoot}
-              onAddFrame={addFrame}
+              onAddFrame={addFrameToActiveFlow}
+              onRenameFlow={renameFlow}
             />
           ) : workspace === "Design System" ? (
             <DesignSystemWorkspace
@@ -2462,289 +2052,102 @@ export default function App() {
           )}
           {/* Shared status strip — consistent across all workspaces so the canvas
               frame keeps a stable height as the workspace changes. */}
-          <div className="studio-chrome flex h-7 flex-none items-center gap-sm border-t border-line bg-chrome px-md text-xs text-ink-dim">
-            <span className="truncate">{status}</span>
-          </div>
+          <StatusStrip />
         </div>
 
-        {/* RIGHT COLUMN: canvas/code inspector. Optional native preview is on demand. */}
+        {/* RIGHT COLUMN: canvas/code inspector. Drag the divider to resize —
+            diffs want width. Width persists per browser. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize inspector"
+          title="Drag to resize"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+            const width = Math.min(
+              RIGHT_COLUMN_MAX,
+              Math.max(RIGHT_COLUMN_MIN, window.innerWidth - event.clientX),
+            );
+            setRightColumnWidth(width);
+            try {
+              window.localStorage.setItem(RIGHT_COLUMN_WIDTH_KEY, String(width));
+            } catch {
+              /* storage unavailable */
+            }
+          }}
+          onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+          className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-accent-line"
+        />
         <div
           className="studio-chrome"
           style={{
-            flex: `0 0 ${layout.rightColumn}px`,
-            width: layout.rightColumn,
+            flex: `0 0 ${rightColumnWidth}px`,
+            width: rightColumnWidth,
             borderLeft: `1px solid ${color.line}`,
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
           }}
         >
-          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-            <div style={{ padding: space.md, paddingBottom: 0 }}>
-              <div className="mb-xs flex items-center gap-xs">
-                <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
-                {inspectorTab !== "Design" && (
-                  <span className="text-2xs font-semibold text-ink-faint">
-                    {inspectorTab}
-                  </span>
-                )}
+          {workspace === "Flow" ? (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: space.md, paddingBottom: 0 }}>
+                <div className="mb-xs flex items-center gap-xs">
+                  <div className="eyebrow min-w-0 flex-1 truncate">Flow Inspector</div>
+                </div>
               </div>
-              {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
-              <Tabs
-                tabs={["Design", "Code", "History"]}
-                active={inspectorTab}
-                onSelect={setInspectorTab}
-                variant="underline"
+              <FlowInspector
+                flow={activeFlowDefinition}
+                screens={flowInspectorScreens}
+                routeScreens={flowInspectorRouteScreens}
+                availableScreens={flowInspectorAvailableScreens}
+                onSelectScreen={selectScreenFromWorkspace}
+                onAddRoute={addScreenToFlow}
+                onRemoveRoute={removeScreenFromFlow}
+                onMoveRoute={moveScreenInFlow}
+                onUpdateFlow={updateFlowDefinition}
               />
             </div>
-            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-              {inspectorTab === "Design" ? (
-                <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
-                  <Inspector rootId={focusedRootId} />
-                </ErrorBoundary>
-              ) : inspectorTab === "Code" ? (
-                <div
-                  style={{
-                    padding: space.md,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: space.md,
-                    overflow: "auto",
-                    width: "100%",
-                  }}
-                >
-                  <Eyebrow>Code</Eyebrow>
-                  <Section title="Repository">
-                    <Button
-                      className="w-full"
-                      disabled={repoBusy || codegenBusy}
-                      onClick={() => void selectRepoFolder()}
-                    >
-                      <FolderOpen size={14} aria-hidden="true" /> Select folder
-                    </Button>
-                    <Field label="Connected repo" stacked>
-                      <TextField
-                        value={repoDraft}
-                        onChange={setRepoDraft}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void connectRepo();
-                          else if (e.key === "Escape") setRepoDraft(repoPath);
-                        }}
-                        placeholder="/path/to/app"
-                        spellCheck={false}
-                      />
-                    </Field>
-                    <div className="flex gap-xs">
-                      <Button
-                        className="flex-1"
-                        disabled={repoBusy || codegenBusy || !repoDraft.trim()}
-                        onClick={() => void connectRepo()}
-                      >
-                        Connect path
-                      </Button>
-                      <IconButton
-                        title="Refresh Git status"
-                        onClick={() => void refreshGitStatus()}
-                      >
-                        <RefreshCw size={14} aria-hidden="true" />
-                      </IconButton>
-                    </div>
-                    {repoContext?.designSession && (
-                      <div className="rounded-sm border border-line-soft bg-raised px-sm py-xs text-xs text-ink-dim">
-                        <div className="flex min-w-0 justify-between gap-sm">
-                          <span className="text-ink-faint">Sync target</span>
-                          <span className="min-w-0 truncate text-ink">{repoContext.designSession.syncTarget}</span>
-                        </div>
-                        <div className="mt-1 flex min-w-0 justify-between gap-sm">
-                          <span className="text-ink-faint">Editing branch</span>
-                          <span className="min-w-0 truncate">{repoContext.designSession.suggestedBranch}</span>
-                        </div>
-                      </div>
-                    )}
-                    {repoError && (
-                      <p className="m-0 text-xs text-amber">
-                        {repoError}
-                      </p>
-                    )}
-                  </Section>
-                  <Section title="Document">
-                    <Field label="Sidecar" stacked>
-                      <TextField
-                        value={sidecarPath}
-                        onChange={setSidecarPath}
-                      />
-                    </Field>
-                    <div className="flex gap-xs">
-                      <Button
-                        className="flex-1"
-                        disabled={codegenBusy}
-                        onClick={() => void openSidecar()}
-                      >
-                        <FolderOpen size={14} aria-hidden="true" /> Open
-                      </Button>
-                      <Button
-                        className="flex-1"
-                        disabled={codegenBusy}
-                        onClick={() => void importSource()}
-                      >
-                        <RefreshCw size={14} aria-hidden="true" /> Import
-                      </Button>
-                    </div>
-                  </Section>
-                  <Section title="Output">
-                    <Field label="Screen" stacked>
-                      <TextField
-                        value={screenName}
-                        onChange={setScreenName}
-                        onBlur={() => void requestCodegen("preview")}
-                      />
-                    </Field>
-                    <Field label="Code path" stacked>
-                      <TextField
-                        value={targetPath}
-                        onChange={setTargetPath}
-                      />
-                    </Field>
-                    <div className="flex gap-xs">
-                      <Button
-                        className="flex-1"
-                        disabled={codegenBusy || !focusedRoot}
-                        onClick={() => void requestCodegen("preview")}
-                      >
-                        <FileCode2 size={14} aria-hidden="true" /> Preview
-                      </Button>
-                      <Button
-                        variant="primary"
-                        className="flex-1"
-                        disabled={codegenBusy || !focusedRoot}
-                        onClick={() => void requestCodegen("sync")}
-                      >
-                        <Save size={14} aria-hidden="true" /> Sync
-                      </Button>
-                    </div>
-                  </Section>
-                  {codegenError && (
-                    <p className="m-0 rounded-sm border border-amber/40 bg-amber/10 px-sm py-xs text-xs text-amber">
-                      {codegenError}
-                    </p>
-                  )}
-                  <div className="flex flex-col gap-xs rounded-sm border border-line bg-chrome-2 p-sm">
-                    <div className="flex items-center gap-sm">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-ink">Repository</div>
-                        <div className="text-xs text-ink-faint">{gitLabel}</div>
-                        {repoPath && (
-                          <div
-                            title={repoPath}
-                            className="truncate text-xs text-ink-faint"
-                          >
-                            {repoPath}
-                          </div>
-                        )}
-                      </div>
-                      <IconButton
-                        title="Refresh Git status"
-                        onClick={() => void refreshGitStatus()}
-                      >
-                        <RefreshCw size={14} aria-hidden="true" />
-                      </IconButton>
-                    </div>
-                    {gitStatus.status === "ready" && !gitStatus.clean && (
-                      <div className="flex flex-col gap-xs">
-                        {gitStatus.files.slice(0, 8).map((file) => (
-                          <div
-                            key={`${file.index}${file.workingTree}-${file.path}`}
-                            className="flex items-center gap-xs text-xs text-ink-dim"
-                          >
-                            <span className="shrink-0 uppercase text-ink-faint">
-                              {gitFileStatusLabel(file)}
-                            </span>
-                            <span
-                              className="min-w-0 flex-1 truncate"
-                              title={file.path}
-                            >
-                              {file.path}
-                            </span>
-                          </div>
-                        ))}
-                        {gitStatus.files.length > 8 && (
-                          <div className="text-xs text-ink-faint">
-                            +{gitStatus.files.length - 8} more
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {gitStatus.status === "error" && (
-                      <p className="m-0 text-xs text-amber">
-                        {gitStatus.message}
-                      </p>
-                    )}
-                  </div>
-                  {codegenResult ? (
-                    <div className="flex min-h-0 flex-col gap-sm">
-                      <p className="m-0 text-xs text-ink-faint">
-                        {codegenResult.wrote ? "Synced" : "Previewing"} {artifacts.length}{" "}
-                        {artifacts.length === 1 ? "file" : "files"}.
-                      </p>
-                      <div className="flex flex-col gap-xs">
-                        {artifacts.map((artifact) => {
-                          const active = artifact.id === activeArtifact?.id;
-                          const Icon = artifact.kind === "json" ? FileJson2 : FileCode2;
-                          return (
-                            <button
-                              key={artifact.id}
-                              type="button"
-                              onClick={() => setActiveArtifactId(artifact.id)}
-                              className={cn(
-                                "flex h-7 w-full items-center gap-xs rounded-sm border px-sm text-left text-xs transition-colors",
-                                active
-                                  ? "border-accent-line bg-accent-soft text-accent"
-                                  : "border-line bg-chrome-2 text-ink-dim hover:bg-raised hover:text-ink",
-                              )}
-                            >
-                              <Icon size={14} aria-hidden="true" />
-                              <span className="min-w-0 flex-1 truncate">
-                                {artifact.label}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {activeArtifact && (
-                        <div className="flex min-h-[260px] flex-1 flex-col">
-                          <div className="flex items-center gap-xs rounded-t-sm border border-line border-b-0 bg-chrome-2 px-sm py-xs text-xs text-ink">
-                            <span className="min-w-0 flex-1 truncate">
-                              {activeArtifact.path}
-                            </span>
-                            <span className="uppercase text-ink-faint">
-                              {activeArtifact.kind}
-                            </span>
-                          </div>
-                          <pre className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-b-sm border border-line bg-canvas p-md text-xs leading-[1.55] text-ink-dim">
-                            {activeArtifact.code}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="rounded-sm border border-line bg-chrome-2 p-md text-sm text-ink-faint">
-                      Preview or sync to inspect code-linked files.
-                    </div>
+          ) : (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: space.md, paddingBottom: 0 }}>
+                <div className="mb-xs flex items-center gap-xs">
+                  <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
+                  {inspectorTab !== "Design" && (
+                    <span className="text-2xs font-semibold text-ink-faint">
+                      {inspectorTab}
+                    </span>
                   )}
                 </div>
-              ) : (
-                <ChangesTimeline
-                  gitStatus={gitStatus}
-                  repoPath={repoPath}
-                  repoContext={repoContext}
-                  onRefresh={() => void refreshGitStatus()}
-                  onOpenCode={() => setInspectorTab("Code")}
+                {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
+                <Tabs
+                  tabs={["Design", "Code", "History"]}
+                  active={inspectorTab}
+                  onSelect={setInspectorTab}
+                  variant="underline"
                 />
-              )}
+              </div>
+              <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+                {inspectorTab === "Design" ? (
+                  <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
+                    <Inspector rootId={focusedRootId} />
+                  </ErrorBoundary>
+                ) : inspectorTab === "Code" ? (
+                  <CodePanel />
+                ) : (
+                  <ChangesTimeline onOpenCode={() => setInspectorTab("Code")} />
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
+      <LayerContextMenu />
+      <Toasts />
     </div>
     </TooltipProvider>
   );

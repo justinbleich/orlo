@@ -1,6 +1,8 @@
 export type RepoPanelContext = {
   repoPath: string;
   repoName: string;
+  gitRootPath?: string;
+  gitRootName?: string;
   packageManager: string;
   designSession?: {
     mode: "current-branch" | "studio-branch";
@@ -16,6 +18,14 @@ export type RepoPanelContext = {
     description?: string;
     routeKind?: string;
     screenPaths: string[];
+    entryPath?: string;
+    edges?: Array<{
+      fromPath: string;
+      toPath: string;
+      kind: "primary" | "conditional" | "fallback";
+      condition?: string;
+      anchorNodeId?: string;
+    }>;
   }>;
   screens: Array<{
     path: string;
@@ -38,6 +48,8 @@ export type RepoFlowPanelItem = {
   description?: string;
   routeKind?: string;
   screens: RepoPanelScreen[];
+  entryPath?: string;
+  edges: NonNullable<NonNullable<RepoPanelContext["flows"]>[number]["edges"]>;
 };
 export type RepoGitFileStatus = { path: string; index: string; workingTree: string };
 export type RepoChangeGroup = {
@@ -75,6 +87,8 @@ export function repoFlowItemsForContext(repoContext?: RepoPanelContext | null): 
       name: flow.label,
       description: flow.description,
       routeKind: flow.routeKind,
+      entryPath: flow.entryPath,
+      edges: flow.edges ?? [],
       screens: flow.screenPaths
         .map((path) => screenByPath.get(path))
         .filter((screen): screen is RepoPanelScreen => !!screen),
@@ -161,4 +175,77 @@ export function repoChangesForContext(
     groups.set(base.id, { ...base, files: [file] });
   }
   return [...groups.values()];
+}
+
+// --- Shared workspace labels ---------------------------------------------------
+
+import type { GitFileStatus, GitStatus } from "./code-artifacts";
+
+export function gitSummary(status: GitStatus): string {
+  if (status.status === "loading") return "Git loading";
+  if (status.status === "error") return "Git unavailable";
+  if (status.clean) return `${status.branch} clean`;
+  return `${status.branch} ${status.files.length} changed`;
+}
+
+export function pathLabel(path?: string) {
+  if (!path) return "None";
+  return path.split("/").filter(Boolean).pop() ?? path;
+}
+
+export function scopedPathLabel(path?: string, root?: string) {
+  if (!path) return "None";
+  if (!root || path === root) return pathLabel(path);
+  const prefix = root.endsWith("/") ? root : `${root}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : pathLabel(path);
+}
+
+export function gitStatusCodeForFile(file: GitFileStatus): string {
+  const code = `${file.index}${file.workingTree}`;
+  if (code === "??") return "U";
+  if (file.workingTree === "M" || file.index === "M") return "M";
+  if (file.workingTree === "D" || file.index === "D") return "D";
+  if (file.workingTree === "A" || file.index === "A") return "A";
+  if (file.workingTree === "R" || file.index === "R") return "R";
+  return code.trim() || "";
+}
+
+export function firstGitCode(status: GitStatus): string | undefined {
+  if (status.status !== "ready") return undefined;
+  return status.files.map(gitStatusCodeForFile).find(Boolean);
+}
+
+/**
+ * Bind an opened document's path → root association. A root id can hold only
+ * one document at a time (the document store's loadRoots merges by id), so any
+ * prior binding of the same rootId under another path is superseded. Copied
+ * sidecar fixtures share embedded node ids across repos; without this eviction
+ * two panel rows claim the same canvas root (doubled active rows + layer
+ * accordions) and the sync flush can write the wrong repo's file.
+ */
+function sameLoadedScreenPath<S extends { path?: string; sidecarPath?: string }>(
+  leftKey: string,
+  left: S,
+  rightKey: string,
+  right: S,
+) {
+  const leftPaths = new Set([leftKey, left.path, left.sidecarPath].filter(Boolean));
+  return [rightKey, right.path, right.sidecarPath].some((path) => !!path && leftPaths.has(path));
+}
+
+export function bindLoadedRepoScreen<S extends { rootId: string; path?: string; sidecarPath?: string }>(
+  current: Record<string, S>,
+  path: string,
+  screen: S,
+  mode: "replace" | "merge",
+): Record<string, S> {
+  if (mode === "replace") return { [path]: screen };
+  const next: Record<string, S> = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (value.rootId !== screen.rootId && !sameLoadedScreenPath(key, value, path, screen)) {
+      next[key] = value;
+    }
+  }
+  next[path] = screen;
+  return next;
 }

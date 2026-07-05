@@ -127,3 +127,17 @@
   );
   background-size: var(--checker-size) var(--checker-size);
 }
+
+.flow-anchor-label {
+  opacity: 0;
+  transform: translateY(-2px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.flow-anchor:hover .flow-anchor-label,
+.flow-anchor:focus-visible .flow-anchor-label {
+  opacity: 1;
+  transform: translateY(0);
+}

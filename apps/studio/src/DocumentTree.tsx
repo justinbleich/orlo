@@ -8,79 +8,104 @@ import {
   type Node,
   type NodeId,
 } from "@rn-canvas/document";
-import { ChevronDown, ChevronRight, Component, EyeOff, LockOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, Component, Eye, EyeOff, Lock, LockOpen } from "lucide-react";
 import { color, radius, space, text } from "./studio-theme";
 import { normalizeNodeSelection, selectionRange } from "./selection";
+import { draggedBlock, resolveDrop, type DropZone } from "./layer-tree-model";
+import { useStudioStore } from "./studio-store";
 import { cn } from "./studio-ui";
 
-// One drag at a time; module-scoped so every recursive row shares it.
-let draggedNodeId: NodeId | null = null;
+// One drag at a time; module-scoped so every recursive row shares it. Holds the
+// full dragged block: dragging a row that's part of the selection moves the
+// whole selection.
+let draggedNodeIds: NodeId[] = [];
 
-/**
- * Move the dragged node relative to a drop target: onto a container reparents it
- * (appended); onto a leaf makes it that leaf's next sibling. Guards self/descendant
- * drops (moveNode also throws on those) and fixes the index for same-parent moves,
- * since moveNode removes the node before re-inserting.
- */
-function dropOnto(rootId: NodeId, target: Node) {
-  const dragged = draggedNodeId;
-  if (!dragged || dragged === target.id) return;
+function performDrop(rootId: NodeId, targetId: NodeId, zone: DropZone) {
   const store = useDocumentStore.getState();
   const root = store.roots[rootId];
-  if (!root || dragged === root.id) return;
-  const draggedNode = findNode(root, dragged);
-  if (!draggedNode || findNode(draggedNode, target.id)) return; // can't drop into own subtree
-
-  let parentId: NodeId;
-  let index: number;
-  if (isContainer(target)) {
-    parentId = target.id;
-    index = childrenOf(target).length;
-  } else {
-    const parent = getParent(root, target.id);
-    if (!parent) return;
-    parentId = parent.id;
-    const sibs = childrenOf(parent);
-    const targetIdx = sibs.findIndex((s) => s.id === target.id);
-    const draggedIdx = sibs.findIndex((s) => s.id === dragged);
-    index = targetIdx + 1;
-    if (draggedIdx !== -1 && draggedIdx < targetIdx) index -= 1; // removal shifts target down
-  }
+  if (!root) return;
+  const drop = resolveDrop(root, targetId, zone, draggedNodeIds);
+  if (!drop) return;
+  store.beginInteraction();
   try {
-    store.moveNode(rootId, dragged, parentId, index);
-    store.setSelection([dragged]);
+    draggedNodeIds.forEach((id, offset) => {
+      useDocumentStore.getState().moveNode(rootId, id, drop.parentId, drop.index + offset);
+    });
+    useDocumentStore.getState().commitInteraction();
+    useDocumentStore.getState().setSelection([...draggedNodeIds]);
   } catch {
-    /* invalid move (e.g. into own descendant) — ignore */
+    useDocumentStore.getState().cancelInteraction();
   }
 }
+
+function zoneForPointer(event: React.DragEvent<HTMLDivElement>, container: boolean): DropZone {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
+  if (ratio < (container ? 0.3 : 0.5)) return "before";
+  if (container && ratio < 0.7) return "into";
+  return "after";
+}
+
+/** 24px hover targets that read as 13px glyphs. */
+const rowActionStyle: React.CSSProperties = {
+  border: 0,
+  padding: 0,
+  width: 18,
+  height: 18,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "transparent",
+  color: "inherit",
+  borderRadius: 4,
+  flexShrink: 0,
+};
 
 export function DocumentTree({
   node,
   rootId,
   selectedIds,
-  gitBadge,
   depth = 0,
 }: {
   node: Node;
   rootId: NodeId;
   selectedIds: readonly NodeId[];
-  gitBadge?: React.ReactNode;
   depth?: number;
 }) {
   const setSelection = useDocumentStore((state) => state.setSelection);
   const updateDesign = useDocumentStore((state) => state.updateDesign);
   const components = useDocumentStore((state) => state.components);
-  const [over, setOver] = useState(false);
-  const [expanded, setExpanded] = useState(true);
+  const collapsed = useStudioStore((state) => !!state.collapsedLayers[node.id]);
+  const toggleCollapsed = useStudioStore((state) => state.toggleLayerCollapsed);
+  const [dropZone, setDropZone] = useState<DropZone | null>(null);
+  const [hovered, setHovered] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const selected = selectedIds.includes(node.id);
   const locked = !!node.design?.locked;
+  const hidden = !!node.design?.hidden;
   const isInstance = node.type === "ComponentInstance";
   const componentName =
     node.type === "ComponentInstance" ? components[node.componentId]?.name : undefined;
   const label = node.design?.name ?? componentName ?? node.type;
   const typeHint = isInstance ? "instance" : node.type;
   const children = childrenOf(node);
+  const container = isContainer(node);
+  const expanded = !collapsed;
   const title = `${label} · ${typeHint} · ${node.id}`;
+
+  function commitRename() {
+    if (renaming !== null) {
+      const name = renaming.trim();
+      try {
+        updateDesign(rootId, node.id, { name: name.length > 0 ? name : undefined });
+      } catch {
+        /* invalid name — keep the old one */
+      }
+    }
+    setRenaming(null);
+  }
+
+  const showLine = dropZone === "before" || dropZone === "after";
 
   return (
     <>
@@ -88,30 +113,47 @@ export function DocumentTree({
         data-layer-id={node.id}
         data-layer-type={node.type}
         title={title}
-        draggable={!locked && depth > 0}
+        draggable={!locked && depth > 0 && renaming === null}
         onDragStart={(event) => {
-          draggedNodeId = node.id;
+          const root = useDocumentStore.getState().roots[rootId];
+          draggedNodeIds = root ? draggedBlock(root, node.id, selectedIds) : [node.id];
           event.dataTransfer.effectAllowed = "move";
         }}
         onDragOver={(event) => {
-          if (draggedNodeId && draggedNodeId !== node.id) {
-            event.preventDefault();
-            if (!over) setOver(true);
-          }
+          if (draggedNodeIds.length === 0 || draggedNodeIds.includes(node.id)) return;
+          event.preventDefault();
+          setDropZone(zoneForPointer(event, container));
         }}
-        onDragLeave={() => setOver(false)}
+        onDragLeave={() => setDropZone(null)}
         onDrop={(event) => {
           event.preventDefault();
-          setOver(false);
-          dropOnto(rootId, node);
-          draggedNodeId = null;
+          const zone = dropZone ?? zoneForPointer(event, container);
+          setDropZone(null);
+          performDrop(rootId, node.id, zone);
+          draggedNodeIds = [];
         }}
         onDragEnd={() => {
-          draggedNodeId = null;
-          setOver(false);
+          draggedNodeIds = [];
+          setDropZone(null);
+        }}
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          if (!locked) setRenaming(label);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          useStudioStore.getState().openLayerMenu({
+            rootId,
+            nodeId: node.id,
+            x: event.clientX,
+            y: event.clientY,
+          });
         }}
         onClick={(event) => {
-          if (locked) return;
+          if (locked || renaming !== null) return;
           const root = useDocumentStore.getState().roots[rootId];
           if (!root) return;
           if (event.shiftKey && selectedIds.length > 0) {
@@ -126,19 +168,37 @@ export function DocumentTree({
           }
         }}
         style={{
+          position: "relative",
           padding: `${space.xs} ${space.sm}`,
           paddingLeft: `calc(${space.sm} + ${depth} * ${space.md})`,
           cursor: locked ? "not-allowed" : "pointer",
           fontSize: text.sm,
-          background: selected || over ? color.accentSoft : "transparent",
-          color: node.design?.hidden ? color.inkFaint : selected ? color.accent : color.ink,
+          background: selected || dropZone === "into" ? color.accentSoft : "transparent",
+          color: hidden ? color.inkFaint : selected ? color.accent : color.ink,
           borderRadius: radius.sm,
-          boxShadow: selected || over ? `inset 0 0 0 1px ${color.accentLine}` : "none",
+          boxShadow:
+            selected || dropZone === "into" ? `inset 0 0 0 1px ${color.accentLine}` : "none",
           display: "flex",
           alignItems: "center",
           gap: space.xs,
         }}
       >
+        {/* Insertion indicator: a 2px accent line above/below the row. */}
+        {showLine && (
+          <span
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: `calc(${space.sm} + ${depth} * ${space.md})`,
+              right: 4,
+              height: 2,
+              borderRadius: 1,
+              background: color.accent,
+              ...(dropZone === "before" ? { top: -1 } : { bottom: -1 }),
+              pointerEvents: "none",
+            }}
+          />
+        )}
         {children.length > 0 ? (
           <button
             type="button"
@@ -146,19 +206,9 @@ export function DocumentTree({
             aria-expanded={expanded}
             onClick={(event) => {
               event.stopPropagation();
-              setExpanded((open) => !open);
+              toggleCollapsed(node.id);
             }}
-            style={{
-              border: 0,
-              padding: 0,
-              width: 16,
-              height: 16,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "transparent",
-              color: "inherit",
-            }}
+            style={{ ...rowActionStyle, width: 16, height: 16 }}
           >
             {expanded ? (
               <ChevronDown size={13} aria-hidden="true" />
@@ -167,40 +217,68 @@ export function DocumentTree({
             )}
           </button>
         ) : (
-          <span style={{ width: 16, height: 16 }} aria-hidden="true" />
+          <span style={{ width: 16, height: 16, flexShrink: 0 }} aria-hidden="true" />
         )}
-        {locked && (
-          <button
-            type="button"
-            title="Unlock"
-            onClick={(event) => {
-              event.stopPropagation();
-              updateDesign(rootId, node.id, { locked: false });
-            }}
-            style={{
-              border: 0,
-              padding: 0,
-              width: 16,
-              height: 16,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "transparent",
-              color: "inherit",
-            }}
-          >
-            <LockOpen size={13} aria-hidden="true" />
-          </button>
-        )}
-        {node.design?.hidden && <EyeOff size={13} aria-label="Hidden" />}
         {isInstance && (
           <Component size={13} aria-hidden="true" style={{ color: color.accent, flexShrink: 0 }} />
         )}
-        <span className={cn("min-w-0 flex-1 truncate")}>
-          {label}
-          {isInstance && <span style={{ color: color.inkFaint }}> · instance</span>}
-        </span>
-        {gitBadge}
+        {renaming !== null ? (
+          <input
+            autoFocus
+            value={renaming}
+            onChange={(event) => setRenaming(event.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Enter") commitRename();
+              if (event.key === "Escape") setRenaming(null);
+            }}
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              minWidth: 0,
+              flex: 1,
+              border: `1px solid ${color.accentLine}`,
+              borderRadius: 4,
+              background: color.chrome,
+              color: color.ink,
+              fontSize: text.sm,
+              padding: "0 4px",
+              outline: "none",
+            }}
+          />
+        ) : (
+          <span className={cn("min-w-0 flex-1 truncate")}>
+            {label}
+            {isInstance && <span style={{ color: color.inkFaint }}> · instance</span>}
+          </span>
+        )}
+        {/* Hover affordances; hidden/locked stay visible as state. */}
+        {(hovered || hidden) && depth > 0 && renaming === null && (
+          <button
+            type="button"
+            title={hidden ? "Show layer" : "Hide layer"}
+            onClick={(event) => {
+              event.stopPropagation();
+              updateDesign(rootId, node.id, { hidden: hidden ? undefined : true });
+            }}
+            style={{ ...rowActionStyle, opacity: hidden ? 1 : 0.7 }}
+          >
+            {hidden ? <EyeOff size={13} aria-hidden="true" /> : <Eye size={13} aria-hidden="true" />}
+          </button>
+        )}
+        {(hovered || locked) && depth > 0 && renaming === null && (
+          <button
+            type="button"
+            title={locked ? "Unlock layer" : "Lock layer"}
+            onClick={(event) => {
+              event.stopPropagation();
+              updateDesign(rootId, node.id, { locked: locked ? undefined : true });
+            }}
+            style={{ ...rowActionStyle, opacity: locked ? 1 : 0.7 }}
+          >
+            {locked ? <Lock size={13} aria-hidden="true" /> : <LockOpen size={13} aria-hidden="true" />}
+          </button>
+        )}
       </div>
       {expanded && children.map((child) => (
         <DocumentTree
@@ -208,7 +286,6 @@ export function DocumentTree({
           node={child}
           rootId={rootId}
           selectedIds={selectedIds}
-          gitBadge={gitBadge}
           depth={depth + 1}
         />
       ))}

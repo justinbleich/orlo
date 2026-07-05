@@ -46,6 +46,15 @@ import { reapplyTokens, tokenCategoryForStyleKey, validateTokenRegistry } from "
 
 export type Roots = Record<NodeId, Node>;
 
+/** Canvas position of a frame (screen) on the infinite canvas. Owned by the
+ *  document store — not tldraw — so undo and persistence cover spatial layout. */
+export interface FramePosition {
+  x: number;
+  y: number;
+}
+
+export type FramePositions = Record<NodeId, FramePosition>;
+
 /** A history entry snapshots the trees, the component registry, and the selection,
  *  so undo/redo restores a coherent document (no dangling selection or definition). */
 export interface Snapshot {
@@ -53,6 +62,8 @@ export interface Snapshot {
   components: ComponentRegistry;
   /** Design tokens, keyed by id (Phase 2D). */
   tokens: TokenRegistry;
+  /** Frame canvas positions, keyed by root id. */
+  framePositions: FramePositions;
   /** The component whose template is open for editing (hosted as a transient root). */
   editingComponentId: NodeId | null;
   /** Definition captured at edit-start, so Cancel can discard the session. */
@@ -66,6 +77,8 @@ export interface DocumentState {
   components: ComponentRegistry;
   /** Design tokens, keyed by id (Phase 2D). Global, like components. */
   tokens: TokenRegistry;
+  /** Canvas positions per frame. In history: moving a screen is undoable. */
+  framePositions: FramePositions;
   /** Component whose template is open in focus mode (its template is a transient root). */
   editingComponentId: NodeId | null;
   /** Definition captured when focus mode opened, for Cancel. */
@@ -91,6 +104,12 @@ export interface DocumentState {
 
   addRoot(root: Node): void;
   removeRoot(rootId: NodeId): void;
+
+  /** Move a frame on the canvas (undoable; batch drags with interactions). */
+  setFramePosition(rootId: NodeId, x: number, y: number): void;
+  /** Bootstrap positions (persisted layout, grid fallbacks) without creating a
+   *  history entry — seeding is layout setup, not a user action. */
+  seedFramePositions(positions: FramePositions): void;
 
   // --- Components & instances (Phase 2C) ---
   /** Replace a node with an instance of a new component built from its subtree. */
@@ -180,6 +199,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     roots: state.roots,
     components: state.components,
     tokens: state.tokens,
+    framePositions: state.framePositions,
     editingComponentId: state.editingComponentId,
     editingOriginalDefinition: state.editingOriginalDefinition,
     selection: state.selection,
@@ -190,6 +210,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     roots?: Roots;
     components?: ComponentRegistry;
     tokens?: TokenRegistry;
+    framePositions?: FramePositions;
   }) => {
     set((state) => ({
       past: state.interaction
@@ -199,6 +220,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       roots: next.roots ?? state.roots,
       components: next.components ?? state.components,
       tokens: next.tokens ?? state.tokens,
+      framePositions: next.framePositions ?? state.framePositions,
     }));
   };
 
@@ -275,6 +297,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     roots: {},
     components: {},
     tokens: {},
+    framePositions: {},
     editingComponentId: null,
     editingOriginalDefinition: null,
     selection: [],
@@ -294,7 +317,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       const changed =
         state.roots !== state.interaction.roots ||
         state.components !== state.interaction.components ||
-        state.tokens !== state.interaction.tokens;
+        state.tokens !== state.interaction.tokens ||
+        state.framePositions !== state.interaction.framePositions;
       set({
         interaction: null,
         past: changed
@@ -310,6 +334,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         roots: state.interaction.roots,
         components: state.interaction.components,
         tokens: state.interaction.tokens,
+        framePositions: state.interaction.framePositions,
         editingComponentId: state.interaction.editingComponentId,
         editingOriginalDefinition: state.interaction.editingOriginalDefinition,
         selection: state.interaction.selection,
@@ -367,7 +392,31 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     removeRoot: (rootId) => {
       const next = { ...get().roots };
       delete next[rootId];
-      commit({ roots: next });
+      const positions = { ...get().framePositions };
+      delete positions[rootId];
+      commit({ roots: next, framePositions: positions });
+    },
+
+    setFramePosition: (rootId, x, y) => {
+      const { framePositions } = get();
+      const current = framePositions[rootId];
+      if (current && current.x === x && current.y === y) return;
+      commit({ framePositions: { ...framePositions, [rootId]: { x, y } } });
+    },
+    seedFramePositions: (positions) => {
+      const entries = Object.entries(positions);
+      if (entries.length === 0) return;
+      const { framePositions } = get();
+      let changed = false;
+      const next = { ...framePositions };
+      for (const [rootId, position] of entries) {
+        const current = next[rootId];
+        if (current && current.x === position.x && current.y === position.y) continue;
+        next[rootId] = position;
+        changed = true;
+      }
+      // Plain set, no commit: seeds must not create undo entries.
+      if (changed) set({ framePositions: next });
     },
 
     promoteToComponent: (rootId, nodeId, name) => {
@@ -797,6 +846,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
           roots: previous.roots,
           components: previous.components,
           tokens: previous.tokens,
+          framePositions: previous.framePositions,
           editingComponentId: previous.editingComponentId,
           editingOriginalDefinition: previous.editingOriginalDefinition,
           selection: previous.selection,
@@ -813,6 +863,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
           roots: next.roots,
           components: next.components,
           tokens: next.tokens,
+          framePositions: next.framePositions,
           editingComponentId: next.editingComponentId,
           editingOriginalDefinition: next.editingOriginalDefinition,
           selection: next.selection,

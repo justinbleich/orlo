@@ -62,6 +62,7 @@ export {
   createInstance,
   presetProp,
   applyOverrides,
+  collectUsedComponentIds,
   expandComponents,
   ownerInstanceId,
   reconcileInstance,
@@ -84,6 +85,13 @@ export {
   type NodeError,
 } from "./validate";
 
-export { useDocumentStore, type DocumentState, type Roots, type Snapshot } from "./store";
+export {
+  useDocumentStore,
+  type DocumentState,
+  type FramePosition,
+  type FramePositions,
+  type Roots,
+  type Snapshot,
+} from "./store";
 
 export { sampleDocument, FIXTURE_IMAGE_URI } from "./sample";

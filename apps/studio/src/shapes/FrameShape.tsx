@@ -11,8 +11,10 @@ import {
 } from "tldraw";
 import { BatteryFull, Signal, Wifi } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   applyOverrides,
+  collectUsedComponentIds,
   createInstance,
   findNode,
   resolveVariant,
@@ -319,6 +321,19 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     return true;
   }
 
+  // Translating a frame is a *document* action: the position lives in the store
+  // (single undo history + canvas.json persistence); tldraw's own record is just
+  // the live view. The whole drag is one interaction → one undo entry.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override onTranslateStart(): any {
+    try {
+      useDocumentStore.getState().beginInteraction();
+    } catch {
+      /* an interaction may already be active (e.g. multi-frame drag) */
+    }
+    return undefined;
+  }
+
   // Inner RN-node gestures belong to the document overlay. Even if tldraw's
   // capture listener also observes the pointer, never translate the host frame
   // while its document selection is inside the root.
@@ -328,13 +343,24 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     const root = store.roots[current.props.rootId];
     const hasInnerSelection =
       !!root && store.selection.some((id) => id !== root.id && !!findNode(root, id));
-    if (!hasInnerSelection) return undefined;
-    return {
-      id: current.id,
-      type: current.type,
-      x: initial.x,
-      y: initial.y,
-    };
+    if (hasInnerSelection) {
+      return {
+        id: current.id,
+        type: current.type,
+        x: initial.x,
+        y: initial.y,
+      };
+    }
+    store.setFramePosition(current.props.rootId, current.x, current.y);
+    return undefined;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override onTranslateEnd(initial: FrameShape, current: FrameShape): any {
+    const store = useDocumentStore.getState();
+    store.setFramePosition(current.props.rootId, current.x, current.y);
+    store.commitInteraction();
+    return undefined;
   }
 
   // Resizing the frame is resizing the *screen*: the new box size is written to
@@ -400,10 +426,30 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     }, [setStudioLayout, shape.props.rootId]);
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
-    const selection = useDocumentStore((s) => s.selection);
     const editingComponentId = useDocumentStore((s) => s.editingComponentId);
-    // The component registry expands any instances in this frame to primitives.
-    const components = useDocumentStore((s) => s.components);
+    // Selection collapses to one boolean here, so selecting nodes in another
+    // frame doesn't re-render (or re-layout) this one.
+    const hasInnerSelection = useDocumentStore((s) => {
+      const tree = s.roots[shape.props.rootId];
+      return !!tree && s.selection.some((id) => id !== tree.id && !!findNode(tree, id));
+    });
+    // Only the definitions this frame's tree actually uses (transitively), plus
+    // this frame's own definition while it hosts a component edit. Editing an
+    // unrelated component no longer re-expands and re-layouts every frame.
+    const components = useDocumentStore(
+      useShallow((s): ComponentRegistry => {
+        const tree = s.roots[shape.props.rootId];
+        const out: ComponentRegistry = {};
+        if (!tree) return out;
+        for (const id of collectUsedComponentIds(tree, s.components)) {
+          const definition = s.components[id];
+          if (definition) out[id] = definition;
+        }
+        const own = s.components[shape.props.rootId];
+        if (own) out[shape.props.rootId] = own;
+        return out;
+      }),
+    );
     const activeVariant = useStudioStore((state) => state.activeVariant);
     const outOfFocus = !!editingComponentId && shape.props.rootId !== editingComponentId;
     const editingDefinition =
@@ -420,8 +466,6 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
       () => shape.props.w * editor.getZoomLevel() >= LOD_MIN_ONSCREEN_WIDTH,
       [editor, shape.id, shape.props.w],
     );
-    const hasInnerSelection =
-      !!root && selection.some((id) => id !== root.id && !!findNode(root, id));
     const live = selected || largeEnough || hasInnerSelection;
     // The overlay owns pointer input when its frame is selected, or for any frame
     // while a tool is armed (so you can draw into an unselected screen directly).

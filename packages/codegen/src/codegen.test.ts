@@ -46,6 +46,35 @@ test("imports exactly the components used, plus StyleSheet", () => {
   assert.deepEqual(names, ["Image", "StyleSheet", "Text", "View"]);
 });
 
+test("nav targets emit expo-router press handlers on matching Pressables", () => {
+  const root = createNode("View", {
+    children: [
+      createNode("Pressable", {
+        id: "cta",
+        style: { padding: 12 },
+        children: [createNode("Text", { props: { text: "Next" } })],
+      }),
+    ],
+  });
+  const code = emitScreen(root, { screenName: "Home", navTargets: { cta: "/onboarding/details" } });
+  assert.match(code, /import \{ useRouter \} from "expo-router"/);
+  assert.match(code, /const router = useRouter\(\)/);
+  assert.ok(code.includes('onPress={() => router.push("/onboarding/details")}'));
+  assertParses(code);
+});
+
+test("nav targets wrap non-pressable nodes in a Pressable handler", () => {
+  const root = createNode("View", {
+    id: "source",
+    style: { padding: 12 },
+    children: [createNode("Text", { props: { text: "Card" } })],
+  });
+  const code = emitScreen(root, { screenName: "Home", navTargets: { source: "/details" } });
+  assert.match(code, /import \{[^}]*Pressable[^}]*\} from "react-native"/);
+  assert.ok(code.includes('<Pressable onPress={() => router.push("/details")}>'));
+  assertParses(code);
+});
+
 test("design metadata is never emitted to code, only to the sidecar", () => {
   const root = createNode("View", {
     design: { name: "SecretFrame" },

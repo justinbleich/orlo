@@ -60,3 +60,6 @@ tmp/
 
 # Expo
 apps/harness/.expo/
+
+# Local demo fixture repos (each has its own git history)
+test-repos/

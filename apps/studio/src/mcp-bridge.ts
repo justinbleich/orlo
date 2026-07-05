@@ -22,10 +22,10 @@ export function startMcpBridge(handler: BrowserCommandHandler): () => void {
           `/api/mcp/next?clientId=${encodeURIComponent(clientId)}`,
           { signal: controller.signal },
         );
-        if (response.status === 204) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          continue;
-        }
+        // 204 = the server's long-poll window elapsed with no command (or this
+        // tab isn't the active bridge client, in which case the server already
+        // delayed the response) — reconnect immediately.
+        if (response.status === 204) continue;
         if (!response.ok) throw new Error(`Command poll failed: HTTP ${response.status}`);
         const command = (await response.json()) as BrowserCommand;
         let result: CommandResult;

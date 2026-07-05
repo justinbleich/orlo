@@ -47,24 +47,75 @@ test("sidecar and source resolvers enforce repo ownership and extensions", () =>
   assert.throws(() => resolveExternalSourcePath(repo, "app/Home.ts"), /tsx or \.jsx/);
 });
 
-test("flow manifests fall back safely and serialize only the contract fields", () => {
-  assert.deepEqual(parseFlowManifest("{\"version\":2,\"flows\":[]}"), emptyFlowManifest());
+test("flow manifests fall back safely and serialize v2 contract fields", () => {
+  assert.deepEqual(parseFlowManifest("{\"version\":3,\"flows\":[]}"), emptyFlowManifest());
   const { manifest, json } = serializeFlowManifest(
     {
-      version: 1,
+      version: 2,
       flows: [
         {
           id: "onboarding",
           label: "Onboarding",
           routes: [{ rootId: "root", name: "Start" }],
+          edges: [],
         },
       ],
     },
     "2026-06-29T00:00:00.000Z",
   );
+  assert.equal(manifest.version, 2);
   assert.equal(manifest.updatedAt, "2026-06-29T00:00:00.000Z");
   assert.match(json, /"updatedAt": "2026-06-29T00:00:00.000Z"/);
+  assert.match(json, /"version": 2/);
   assert.match(json, /"routes"/);
+  assert.match(json, /"edges"/);
+});
+
+test("flow manifest parser upgrades v1 route order to primary edges", () => {
+  assert.deepEqual(
+    parseFlowManifest(
+      JSON.stringify({
+        version: 1,
+        flows: [
+          {
+            id: "onboarding",
+            label: "Onboarding",
+            description: "Intro",
+            entryRootId: "welcome",
+            successRootId: "home",
+            routes: [
+              { rootId: "welcome", name: "Welcome" },
+              { rootId: "login", name: "Login" },
+              { rootId: "home", name: "Home" },
+            ],
+          },
+        ],
+      }),
+    ),
+    {
+      version: 2,
+      flows: [
+        {
+          id: "onboarding",
+          label: "Onboarding",
+          description: "Intro",
+          entryRootId: "welcome",
+          entryName: undefined,
+          successRootId: "home",
+          routes: [
+            { rootId: "welcome", name: "Welcome", screenKey: undefined },
+            { rootId: "login", name: "Login", screenKey: undefined },
+            { rootId: "home", name: "Home", screenKey: undefined },
+          ],
+          edges: [
+            { from: { rootId: "welcome" }, to: "login", kind: "primary" },
+            { from: { rootId: "login" }, to: "home", kind: "primary" },
+          ],
+        },
+      ],
+      updatedAt: undefined,
+    },
+  );
 });
 
 test("parseGitStatus preserves branch metadata and normalizes renamed paths", () => {

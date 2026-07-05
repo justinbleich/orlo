@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "screenName": "Screen",
+  "root": {
+    "id": "8e3a4b59-5f0c-4b6d-a599-b2ddbc5652b2",
+    "props": {},
+    "style": {
+      "width": 390,
+      "height": 844,
+      "backgroundColor": "#ffffff",
+      "flexDirection": "column",
+      "padding": 16,
+      "paddingTop": 64,
+      "paddingBottom": 48,
+      "gap": 12
+    },
+    "design": {
+      "name": "Screen 2"
+    },
+    "type": "View",
+    "children": []
+  },
+  "components": {
+    "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a": {
+      "id": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
+      "name": "TextComponent",
+      "template": {
+        "id": "onboarding-copy",
+        "props": {
+          "text": "A guided checklist for the first session."
+        },
+        "style": {
+          "fontFamily": "Inter",
+          "fontSize": 16,
+          "lineHeight": 22,
+          "color": "#667085"
+        },
+        "type": "Text"
+      },
+      "props": []
+    }
+  },
+  "tokens": {
+    "9aa6484d-7a8c-419a-9252-95f26cd9ef01": {
+      "id": "9aa6484d-7a8c-419a-9252-95f26cd9ef01",
+      "name": "color1",
+      "category": "color",
+      "value": "#ffffff"
+    },
+    "color-canvas": {
+      "id": "color-canvas",
+      "name": "canvas",
+      "category": "color",
+      "value": "#F7F8FB"
+    },
+    "c5b0a54d-bbf5-4f94-a55e-6a824cea04eb": {
+      "id": "c5b0a54d-bbf5-4f94-a55e-6a824cea04eb",
+      "name": "space1",
+      "category": "spacing",
+      "value": 8
+    },
+    "bcec33ab-f8c1-45fd-abc8-ade0f96bbeff": {
+      "id": "bcec33ab-f8c1-45fd-abc8-ade0f96bbeff",
+      "name": "text1",
+      "category": "fontSize",
+      "value": 16
+    },
+    "dfb1f16d-c196-48b9-8b99-79706a7c921a": {
+      "id": "dfb1f16d-c196-48b9-8b99-79706a7c921a",
+      "name": "text2",
+      "category": "fontSize",
+      "value": 20
+    }
+  }
+}
+

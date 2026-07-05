@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "screenName": "OnboardingDetails",
+  "root": {
+    "id": "onboarding-details-root",
+    "props": {},
+    "style": {
+      "width": 390,
+      "height": 844,
+      "backgroundColor": "#F7F8FB",
+      "flexDirection": "column",
+      "padding": 28,
+      "paddingTop": 72,
+      "gap": 16
+    },
+    "type": "View",
+    "children": [
+      {
+        "id": "details-title",
+        "props": { "text": "Checklist Details" },
+        "style": { "fontFamily": "Inter", "fontSize": 28, "fontWeight": "700", "color": "#111827" },
+        "type": "Text"
+      },
+      {
+        "id": "details-copy",
+        "props": { "text": "Tune each milestone before exporting the screen back to the app." },
+        "style": { "fontFamily": "Inter", "fontSize": 16, "lineHeight": 22, "color": "#667085" },
+        "type": "Text"
+      }
+    ],
+    "design": { "name": "Checklist Details" }
+  }
+}

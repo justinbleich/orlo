@@ -7,6 +7,7 @@ type CliInput = {
   screenName?: string;
   components?: ComponentRegistry;
   tokens?: TokenRegistry;
+  navTargets?: Record<string, string>;
 };
 
 const inputPath = process.argv[2];
@@ -23,6 +24,7 @@ try {
     screenName: input.screenName,
     components: input.components,
     tokens: input.tokens,
+    navTargets: input.navTargets,
   })));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

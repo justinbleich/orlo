@@ -138,6 +138,8 @@ export interface EmitterOptions {
   variants?: VariantAxis[];
   /** Per-combination overrides for the variant axes above. */
   combinations?: VariantCombination[];
+  /** Node id -> route href. Pressable nodes emit an expo-router onPress handler. */
+  navTargets?: Record<NodeId, string>;
 }
 
 export interface Emitter {
@@ -155,7 +157,7 @@ export function usesTheme(styleEntries: StyleEntry[]): boolean {
 }
 
 export function createEmitter(options: EmitterOptions = {}): Emitter {
-  const { components, bindings, tokens, variants, combinations } = options;
+  const { components, bindings, tokens, variants, combinations, navTargets } = options;
   const hasVariants = !!variants && variants.length > 0;
   const used = new Set<RNPrimitive>();
   const componentImports = new Set<string>();
@@ -218,6 +220,18 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
     return exprAttr("style", parts.length === 1 ? parts[0] : t.arrayExpression(parts));
   }
 
+  function navPressAttr(href: string): t.JSXAttribute {
+    return exprAttr(
+      "onPress",
+      t.arrowFunctionExpression(
+        [],
+        t.callExpression(t.memberExpression(t.identifier("router"), t.identifier("push")), [
+          t.stringLiteral(href),
+        ]),
+      ),
+    );
+  }
+
   function propAttrs(node: Node): t.JSXAttribute[] {
     const attrs: t.JSXAttribute[] = [];
     switch (node.type) {
@@ -225,6 +239,7 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
         if (node.props.numberOfLines !== undefined) {
           attrs.push(exprAttr("numberOfLines", t.numericLiteral(node.props.numberOfLines)));
         }
+        if (navTargets?.[node.id]) attrs.push(navPressAttr(navTargets[node.id]));
         break;
       case "Image": {
         const src = node.props.source;
@@ -238,6 +253,7 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
       }
       case "Pressable":
         if (node.props.disabled) attrs.push(boolAttr("disabled"));
+        if (navTargets?.[node.id]) attrs.push(navPressAttr(navTargets[node.id]));
         break;
       case "ScrollView":
         if (node.props.horizontal) attrs.push(boolAttr("horizontal"));
@@ -363,6 +379,16 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
       selfClosing,
     );
     let result: t.Expression = element;
+    const navTarget = navTargets?.[node.id];
+    if (navTarget && node.type !== "Pressable" && node.type !== "Text") {
+      used.add("Pressable");
+      result = t.jsxElement(
+        t.jsxOpeningElement(t.jsxIdentifier("Pressable"), [navPressAttr(navTarget)], false),
+        t.jsxClosingElement(t.jsxIdentifier("Pressable")),
+        [t.jsxExpressionContainer(result)],
+        false,
+      );
+    }
     // Per-combination visibility: hide the node in the cells the variant declares.
     if (hasVariants) {
       const guard = hiddenGuardExpr(nodeHiddenCells(node.id, variants!, combinations ?? []), variants!);

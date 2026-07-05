@@ -572,3 +572,36 @@ test("variant authoring actions flow through the store and reconcile", () => {
   const clamped = findNode(useDocumentStore.getState().roots.frame, instId) as ComponentInstanceNode;
   assert.equal(clamped.variant?.tone, undefined);
 });
+
+test("collectUsedComponentIds is transitive and memoized per tree+registry", async () => {
+  const { collectUsedComponentIds } = await import("./index");
+  const inner = cardDef();
+  const outer: ComponentDefinition = {
+    id: "comp2",
+    name: "Outer",
+    template: createNode("View", {
+      id: "r2",
+      children: [createInstance("comp1", { id: "inner" })],
+    }),
+    props: [],
+  };
+  const unused = cardDef();
+  const registry = { comp1: inner, comp2: outer, comp3: { ...unused, id: "comp3" } };
+  const screen = createNode("View", {
+    id: "s",
+    children: [createInstance("comp2", { id: "o1" })],
+  });
+
+  const ids = collectUsedComponentIds(screen, registry);
+  // Placed comp2 pulls comp1 through its template; comp3 is never referenced.
+  assert.deepEqual([...ids], ["comp1", "comp2"]);
+  // Same refs → memoized result object.
+  assert.equal(collectUsedComponentIds(screen, registry), ids);
+  // New registry ref → recomputed (fresh array), same content.
+  const again = collectUsedComponentIds(screen, { ...registry });
+  assert.notEqual(again, ids);
+  assert.deepEqual([...again], ["comp1", "comp2"]);
+  // A tree with no instances uses nothing.
+  const empty = createNode("View", { id: "plain" });
+  assert.deepEqual([...collectUsedComponentIds(empty, registry)], []);
+});

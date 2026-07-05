@@ -104,13 +104,32 @@ export function createNode<T extends RNPrimitive>(
   return { ...base, type } as Node;
 }
 
+type NodeIndexEntry = { node: Node; parent: Node | null };
+
+/**
+ * Lazy per-tree id index. Trees are immutable — every edit produces a new root
+ * reference — so a WeakMap keyed by the tree object is self-invalidating: stale
+ * indexes are simply garbage-collected with their tree. Built with `childrenOf`,
+ * matching the traversal `findNode`/`getParent` always used (DFS, first id wins,
+ * no descent into instance slots).
+ */
+const nodeIndexCache = new WeakMap<Node, Map<NodeId, NodeIndexEntry>>();
+
+function nodeIndex(tree: Node): Map<NodeId, NodeIndexEntry> {
+  const cached = nodeIndexCache.get(tree);
+  if (cached) return cached;
+  const index = new Map<NodeId, NodeIndexEntry>();
+  const visit = (node: Node, parent: Node | null) => {
+    if (!index.has(node.id)) index.set(node.id, { node, parent });
+    for (const child of childrenOf(node)) visit(child, node);
+  };
+  visit(tree, null);
+  nodeIndexCache.set(tree, index);
+  return index;
+}
+
 export function findNode(tree: Node, id: NodeId): Node | undefined {
-  if (tree.id === id) return tree;
-  for (const child of childrenOf(tree)) {
-    const found = findNode(child, id);
-    if (found) return found;
-  }
-  return undefined;
+  return nodeIndex(tree).get(id)?.node;
 }
 
 /** Find the root (frame) tree whose subtree contains `id`. */
@@ -122,12 +141,7 @@ export function findRootContaining(roots: Node[], id: NodeId): Node | undefined 
 }
 
 export function getParent(tree: Node, id: NodeId): Node | undefined {
-  for (const child of childrenOf(tree)) {
-    if (child.id === id) return tree;
-    const found = getParent(child, id);
-    if (found) return found;
-  }
-  return undefined;
+  return nodeIndex(tree).get(id)?.parent ?? undefined;
 }
 
 /** Replace the node with `id` by `updater(node)`, cloning only the ancestor path. */

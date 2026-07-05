@@ -614,6 +614,7 @@ export function LeftPanel({
     const collapseKey = layerCollapseKey(root);
     const collapsed = collapsedLayerRoots[collapseKey] ?? false;
     const count = layerCount(root);
+    const rootLabel = root.design?.name ?? "Screen";
     return (
       <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
         <button
@@ -628,7 +629,10 @@ export function LeftPanel({
           className="group flex h-7 min-w-0 items-center gap-xs rounded-sm px-xs text-left text-2xs font-semibold uppercase tracking-[0.12em] text-ink-faint transition-colors hover:bg-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line"
         >
           {collapsed ? <ChevronRight size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
-          <span className="min-w-0 flex-1 truncate">Layers</span>
+          <span className="min-w-0 flex-1 truncate">Contents</span>
+          <span className="min-w-0 max-w-24 truncate normal-case tracking-normal text-ink-faint">
+            {rootLabel}
+          </span>
           <span className="tabular-nums">{count}</span>
         </button>
         {!collapsed && (
@@ -751,20 +755,15 @@ export function LeftPanel({
       gitTitle: screen.path,
     };
   });
-  const screenLabelCounts = new Map<string, number>();
-  for (const item of [...canvasScreenEntries, ...repoScreenEntries]) {
-    screenLabelCounts.set(item.label, (screenLabelCounts.get(item.label) ?? 0) + 1);
-  }
-  const screenItems = [
-    ...canvasScreenEntries.map((item) => ({
-      ...item,
-      detail: item.gitTitle ? shortPathLabel(item.gitTitle) : "Draft",
-    })),
-    ...repoScreenEntries.map((item) => ({
-      ...item,
-      detail: shortPathLabel(item.screen.path),
-    })),
-  ];
+  const draftScreenItems = canvasScreenEntries.map((item) => ({
+    ...item,
+    detail: item.gitTitle ? shortPathLabel(item.gitTitle) : "Draft",
+  }));
+  const repoScreenItems = repoScreenEntries.map((item) => ({
+    ...item,
+    detail: shortPathLabel(item.screen.path),
+  }));
+  const screenCount = draftScreenItems.length + repoScreenItems.length;
   const changedFiles = gitStatus.status === "ready" ? gitStatus.files : [];
   const flowItems = flows.map((flow, index) => ({
     ...flow,
@@ -780,6 +779,71 @@ export function LeftPanel({
   function openDesignSystem(view: DesignSystemView) {
     onDesignSystemViewChange(view);
     onWorkspaceChange("Design System");
+  }
+
+  const screenGroupHeader = (label: string, count: number) => (
+    <div className="mt-xs flex h-6 items-center gap-xs px-xs text-2xs font-semibold uppercase tracking-[0.12em] text-ink-faint first:mt-0">
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="tabular-nums">{count}</span>
+    </div>
+  );
+
+  function renderScreenItem(
+    item:
+      | (typeof draftScreenItems)[number]
+      | (typeof repoScreenItems)[number],
+  ) {
+    const locked = item.kind === "canvas" && !!item.root.design?.locked;
+    const repoLayerRoot = item.kind === "repo"
+      ? rootList.find((root) => root.id === loadedRootIdForRepoScreen(item.screen)) ?? activeRepoRootById
+      : undefined;
+    return (
+      <div key={item.id} className="flex flex-col gap-xs">
+        <PanelRow
+          icon={item.kind === "canvas" ? Frame : FileText}
+          disabled={locked}
+          onClick={() => {
+            if (item.kind === "canvas") {
+              onFocusCanvasScreen();
+              setSelection([item.root.id]);
+              onWorkspaceChange("Screen");
+            } else {
+              onOpenRepoScreen(item.screen);
+            }
+          }}
+          active={item.active}
+          title={item.kind === "repo" ? `Open ${item.screen.path}` : "Open draft screen"}
+          className={locked ? "cursor-not-allowed opacity-50" : undefined}
+          action={
+            item.kind === "canvas" ? (
+              <PanelAction
+                disabled={locked}
+                onClick={() => deleteScreen(item.root.id)}
+                title="Delete draft screen"
+                className={rowAction}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </PanelAction>
+            ) : undefined
+          }
+        >
+          <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          {item.detail && (
+            <span
+              className={cn(
+                "min-w-0 max-w-28 truncate text-2xs",
+                item.kind === "canvas" ? "text-accent" : "text-ink-faint",
+              )}
+            >
+              {item.detail}
+            </span>
+          )}
+          <GitBadge code={item.gitCode} title={item.gitTitle} />
+        </PanelRow>
+        {item.kind === "canvas" && item.root.id === focusedRoot?.id && layerAccordion(item.root)}
+        {item.kind === "repo" && item.active && repoLayerRoot && layerAccordion(repoLayerRoot)}
+      </div>
+    );
   }
 
   return (
@@ -867,61 +931,17 @@ export function LeftPanel({
 
         <PanelSection
           title="Screens"
-          count={screenItems.length}
+          count={screenCount}
           action={(
-            <PanelAction onClick={onAddFrame} title="Add screen">
+            <PanelAction onClick={onAddFrame} title="Add draft screen">
               <Plus size={16} aria-hidden="true" />
             </PanelAction>
           )}
         >
-          {screenItems.map((item) => {
-            const locked = item.kind === "canvas" && !!item.root.design?.locked;
-            const repoLayerRoot = item.kind === "repo"
-              ? rootList.find((root) => root.id === loadedRootIdForRepoScreen(item.screen)) ?? activeRepoRootById
-              : undefined;
-            return (
-              <div key={item.id} className="flex flex-col gap-xs">
-                <PanelRow
-                  icon={FileText}
-                  disabled={locked}
-                  onClick={() => {
-                    if (item.kind === "canvas") {
-                      onFocusCanvasScreen();
-                      setSelection([item.root.id]);
-                      onWorkspaceChange("Screen");
-                    } else {
-                      onOpenRepoScreen(item.screen);
-                    }
-                  }}
-                  active={item.active}
-                  title={item.kind === "repo" ? `Open ${item.screen.path}` : undefined}
-                  className={locked ? "cursor-not-allowed opacity-50" : undefined}
-                  action={
-                    item.kind === "canvas" ? (
-                      <PanelAction
-                        disabled={locked}
-                        onClick={() => deleteScreen(item.root.id)}
-                        title="Delete screen"
-                        className={rowAction}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </PanelAction>
-                    ) : undefined
-                  }
-                >
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {item.detail && (
-                    <span className="min-w-0 max-w-28 truncate text-2xs text-ink-faint">
-                      {item.detail}
-                    </span>
-                  )}
-                  <GitBadge code={item.gitCode} title={item.gitTitle} />
-                </PanelRow>
-                {item.kind === "canvas" && item.root.id === focusedRoot?.id && layerAccordion(item.root)}
-                {item.kind === "repo" && item.active && repoLayerRoot && layerAccordion(repoLayerRoot)}
-              </div>
-            );
-          })}
+          {draftScreenItems.length > 0 && screenGroupHeader("Draft screens", draftScreenItems.length)}
+          {draftScreenItems.map(renderScreenItem)}
+          {repoScreenItems.length > 0 && screenGroupHeader("App routes", repoScreenItems.length)}
+          {repoScreenItems.map(renderScreenItem)}
         </PanelSection>
 
         <PanelSection title="Components" count={componentList.length}>

@@ -27,6 +27,7 @@ import {
   addFlowEdge,
   deriveLinearEdges,
   flowRouteScreens,
+  resolveFlowRouteIdMap,
   flowScreenKey,
   flowScreenName,
   resolveFlowRouteIds,
@@ -157,21 +158,29 @@ function manifestFlowToDefinition(
   screenRoots: readonly Node[],
 ): FlowDefinition {
   const routes = resolveFlowRouteIds(screenRoots, flow.routes);
+  const routeIdMap = resolveFlowRouteIdMap(screenRoots, flow.routes);
   const routeSet = new Set(routes);
+  const normalizeRootId = (rootId: NodeId) => routeIdMap.get(rootId) ?? rootId;
   const entryRootId =
-    (flow.entryRootId && routes.find((rootId) => rootId === flow.entryRootId)) ??
+    (flow.entryRootId && routes.find((rootId) => rootId === normalizeRootId(flow.entryRootId))) ??
     (flow.entryName
       ? resolveFlowRouteIds(screenRoots, [{ rootId: flow.entryRootId, name: flow.entryName }])[0]
       : undefined);
+  const successRootId = flow.successRootId ? normalizeRootId(flow.successRootId) : undefined;
   return {
     id: flow.id,
     label: flow.label,
     description: flow.description,
     entryRootId,
     successRootId:
-      flow.successRootId && routeSet.has(flow.successRootId) ? flow.successRootId : undefined,
+      successRootId && routeSet.has(successRootId) ? successRootId : undefined,
     routes,
-    edges: flow.edges.filter((edge) => routeSet.has(edge.from.rootId) && routeSet.has(edge.to)),
+    edges: flow.edges.flatMap((edge) => {
+      const from = normalizeRootId(edge.from.rootId);
+      const to = normalizeRootId(edge.to);
+      if (!routeSet.has(from) || !routeSet.has(to)) return [];
+      return [{ ...edge, from: { ...edge.from, rootId: from }, to }];
+    }),
   };
 }
 

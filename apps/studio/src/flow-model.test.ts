@@ -8,6 +8,7 @@ import {
   flowAvailableScreens,
   flowGraphLayers,
   flowRouteScreens,
+  resolveFlowRouteIdMap,
   flowScreenKey,
   inferredFlowScreens,
   moveFlowRouteToIndex,
@@ -71,6 +72,18 @@ test("flow route descriptors recover stale root ids from stable screen metadata"
       { rootId: "stale-login", name: "Login" },
     ]),
     ["fresh-welcome", "fresh-login"],
+  );
+  assert.deepEqual(
+    [...resolveFlowRouteIdMap(reloaded, [
+      { rootId: "stale-welcome", screenKey: flowScreenKey(screens[0], 0), name: "Welcome" },
+      { rootId: "stale-login", name: "Login" },
+    ]).entries()],
+    [
+      ["fresh-welcome", "fresh-welcome"],
+      ["stale-welcome", "fresh-welcome"],
+      ["fresh-login", "fresh-login"],
+      ["stale-login", "fresh-login"],
+    ],
   );
 });
 

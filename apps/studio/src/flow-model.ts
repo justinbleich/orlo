@@ -19,11 +19,18 @@ export function resolveFlowRouteIds(
   roots: readonly Node[],
   routes: readonly FlowRouteDescriptor[],
 ): NodeId[] {
+  return resolveFlowRouteMatches(roots, routes).map((match) => match.root.id);
+}
+
+export function resolveFlowRouteMatches(
+  roots: readonly Node[],
+  routes: readonly FlowRouteDescriptor[],
+): Array<{ route: FlowRouteDescriptor; root: Node }> {
   const byId = new Map(roots.map((root) => [root.id, root]));
   const byKey = new Map(roots.map((root, index) => [flowScreenKey(root, index), root]));
   const byName = new Map(roots.map((root, index) => [flowScreenName(root, index), root]));
   const used = new Set<NodeId>();
-  const resolved: NodeId[] = [];
+  const resolved: Array<{ route: FlowRouteDescriptor; root: Node }> = [];
 
   for (const route of routes) {
     const root =
@@ -32,7 +39,19 @@ export function resolveFlowRouteIds(
       (route.name ? byName.get(route.name) : undefined);
     if (!root || used.has(root.id)) continue;
     used.add(root.id);
-    resolved.push(root.id);
+    resolved.push({ route, root });
+  }
+  return resolved;
+}
+
+export function resolveFlowRouteIdMap(
+  roots: readonly Node[],
+  routes: readonly FlowRouteDescriptor[],
+): Map<NodeId, NodeId> {
+  const resolved = new Map<NodeId, NodeId>();
+  for (const { route, root } of resolveFlowRouteMatches(roots, routes)) {
+    resolved.set(root.id, root.id);
+    if (route.rootId) resolved.set(route.rootId, root.id);
   }
   return resolved;
 }

@@ -27,6 +27,7 @@ import {
   getParent,
   resolveVariant,
   useDocumentStore,
+  type ComponentDefinition,
   type DesignToken,
   type Node,
   type NodeId,
@@ -35,6 +36,7 @@ import {
 } from "@rn-canvas/document";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
 import { VariantPreviewShapeUtil, type VariantPreviewShape } from "./shapes/VariantPreviewShape";
+import { ComponentWorkspace, type ComponentWorkspaceTab } from "./ComponentWorkspace";
 import { FlowCanvas } from "./FlowCanvas";
 import { FlowInspector } from "./FlowInspector";
 import { CodePanel } from "./CodePanel";
@@ -320,6 +322,36 @@ function findFrameShapeForRoot(editor: Editor, rootId: NodeId): EditorShape | un
 
 function focusRootFrame(editor: Editor, rootId: NodeId, animate = true) {
   const shape = findFrameShapeForRoot(editor, rootId);
+  if (!shape) return false;
+  editor.select(shape.id);
+  const bounds = editor.getShapePageBounds(shape);
+  if (bounds) {
+    editor.zoomToBounds(bounds, {
+      inset: 96,
+      animation: animate ? { duration: 180 } : undefined,
+    });
+  }
+  return true;
+}
+
+function focusVariantPreviewFrame(
+  editor: Editor,
+  componentId: NodeId,
+  definition: ComponentDefinition,
+  values: Record<string, string>,
+  animate = true,
+) {
+  const key = variantPreviewKey(definition, values);
+  const defaultKey = variantPreviewKey(definition, resolveVariant(definition, {}));
+  if (key === defaultKey) return focusRootFrame(editor, componentId, animate);
+  const shape = editor
+    .getCurrentPageShapes()
+    .find(
+      (candidate) =>
+        isVariantPreview(candidate) &&
+        asVariantPreview(candidate).props.componentId === componentId &&
+        variantPreviewKey(definition, asVariantPreview(candidate).props.variantValues) === key,
+    );
   if (!shape) return false;
   editor.select(shape.id);
   const bounds = editor.getShapePageBounds(shape);
@@ -1144,6 +1176,8 @@ export default function App() {
 
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
+  const [componentWorkspaceTab, setComponentWorkspaceTab] =
+    useState<ComponentWorkspaceTab>("Canvas");
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [confirmDeleteScreen, setConfirmDeleteScreen] = useState<RepoPanelScreen | null>(null);
@@ -1188,10 +1222,19 @@ export default function App() {
   const selection = useDocumentStore((s) => s.selection);
   const editingComponentId = useDocumentStore((s) => s.editingComponentId);
   const componentRegistry = useDocumentStore((s) => s.components);
+  const updateComponent = useDocumentStore((s) => s.updateComponent);
+  const getComponentUsage = useDocumentStore((s) => s.getComponentUsage);
   const tokens = useDocumentStore((s) => s.tokens);
+  const editingComponentDefinition = editingComponentId
+    ? componentRegistry[editingComponentId]
+    : undefined;
   const editingComponentName = editingComponentId
-    ? componentRegistry[editingComponentId]?.name ?? "Component"
+    ? editingComponentDefinition?.name ?? "Component"
     : null;
+  const componentUsage = useMemo(
+    () => (editingComponentId ? getComponentUsage(editingComponentId) : []),
+    [componentRegistry, editingComponentId, getComponentUsage, roots],
+  );
   const focusedRoot = useMemo(
     () => findRootContaining(Object.values(roots), selection[0] ?? ""),
     [roots, selection],
@@ -1476,6 +1519,8 @@ export default function App() {
 
   useEffect(() => {
     if (!editingComponentId) return;
+    setWorkspace("Component");
+    setComponentWorkspaceTab("Canvas");
     if (workspace === "Flow" || workspace === "Design System") return;
     pendingFocusRootIdRef.current = editingComponentId;
     const editor = editorRef.current;
@@ -2136,6 +2181,31 @@ export default function App() {
     setStatus(`${label} tool active`);
   }, []);
 
+  const renameEditingComponent = useCallback((name: string) => {
+    if (!editingComponentId) return false;
+    try {
+      updateComponent(editingComponentId, { name });
+      setStatus(`Renamed component to ${name}`);
+      return true;
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Component rename failed");
+      return false;
+    }
+  }, [editingComponentId, setStatus, updateComponent]);
+
+  const selectComponentVariant = useCallback(
+    (values: Record<string, string>) => {
+      useStudioStore.getState().setActiveVariantAll(values);
+      const editor = editorRef.current;
+      const definition = editingComponentId ? componentRegistry[editingComponentId] : undefined;
+      if (!editor || !editingComponentId || !definition) return;
+      if (!focusVariantPreviewFrame(editor, editingComponentId, definition, values)) {
+        focusRootFrame(editor, editingComponentId);
+      }
+    },
+    [componentRegistry, editingComponentId],
+  );
+
 
   const openRepoSettings = useCallback(() => {
     setInspectorTab("Code");
@@ -2323,6 +2393,47 @@ export default function App() {
               onViewChange={setActiveDesignSystemView}
               onCreateToken={createToken}
             />
+          ) : workspace === "Component" && editingComponentDefinition ? (
+            <ComponentWorkspace
+              definition={editingComponentDefinition}
+              roots={roots}
+              components={componentRegistry}
+              usage={componentUsage}
+              activeTab={componentWorkspaceTab}
+              onTabChange={setComponentWorkspaceTab}
+              onRename={renameEditingComponent}
+              onSelectVariant={selectComponentVariant}
+              onCancel={() => {
+                useDocumentStore.getState().endComponentEdit(false);
+                setWorkspace("Screen");
+              }}
+              onDone={() => {
+                useDocumentStore.getState().endComponentEdit(true);
+                setWorkspace("Screen");
+              }}
+            >
+              <div
+                data-testid="rn-canvas-surface"
+                className="relative min-h-0 h-full"
+                onPointerDownCapture={(event) => {
+                  if (event.button !== 0) return;
+                  const target = event.target;
+                  if (!(target instanceof Element)) return;
+                  if (target.closest("[data-rn-root-id]")) return;
+                  if (target.closest("[data-rn-variant-component-id]")) return;
+                  if (target.closest(".tl-selection__handle")) return;
+                  const store = useDocumentStore.getState();
+                  if (store.selection.length > 0) store.setSelection([]);
+                }}
+              >
+                <Tldraw
+                  onMount={onMount}
+                  shapeUtils={shapeUtils}
+                  components={components}
+                  overrides={overrides}
+                />
+              </div>
+            </ComponentWorkspace>
           ) : (
             <>
               {!panelUiHidden && (
@@ -2334,29 +2445,6 @@ export default function App() {
                   canAddPrimitive={Object.keys(roots).length > 0}
                 />
               )}
-              {!panelUiHidden && editingComponentName && (
-                <div
-                  data-testid="component-edit-banner"
-                  className="studio-chrome absolute left-1/2 top-md z-10 flex -translate-x-1/2 items-center gap-md rounded-pill border border-accent-line bg-chrome px-md py-xs text-sm text-ink shadow-popover"
-                >
-                  <span>
-                    Component / <strong>{editingComponentName}</strong>
-                  </span>
-                  <span className="text-ink-faint">Focused definition</span>
-                  <Button
-                    variant="ghost"
-                    onClick={() => useDocumentStore.getState().endComponentEdit(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={() => useDocumentStore.getState().endComponentEdit(true)}
-                  >
-                    Done
-                  </Button>
-                </div>
-              )}
               <div
                 data-testid="rn-canvas-surface"
                 className="relative min-h-0 flex-1"
@@ -2365,6 +2453,7 @@ export default function App() {
                   const target = event.target;
                   if (!(target instanceof Element)) return;
                   if (target.closest("[data-rn-root-id]")) return;
+                  if (target.closest("[data-rn-variant-component-id]")) return;
                   if (target.closest(".tl-selection__handle")) return;
                   const store = useDocumentStore.getState();
                   if (store.selection.length > 0) store.setSelection([]);

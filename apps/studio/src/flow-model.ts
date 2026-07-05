@@ -10,6 +10,38 @@ export function flowScreenName(root: Node, index: number) {
   return root.design?.name ?? `Screen ${index + 1}`;
 }
 
+/** Root ids the workspace can currently account for: open documents, loaded
+ * repo screens, and screens the repo scan saw via their sidecars. */
+export function knownRootIdSet(
+  screenRoots: readonly Node[],
+  loadedScreens: Iterable<{ rootId: string }>,
+  repoContext: { sidecars: Array<{ rootId?: string }> } | null,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const root of screenRoots) ids.add(root.id);
+  for (const screen of loadedScreens) ids.add(screen.rootId);
+  for (const sidecar of repoContext?.sidecars ?? []) {
+    if (sidecar.rootId) ids.add(sidecar.rootId);
+  }
+  return ids;
+}
+
+export function routeStillExists(
+  route: { path?: string; rootId?: string },
+  repoContext: { screens: Array<{ path: string; sidecarPath?: string }> } | null,
+  knownRootIds: ReadonlySet<string>,
+): boolean {
+  // Until the repo scan lands we can't tell a dead route from an unloaded one.
+  if (!repoContext) return true;
+  if (route.path) {
+    return repoContext.screens.some(
+      (screen) => screen.path === route.path || screen.sidecarPath === route.path,
+    );
+  }
+  // Pathless routes are pre-v3 leftovers: alive only if their root is still known.
+  return !!route.rootId && knownRootIds.has(route.rootId);
+}
+
 export function flowScreenKey(root: Node, index: number) {
   const name = root.design?.name?.trim();
   return name ? `name:${name.toLowerCase()}` : `screen:${index + 1}`;

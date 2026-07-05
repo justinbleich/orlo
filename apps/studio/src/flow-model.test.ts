@@ -11,12 +11,14 @@ import {
   resolveFlowRouteIdMap,
   flowScreenKey,
   inferredFlowScreens,
+  knownRootIdSet,
   moveFlowRouteToIndex,
   pruneFlowEdges,
   removeFlowEdge,
   removeFlowRoute,
   reorderFlowRoute,
   resolveFlowRouteIds,
+  routeStillExists,
   updateFlowEdge,
 } from "./flow-model";
 
@@ -156,4 +158,35 @@ test("flowGraphLayers layers reachable branches from the entry", () => {
       { depth: 1, rootIds: ["login", "home"] },
     ],
   );
+});
+
+test("routeStillExists keeps everything until the repo scan lands", () => {
+  const known = new Set<string>();
+  assert.equal(routeStillExists({ path: "app/gone.tsx" }, null, known), true);
+  assert.equal(routeStillExists({ rootId: "ghost" }, null, known), true);
+});
+
+test("routeStillExists checks path routes against the scan", () => {
+  const context = {
+    screens: [{ path: "app/index.tsx", sidecarPath: "app/index.rncanvas.json" }],
+  };
+  const known = new Set<string>();
+  assert.equal(routeStillExists({ path: "app/index.tsx" }, context, known), true);
+  assert.equal(routeStillExists({ path: "app/index.rncanvas.json" }, context, known), true);
+  assert.equal(routeStillExists({ path: "app/deleted.tsx" }, context, known), false);
+});
+
+test("routeStillExists prunes pathless routes with unknown roots", () => {
+  const context = { screens: [] };
+  const known = knownRootIdSet(
+    screens,
+    [{ rootId: "loaded-root" }],
+    { sidecars: [{ rootId: "sidecar-root" }, {}] },
+  );
+  // Pre-v3 leftovers: alive only while their root is still accounted for.
+  assert.equal(routeStillExists({ rootId: "welcome" }, context, known), true);
+  assert.equal(routeStillExists({ rootId: "loaded-root" }, context, known), true);
+  assert.equal(routeStillExists({ rootId: "sidecar-root" }, context, known), true);
+  assert.equal(routeStillExists({ rootId: "ghost-draft" }, context, known), false);
+  assert.equal(routeStillExists({}, context, known), false);
 });

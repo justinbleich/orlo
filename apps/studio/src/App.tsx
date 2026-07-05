@@ -991,17 +991,18 @@ export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
-  const pendingFlowManifestRef = useRef<FlowManifest | null>(null);
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
+  const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
 
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
-  const [pendingDeleteScreenPath, setPendingDeleteScreenPath] = useState<string | null>(null);
+  const [confirmDeleteScreen, setConfirmDeleteScreen] = useState<RepoPanelScreen | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
   const [rightColumnWidth, setRightColumnWidth] = useState(readStoredRightColumnWidth);
+  const [panelUiHidden, setPanelUiHidden] = useState(false);
 
   // Workspace slices App itself renders or orchestrates. Panels that own their
   // display state (CodePanel, ChangesTimeline, TopBar, StatusStrip) subscribe
@@ -1068,6 +1069,7 @@ export default function App() {
     const badges: ScreenFlowBadges = {};
     const addBadge = (path: string | undefined, label: string) => {
       if (!path) return;
+      if (label === path || /\.[jt]sx$|\.rncanvas\.json$/.test(label) || label.includes("/")) return;
       badges[path] = [...(badges[path] ?? []), label];
     };
     for (const flow of flows) {
@@ -1159,7 +1161,7 @@ export default function App() {
           condition: edge.condition,
         })),
         edges: flow.edges
-          .map((edge) => {
+          .map((edge): FlowDefinition["edges"][number] | null => {
             const fromRootId = rootByScreenPath.get(edge.fromPath);
             const to = rootByScreenPath.get(edge.toPath);
             return fromRootId && to
@@ -1210,19 +1212,10 @@ export default function App() {
     }
   }, [activeFlow, flows, repoFlowItems]);
 
+  // v3 manifests key routes by repo path (manifestRoutes), so the manifest can
+  // apply before any screen root is loaded — resolved route ids fill in as
+  // screens open. (The old defer-until-roots dance is gone with draft seeding.)
   const applyFlowManifest = useCallback((body: FlowManifest) => {
-    const state = useDocumentStore.getState();
-    const screenRoots = Object.values(state.roots).filter(
-      (root) => root.id !== state.editingComponentId,
-    );
-    const hasRoutes = body.flows.some(
-      (flow) => Array.isArray(flow.routes) && flow.routes.length > 0,
-    );
-    if (hasRoutes && screenRoots.length === 0) {
-      pendingFlowManifestRef.current = body;
-      return;
-    }
-    pendingFlowManifestRef.current = null;
     applyFlowManifestToStore(body);
     const firstFlowId = body.flows[0]?.id;
     if (firstFlowId) {
@@ -1231,13 +1224,6 @@ export default function App() {
       );
     }
   }, [applyFlowManifestToStore]);
-
-  useEffect(() => {
-    if (!pendingFlowManifestRef.current) return;
-    const screenRoots = Object.values(roots).filter((root) => root.id !== editingComponentId);
-    if (screenRoots.length === 0) return;
-    applyFlowManifest(pendingFlowManifestRef.current);
-  }, [applyFlowManifest, editingComponentId, roots]);
 
   const loadFlowManifest = useCallback(async () => {
     try {
@@ -1277,15 +1263,6 @@ export default function App() {
     editor.updateInstanceState({ isGridMode: true });
 
     const store = useDocumentStore.getState();
-    if (Object.keys(store.roots).length === 0) {
-      // TODO: replace this with a dedicated repo bootstrap/onboarding flow.
-      void createRepoScreen().then((root) => {
-        if (!root) return;
-        pendingFocusRootIdRef.current = root.id;
-        syncShapes(editor);
-        focusRootFrame(editor, root.id);
-      });
-    }
     syncShapes(editor);
     if (store.selection.length === 0) store.setSelection(Object.keys(store.roots).slice(0, 1));
 
@@ -1307,7 +1284,20 @@ export default function App() {
       { scope: "session" },
     );
 
-  }, [createRepoScreen]);
+  }, []);
+
+  // First-run bootstrap: scaffold a starter screen only when the *repo* has no
+  // screens (the in-memory store is always empty at mount — repo screens load
+  // lazily — so it must not be the signal). Runs at most once per session.
+  // TODO: replace this with a dedicated repo bootstrap/onboarding flow.
+  const bootstrapAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (!repoContext || bootstrapAttemptedRef.current) return;
+    bootstrapAttemptedRef.current = true;
+    if (repoContext.screens.length > 0) return;
+    if (Object.keys(useDocumentStore.getState().roots).length > 0) return;
+    void createRepoScreen();
+  }, [repoContext, createRepoScreen]);
 
   // The document store is the single undo history — frame moves live there too
   // (framePositions), so tldraw's own history never surfaces in the UI.
@@ -1528,6 +1518,22 @@ export default function App() {
 
       const store = useDocumentStore.getState();
       const modifier = event.metaKey || event.ctrlKey;
+
+      if (
+        modifier &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.key === "." || event.code === "Period")
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setPanelUiHidden((hidden) => {
+          const next = !hidden;
+          setStatus(next ? "Panel UI hidden" : "Panel UI visible");
+          return next;
+        });
+        return;
+      }
 
       // Single-key tool shortcuts (Figma/Paper-style, no modifier). V/H/Z switch
       // host tools; F creates a screen; R/T/I arm primitives for the next drag.
@@ -1787,6 +1793,36 @@ export default function App() {
         });
       if (selectedRootIds.length === 0) return;
 
+      if (selectedRootIds.length === 1) {
+        const rootId = selectedRootIds[0];
+        const workspaceState = useWorkspaceStore.getState();
+        const loaded = Object.values(workspaceState.loadedRepoScreens).find(
+          (screen) => screen.rootId === rootId,
+        );
+        const repoScreen = loaded
+          ? workspaceState.repoContext?.screens.find(
+              (screen) =>
+                screen.path === loaded.path ||
+                screen.path === loaded.sidecarPath ||
+                screen.sidecarPath === loaded.path ||
+                screen.sidecarPath === loaded.sidecarPath,
+            ) ?? {
+              path: loaded.path,
+              name: loaded.screenName ?? loaded.path,
+              kind: "source" as const,
+              sidecarPath: loaded.sidecarPath,
+              routeKind: "unknown" as const,
+              rnCanvas: !!loaded.sidecarPath,
+            }
+          : undefined;
+        if (repoScreen?.rnCanvas && repoScreen.sidecarPath) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          requestDeleteRepoScreenRef.current(repoScreen);
+          return;
+        }
+      }
+
       event.preventDefault();
       event.stopImmediatePropagation();
       store.beginInteraction();
@@ -1978,20 +2014,24 @@ export default function App() {
     [loadedRepoScreenForPanelScreen, renameStoredRepoScreen, setStatus],
   );
 
-  const deleteRepoScreen = useCallback(
-    (screen: RepoPanelScreen) => {
-      if (pendingDeleteScreenPath !== screen.path) {
-        setPendingDeleteScreenPath(screen.path);
-        setStatus(`Confirm delete ${displayScreenName(screen)}`);
-        return;
-      }
-      setPendingDeleteScreenPath(null);
-      void deleteStoredRepoScreen(screen).catch((error) => {
-        setStatus(error instanceof Error ? error.message : "Screen delete failed");
-      });
-    },
-    [deleteStoredRepoScreen, pendingDeleteScreenPath, setStatus],
-  );
+  const requestDeleteRepoScreen = useCallback((screen: RepoPanelScreen) => {
+    if (!screen.rnCanvas || !screen.sidecarPath) {
+      setStatus("Only RNCanvas-owned screens can be deleted");
+      return;
+    }
+    setConfirmDeleteScreen(screen);
+    setStatus(`Confirm delete ${displayScreenName(screen)}`);
+  }, [setStatus]);
+  requestDeleteRepoScreenRef.current = requestDeleteRepoScreen;
+
+  const confirmDeleteRepoScreen = useCallback(() => {
+    const screen = confirmDeleteScreen;
+    if (!screen) return;
+    setConfirmDeleteScreen(null);
+    void deleteStoredRepoScreen(screen).catch((error) => {
+      setStatus(error instanceof Error ? error.message : "Screen delete failed");
+    });
+  }, [confirmDeleteScreen, deleteStoredRepoScreen, setStatus]);
 
 
 
@@ -2025,36 +2065,41 @@ export default function App() {
       }}
     >
       {/* TOP BAR (self-subscribing: git/sync pills don't re-render the shell) */}
-      <TopBar workspaceContext={workspaceContext} onOpenRepoSettings={openRepoSettings} onOpenCodePanel={() => setInspectorTab("Code")} />
+      {!panelUiHidden && (
+        <TopBar
+          workspaceContext={workspaceContext}
+          onOpenRepoSettings={openRepoSettings}
+          onOpenCodePanel={() => setInspectorTab("Code")}
+        />
+      )}
 
       {/* WORKBENCH: left panel · canvas (with floating bottom toolbar) · right column */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <LeftPanel
-          workspace={workspace}
-          onWorkspaceChange={setWorkspace}
-          onAddFrame={addFrame}
-          activeFlow={activeFlow}
-          onFlowChange={setActiveFlow}
-          flows={flowPanelItems}
-          onAddFlow={addFlow}
-          onRemoveFlow={removeFlow}
-          onCancelRemoveFlow={() => setPendingRemoveFlowId(null)}
-          pendingRemoveFlowId={pendingRemoveFlowId}
-          activeDesignSystemView={activeDesignSystemView}
-          onDesignSystemViewChange={setActiveDesignSystemView}
-          onOpenChanges={openChangesPanel}
-          onOpenRepoScreen={openRepoScreen}
-          onRenameRepoScreen={renameRepoScreen}
-          onDeleteRepoScreen={deleteRepoScreen}
-          onCancelDeleteRepoScreen={() => setPendingDeleteScreenPath(null)}
-          pendingDeleteScreenPath={pendingDeleteScreenPath}
-          screenFlowBadges={screenFlowBadges}
-          gitStatus={gitStatus}
-          sidecarPath={sidecarPath}
-          activeRepoScreen={activeRepoScreen}
-          loadedRepoScreens={loadedRepoScreens}
-          repoContext={repoContext}
-        />
+        {!panelUiHidden && (
+          <LeftPanel
+            workspace={workspace}
+            onWorkspaceChange={setWorkspace}
+            onAddFrame={addFrame}
+            activeFlow={activeFlow}
+            onFlowChange={setActiveFlow}
+            flows={flowPanelItems}
+            onAddFlow={addFlow}
+            onRemoveFlow={removeFlow}
+            onCancelRemoveFlow={() => setPendingRemoveFlowId(null)}
+            pendingRemoveFlowId={pendingRemoveFlowId}
+            activeDesignSystemView={activeDesignSystemView}
+            onDesignSystemViewChange={setActiveDesignSystemView}
+            onOpenChanges={openChangesPanel}
+            onOpenRepoScreen={openRepoScreen}
+            onRenameRepoScreen={renameRepoScreen}
+            screenFlowBadges={screenFlowBadges}
+            gitStatus={gitStatus}
+            sidecarPath={sidecarPath}
+            activeRepoScreen={activeRepoScreen}
+            loadedRepoScreens={loadedRepoScreens}
+            repoContext={repoContext}
+          />
+        )}
 
         <div className="relative flex min-w-0 flex-1 flex-col">
           {workspace === "Flow" ? (
@@ -2077,14 +2122,16 @@ export default function App() {
             />
           ) : (
             <>
-              <ToolRail
-                onCanvasTool={setCanvasTool}
-                onAddFrame={addFrame}
-                // A primitive can be armed whenever there's any screen to draw into —
-                // the target frame is resolved from the cursor, not a prior selection.
-                canAddPrimitive={Object.keys(roots).length > 0}
-              />
-              {editingComponentName && (
+              {!panelUiHidden && (
+                <ToolRail
+                  onCanvasTool={setCanvasTool}
+                  onAddFrame={addFrame}
+                  // A primitive can be armed whenever there's any screen to draw into —
+                  // the target frame is resolved from the cursor, not a prior selection.
+                  canAddPrimitive={Object.keys(roots).length > 0}
+                />
+              )}
+              {!panelUiHidden && editingComponentName && (
                 <div
                   data-testid="component-edit-banner"
                   className="studio-chrome absolute left-1/2 top-md z-10 flex -translate-x-1/2 items-center gap-md rounded-pill border border-accent-line bg-chrome px-md py-xs text-sm text-ink shadow-popover"
@@ -2136,95 +2183,130 @@ export default function App() {
 
         {/* RIGHT COLUMN: canvas/code inspector. Drag the divider to resize —
             diffs want width. Width persists per browser. */}
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize inspector"
-          title="Drag to resize"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-            const width = Math.min(
-              RIGHT_COLUMN_MAX,
-              Math.max(RIGHT_COLUMN_MIN, window.innerWidth - event.clientX),
-            );
-            setRightColumnWidth(width);
-            try {
-              window.localStorage.setItem(RIGHT_COLUMN_WIDTH_KEY, String(width));
-            } catch {
-              /* storage unavailable */
-            }
-          }}
-          onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
-          className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-accent-line"
-        />
-        <div
-          className="studio-chrome"
-          style={{
-            flex: `0 0 ${rightColumnWidth}px`,
-            width: rightColumnWidth,
-            borderLeft: `1px solid ${color.line}`,
-            display: "flex",
-            flexDirection: "column",
-            minHeight: 0,
-          }}
-        >
-          {workspace === "Flow" ? (
-            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: space.md, paddingBottom: 0 }}>
-                <div className="mb-xs flex items-center gap-xs">
-                  <div className="eyebrow min-w-0 flex-1 truncate">Flow Inspector</div>
+        {!panelUiHidden && (
+          <>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize inspector"
+              title="Drag to resize"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerMove={(event) => {
+                if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                const width = Math.min(
+                  RIGHT_COLUMN_MAX,
+                  Math.max(RIGHT_COLUMN_MIN, window.innerWidth - event.clientX),
+                );
+                setRightColumnWidth(width);
+                try {
+                  window.localStorage.setItem(RIGHT_COLUMN_WIDTH_KEY, String(width));
+                } catch {
+                  /* storage unavailable */
+                }
+              }}
+              onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+              className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-accent-line"
+            />
+            <div
+              className="studio-chrome"
+              style={{
+                flex: `0 0 ${rightColumnWidth}px`,
+                width: rightColumnWidth,
+                borderLeft: `1px solid ${color.line}`,
+                display: "flex",
+                flexDirection: "column",
+                minHeight: 0,
+              }}
+            >
+              {workspace === "Flow" ? (
+                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: space.md, paddingBottom: 0 }}>
+                    <div className="mb-xs flex items-center gap-xs">
+                      <div className="eyebrow min-w-0 flex-1 truncate">Flow Inspector</div>
+                    </div>
+                  </div>
+                  <FlowInspector
+                    flow={activeFlowDefinition}
+                    screens={flowInspectorScreens}
+                    routeScreens={flowInspectorRouteScreens}
+                    availableScreens={flowInspectorAvailableScreens}
+                    onSelectScreen={selectScreenFromWorkspace}
+                    onAddRoute={addScreenToFlow}
+                    onRemoveRoute={removeScreenFromFlow}
+                    onMoveRoute={moveScreenInFlow}
+                    onUpdateFlow={updateFlowDefinition}
+                  />
                 </div>
-              </div>
-              <FlowInspector
-                flow={activeFlowDefinition}
-                screens={flowInspectorScreens}
-                routeScreens={flowInspectorRouteScreens}
-                availableScreens={flowInspectorAvailableScreens}
-                onSelectScreen={selectScreenFromWorkspace}
-                onAddRoute={addScreenToFlow}
-                onRemoveRoute={removeScreenFromFlow}
-                onMoveRoute={moveScreenInFlow}
-                onUpdateFlow={updateFlowDefinition}
-              />
-            </div>
-          ) : (
-            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: space.md, paddingBottom: 0 }}>
-                <div className="mb-xs flex items-center gap-xs">
-                  <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
-                  {inspectorTab !== "Design" && (
-                    <span className="text-2xs font-semibold text-ink-faint">
-                      {inspectorTab}
-                    </span>
-                  )}
+              ) : (
+                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: space.md, paddingBottom: 0 }}>
+                    <div className="mb-xs flex items-center gap-xs">
+                      <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
+                      {inspectorTab !== "Design" && (
+                        <span className="text-2xs font-semibold text-ink-faint">
+                          {inspectorTab}
+                        </span>
+                      )}
+                    </div>
+                    {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
+                    <Tabs
+                      tabs={["Design", "Code", "History"]}
+                      active={inspectorTab}
+                      onSelect={setInspectorTab}
+                      variant="underline"
+                    />
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+                    {inspectorTab === "Design" ? (
+                      <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
+                        <Inspector rootId={focusedRootId} />
+                      </ErrorBoundary>
+                    ) : inspectorTab === "Code" ? (
+                      <CodePanel />
+                    ) : (
+                      <ChangesTimeline onOpenCode={() => setInspectorTab("Code")} />
+                    )}
+                  </div>
                 </div>
-                {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
-                <Tabs
-                  tabs={["Design", "Code", "History"]}
-                  active={inspectorTab}
-                  onSelect={setInspectorTab}
-                  variant="underline"
-                />
-              </div>
-              <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-                {inspectorTab === "Design" ? (
-                  <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
-                    <Inspector rootId={focusedRootId} />
-                  </ErrorBoundary>
-                ) : inspectorTab === "Code" ? (
-                  <CodePanel />
-                ) : (
-                  <ChangesTimeline onOpenCode={() => setInspectorTab("Code")} />
-                )}
-              </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
+      {confirmDeleteScreen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-md">
+          <div className="studio-chrome w-full max-w-sm rounded-md border border-line bg-chrome p-lg shadow-popover">
+            <div className="mb-sm flex items-center gap-sm">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-amber/40 bg-amber/10 text-amber">
+                <AlertTriangle size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-ink">
+                  Delete {displayScreenName(confirmDeleteScreen)}?
+                </div>
+                <div className="text-xs text-ink-faint">This removes real repo files.</div>
+              </div>
+            </div>
+            <div className="mb-md rounded-sm border border-line-soft bg-chrome-2 p-sm text-xs text-ink-dim">
+              <div className="truncate">{confirmDeleteScreen.path}</div>
+              {confirmDeleteScreen.sidecarPath && (
+                <div className="truncate">{confirmDeleteScreen.sidecarPath}</div>
+              )}
+            </div>
+            <div className="flex justify-end gap-xs">
+              <Button variant="ghost" onClick={() => setConfirmDeleteScreen(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={confirmDeleteRepoScreen}>
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       <LayerContextMenu />
       <Toasts />
     </div>

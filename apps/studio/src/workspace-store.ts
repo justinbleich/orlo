@@ -36,7 +36,9 @@ import {
   resolveFlowRouteIdMap,
   flowScreenKey,
   flowScreenName,
+  knownRootIdSet,
   resolveFlowRouteIds,
+  routeStillExists,
 } from "./flow-model";
 import type { FlowEdge, FlowManifest, FlowManifestEdge, FlowManifestRoute } from "./repo-contract";
 
@@ -175,13 +177,6 @@ function screenPathMap(loadedRepoScreens: LoadedRepoScreens) {
   return { byRoot, byPath };
 }
 
-function routeStillExists(route: FlowManifestRoute, repoContext: RepoPanelContext | null) {
-  if (!route.path || !repoContext) return true;
-  return repoContext.screens.some(
-    (screen) => screen.path === route.path || screen.sidecarPath === route.path,
-  );
-}
-
 function resolveManifestRouteIds(
   screenRoots: readonly Node[],
   routes: readonly FlowManifestRoute[],
@@ -221,7 +216,10 @@ function manifestFlowToDefinition(
   loadedRepoScreens: LoadedRepoScreens,
   repoContext: RepoPanelContext | null,
 ): FlowDefinition {
-  const manifestRoutes = flow.routes.filter((route) => routeStillExists(route, repoContext));
+  const knownRootIds = knownRootIdSet(screenRoots, Object.values(loadedRepoScreens), repoContext);
+  const manifestRoutes = flow.routes.filter((route) =>
+    routeStillExists(route, repoContext, knownRootIds),
+  );
   const routes = resolveManifestRouteIds(screenRoots, manifestRoutes, loadedRepoScreens);
   const routeIdMap = resolveManifestRouteIdMap(screenRoots, manifestRoutes, loadedRepoScreens);
   const routeSet = new Set(routes);
@@ -246,7 +244,7 @@ function manifestFlowToDefinition(
     edges: flow.edges.flatMap((edge) => {
       const from = normalizeRootId(edge.from.rootId, edge.from.path);
       const to = normalizeRootId(edge.to, edge.toPath);
-      if (!routeSet.has(from) || !routeSet.has(to)) return [];
+      if (!from || !to || !routeSet.has(from) || !routeSet.has(to)) return [];
       return [{ ...edge, from: { ...edge.from, rootId: from }, to }];
     }),
     manifestRoutes,
@@ -263,6 +261,7 @@ function flowDefinitionsToManifest(
   repoContext: RepoPanelContext | null,
 ): FlowManifest {
   const { byRoot } = screenPathMap(loadedRepoScreens);
+  const knownRootIds = knownRootIdSet(screenRoots, Object.values(loadedRepoScreens), repoContext);
   return {
     version: 3,
     flows: flows.map((flow) => {
@@ -292,7 +291,7 @@ function flowDefinitionsToManifest(
         ]),
       );
       const preservedRoutes = (flow.manifestRoutes ?? []).filter((route) => {
-        if (!routeStillExists(route, repoContext)) return false;
+        if (!routeStillExists(route, repoContext, knownRootIds)) return false;
         if (route.rootId && liveRouteKeys.has(`root:${route.rootId}`)) return false;
         if (route.path && liveRouteKeys.has(`path:${route.path}`)) return false;
         return true;
@@ -493,6 +492,7 @@ interface WorkspaceState {
   renameRepoScreen(rootId: NodeId, name: string): void;
   deleteRepoScreen(screen: RepoScreenTarget): Promise<void>;
   applyFlowManifest(body: FlowManifest): void;
+  reconcileFlowsWithRepo(): void;
   loadFlowManifest(): Promise<void>;
   persistFlowManifest(
     nextFlows?: FlowDefinition[],
@@ -588,12 +588,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         dirtyRoots.delete(rootId);
         continue;
       }
-      if (rootId === displayRootId) {
+      // The editable top-level name/path fields describe the *active* screen
+      // only. For every other root the per-screen binding is authoritative —
+      // after a delete the top-level fields can point at a file that no longer
+      // exists, and syncing another root through them would resurrect it.
+      const meta = metaByRoot.get(rootId);
+      if (rootId === displayRootId && get().activeRepoScreen?.rootId === rootId) {
+        targets.push({ root, screenName: get().screenName, targetPath: get().targetPath });
+      } else if (meta) {
+        targets.push({ root, ...meta });
+      } else if (rootId === displayRootId) {
         targets.push({ root, screenName: get().screenName, targetPath: get().targetPath });
       } else {
-        const meta = metaByRoot.get(rootId);
-        if (meta) targets.push({ root, ...meta });
-        else dirtyRoots.delete(rootId);
+        dirtyRoots.delete(rootId);
       }
     }
     if (targets.length === 0) {
@@ -672,8 +679,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     } else {
       await get().refreshGitStatus();
     }
-    if (body.context) set({ repoContext: body.context });
-    else await get().loadRepoContext();
+    if (body.context) {
+      set({ repoContext: body.context });
+      get().reconcileFlowsWithRepo();
+    } else {
+      await get().loadRepoContext();
+    }
     workspaceFlags.managedDocument = false;
     set({ activeRepoScreen: null, loadedRepoScreens: {} });
     void get().refreshBranches();
@@ -907,6 +918,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           repoDraft: body.repoPath ?? "",
           repoContext: body.context ?? null,
         });
+        get().reconcileFlowsWithRepo();
         void get().refreshBranches();
       } catch (error) {
         set({ repoError: error instanceof Error ? error.message : "Repository load failed" });
@@ -919,6 +931,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
         set({ repoContext: body.context ?? body });
+        get().reconcileFlowsWithRepo();
       } catch (error) {
         set({ repoError: error instanceof Error ? error.message : "Repository scan failed" });
       }
@@ -1095,6 +1108,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           ),
         };
       });
+      if (syncRootHint && deletedRootId === syncRootHint) syncRootHint = null;
       set((state) => {
         const loadedRepoScreens = Object.fromEntries(
           Object.entries(state.loadedRepoScreens).filter(
@@ -1105,15 +1119,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
               (!deletedRootId || value.rootId !== deletedRootId),
           ),
         );
+        const wasActive =
+          !!state.activeRepoScreen &&
+          (deletedPaths.has(state.activeRepoScreen.path) ||
+            (!!state.activeRepoScreen.sidecarPath &&
+              deletedPaths.has(state.activeRepoScreen.sidecarPath)) ||
+            (!!deletedRootId && state.activeRepoScreen.rootId === deletedRootId));
+        // The editable sync fields described the deleted screen; left stale
+        // they would point future syncs at the removed file.
+        const clearedFields = wasActive
+          ? { screenName: "", targetPath: "", sidecarPath: "" }
+          : {};
         return {
           loadedRepoScreens,
-          activeRepoScreen:
-            state.activeRepoScreen &&
-            (deletedPaths.has(state.activeRepoScreen.path) ||
-              (!!state.activeRepoScreen.sidecarPath && deletedPaths.has(state.activeRepoScreen.sidecarPath)) ||
-              (!!deletedRootId && state.activeRepoScreen.rootId === deletedRootId))
-              ? null
-              : state.activeRepoScreen,
+          activeRepoScreen: wasActive ? null : state.activeRepoScreen,
+          ...clearedFields,
           flowsById: Object.fromEntries(nextFlows.map((flow) => [flow.id, flow])),
           status: `Deleted ${screen.path}`,
         };
@@ -1136,6 +1156,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         flowsById: Object.fromEntries(manifestFlows.map((flow) => [flow.id, flow])),
         flowOrder: manifestFlows.map((flow) => flow.id),
       });
+    },
+
+    reconcileFlowsWithRepo: () => {
+      // Flow manifests can apply before the repo scan lands (routes kept
+      // permissively). Once the scan is here, round-trip the current flows
+      // through the manifest form so dead routes prune and counts settle.
+      // The pruned state reaches flows.json on the next explicit flow save.
+      const repoContext = get().repoContext;
+      if (!repoContext) return;
+      const flows = flowsFromState(get());
+      if (flows.length === 0) return;
+      const manifest = flowDefinitionsToManifest(
+        flows,
+        screenRootsFromDocument(),
+        get().loadedRepoScreens,
+        repoContext,
+      );
+      get().applyFlowManifest(manifest);
     },
 
     loadFlowManifest: async () => {

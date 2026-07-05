@@ -491,9 +491,6 @@ export function LeftPanel({
   onOpenChanges,
   onOpenRepoScreen = () => {},
   onRenameRepoScreen = () => {},
-  onDeleteRepoScreen = () => {},
-  onCancelDeleteRepoScreen = () => {},
-  pendingDeleteScreenPath,
   screenFlowBadges = {},
   gitStatus,
   sidecarPath,
@@ -516,9 +513,6 @@ export function LeftPanel({
   onOpenChanges: () => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   onRenameRepoScreen: (screen: RepoPanelScreen, name: string) => void;
-  onDeleteRepoScreen: (screen: RepoPanelScreen) => void;
-  onCancelDeleteRepoScreen: () => void;
-  pendingDeleteScreenPath?: string | null;
   screenFlowBadges?: ScreenFlowBadges;
   gitStatus: PanelGitStatus;
   sidecarPath: string;
@@ -791,10 +785,7 @@ export function LeftPanel({
   function renderScreenItem(item: (typeof repoScreenItems)[number]) {
     const repoLayerRoot =
       rootList.find((root) => root.id === loadedRootIdForRepoScreen(item.screen)) ?? activeRepoRootById;
-    const loadedRootId = loadedRootIdForRepoScreen(item.screen);
     const editing = editingScreenPath === item.screen.path;
-    const deleteArmed = pendingDeleteScreenPath === item.screen.path;
-    const canDelete = item.screen.rnCanvas && !!item.screen.sidecarPath;
     const flowLabels = badgesForScreen(item.screen);
     const flowTitle = flowLabels.join(", ");
     return (
@@ -804,44 +795,6 @@ export function LeftPanel({
           onClick={() => onOpenRepoScreen(item.screen)}
           active={item.active}
           title={`Open ${item.screen.path}`}
-          action={deleteArmed ? (
-            <>
-              <PanelAction
-                onClick={() => onDeleteRepoScreen(item.screen)}
-                title={`Confirm delete ${item.label}`}
-                className="text-amber opacity-100"
-              >
-                <Trash2 size={14} aria-hidden="true" />
-              </PanelAction>
-              <PanelAction
-                onClick={onCancelDeleteRepoScreen}
-                title="Cancel delete screen"
-                className="opacity-100"
-              >
-                <X size={14} aria-hidden="true" />
-              </PanelAction>
-            </>
-          ) : (
-            <>
-              <PanelAction
-                onClick={() => beginRenameScreen(item.screen, item.label)}
-                disabled={!loadedRootId}
-                title={loadedRootId ? `Rename ${item.label}` : "Open the screen to rename it"}
-                className={rowAction}
-              >
-                <Pencil size={14} aria-hidden="true" />
-              </PanelAction>
-              {canDelete && (
-                <PanelAction
-                  onClick={() => onDeleteRepoScreen(item.screen)}
-                  title={`Delete ${item.label}`}
-                  className={rowAction}
-                >
-                  <Trash2 size={14} aria-hidden="true" />
-                </PanelAction>
-              )}
-            </>
-          )}
         >
           {editing ? (
             <input

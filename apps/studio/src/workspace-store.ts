@@ -38,7 +38,7 @@ import {
   flowScreenName,
   resolveFlowRouteIds,
 } from "./flow-model";
-import type { FlowEdge, FlowManifest } from "./repo-contract";
+import type { FlowEdge, FlowManifest, FlowManifestEdge, FlowManifestRoute } from "./repo-contract";
 
 export type FlowDefinition = {
   id: string;
@@ -48,6 +48,10 @@ export type FlowDefinition = {
   successRootId?: NodeId;
   routes: NodeId[];
   edges: FlowEdge[];
+  manifestRoutes?: FlowManifestRoute[];
+  manifestEdges?: FlowManifestEdge[];
+  manifestEntryPath?: string;
+  manifestSuccessPath?: string;
 };
 
 export type FlowPositions = Record<string, Record<string, { x: number; y: number }>>;
@@ -159,20 +163,77 @@ function screenRootsFromDocument(): Node[] {
   return Object.values(state.roots).filter((root) => root.id !== state.editingComponentId);
 }
 
+function screenPathMap(loadedRepoScreens: LoadedRepoScreens) {
+  const byRoot = new Map<NodeId, ActiveRepoScreen>();
+  const byPath = new Map<string, ActiveRepoScreen>();
+  for (const screen of Object.values(loadedRepoScreens)) {
+    byRoot.set(screen.rootId, screen);
+    byPath.set(screen.path, screen);
+    if (screen.sidecarPath) byPath.set(screen.sidecarPath, screen);
+  }
+  return { byRoot, byPath };
+}
+
+function routeStillExists(route: FlowManifestRoute, repoContext: RepoPanelContext | null) {
+  if (!route.path || !repoContext) return true;
+  return repoContext.screens.some(
+    (screen) => screen.path === route.path || screen.sidecarPath === route.path,
+  );
+}
+
+function resolveManifestRouteIds(
+  screenRoots: readonly Node[],
+  routes: readonly FlowManifestRoute[],
+  loadedRepoScreens: LoadedRepoScreens,
+) {
+  const { byPath } = screenPathMap(loadedRepoScreens);
+  const pathRoutes = routes.map((route) => ({
+    ...route,
+    rootId: route.path ? (byPath.get(route.path)?.rootId ?? route.rootId) : route.rootId,
+  }));
+  return resolveFlowRouteIds(screenRoots, pathRoutes);
+}
+
+function resolveManifestRouteIdMap(
+  screenRoots: readonly Node[],
+  routes: readonly FlowManifestRoute[],
+  loadedRepoScreens: LoadedRepoScreens,
+) {
+  const { byPath } = screenPathMap(loadedRepoScreens);
+  const pathRoutes = routes.map((route) => ({
+    ...route,
+    rootId: route.path ? (byPath.get(route.path)?.rootId ?? route.rootId) : route.rootId,
+  }));
+  const routeIdMap = resolveFlowRouteIdMap(screenRoots, pathRoutes);
+  for (const route of routes) {
+    const loaded = route.path ? byPath.get(route.path) : undefined;
+    if (!loaded) continue;
+    routeIdMap.set(loaded.rootId, loaded.rootId);
+    if (route.rootId) routeIdMap.set(route.rootId, loaded.rootId);
+  }
+  return routeIdMap;
+}
+
 function manifestFlowToDefinition(
   flow: FlowManifest["flows"][number],
   screenRoots: readonly Node[],
+  loadedRepoScreens: LoadedRepoScreens,
+  repoContext: RepoPanelContext | null,
 ): FlowDefinition {
-  const routes = resolveFlowRouteIds(screenRoots, flow.routes);
-  const routeIdMap = resolveFlowRouteIdMap(screenRoots, flow.routes);
+  const manifestRoutes = flow.routes.filter((route) => routeStillExists(route, repoContext));
+  const routes = resolveManifestRouteIds(screenRoots, manifestRoutes, loadedRepoScreens);
+  const routeIdMap = resolveManifestRouteIdMap(screenRoots, manifestRoutes, loadedRepoScreens);
   const routeSet = new Set(routes);
-  const normalizeRootId = (rootId: NodeId) => routeIdMap.get(rootId) ?? rootId;
+  const normalizeRootId = (rootId?: NodeId, path?: string) => {
+    const loaded = path ? screenPathMap(loadedRepoScreens).byPath.get(path)?.rootId : undefined;
+    return loaded ?? (rootId ? routeIdMap.get(rootId) ?? rootId : undefined);
+  };
   const entryRootId =
-    (flow.entryRootId && routes.find((rootId) => rootId === normalizeRootId(flow.entryRootId))) ??
+    routes.find((rootId) => rootId === normalizeRootId(flow.entryRootId, flow.entryPath)) ??
     (flow.entryName
       ? resolveFlowRouteIds(screenRoots, [{ rootId: flow.entryRootId, name: flow.entryName }])[0]
       : undefined);
-  const successRootId = flow.successRootId ? normalizeRootId(flow.successRootId) : undefined;
+  const successRootId = normalizeRootId(flow.successRootId, flow.successPath);
   return {
     id: flow.id,
     label: flow.label,
@@ -182,20 +243,27 @@ function manifestFlowToDefinition(
       successRootId && routeSet.has(successRootId) ? successRootId : undefined,
     routes,
     edges: flow.edges.flatMap((edge) => {
-      const from = normalizeRootId(edge.from.rootId);
-      const to = normalizeRootId(edge.to);
+      const from = normalizeRootId(edge.from.rootId, edge.from.path);
+      const to = normalizeRootId(edge.to, edge.toPath);
       if (!routeSet.has(from) || !routeSet.has(to)) return [];
       return [{ ...edge, from: { ...edge.from, rootId: from }, to }];
     }),
+    manifestRoutes,
+    manifestEdges: flow.edges,
+    manifestEntryPath: flow.entryPath,
+    manifestSuccessPath: flow.successPath,
   };
 }
 
 function flowDefinitionsToManifest(
   flows: readonly FlowDefinition[],
   screenRoots: readonly Node[],
+  loadedRepoScreens: LoadedRepoScreens,
+  repoContext: RepoPanelContext | null,
 ): FlowManifest {
+  const { byRoot } = screenPathMap(loadedRepoScreens);
   return {
-    version: 2,
+    version: 3,
     flows: flows.map((flow) => {
       const routeScreens = flowRouteScreens(screenRoots, flow.id, flow.routes);
       const routeIds = routeScreens.map((root) => root.id);
@@ -207,22 +275,70 @@ function flowDefinitionsToManifest(
       const success = flow.successRootId
         ? routeScreens.find((root) => root.id === flow.successRootId)
         : undefined;
+      const liveRoutes = routeScreens.map((root, index) => {
+        const screen = byRoot.get(root.id);
+        return {
+          rootId: root.id,
+          path: screen?.path,
+          name: screen?.screenName ?? flowScreenName(root, index),
+          screenKey: flowScreenKey(root, index),
+        };
+      });
+      const liveRouteKeys = new Set(
+        liveRoutes.flatMap((route) => [
+          `root:${route.rootId}`,
+          ...(route.path ? [`path:${route.path}`] : []),
+        ]),
+      );
+      const preservedRoutes = (flow.manifestRoutes ?? []).filter((route) => {
+        if (!routeStillExists(route, repoContext)) return false;
+        if (route.rootId && liveRouteKeys.has(`root:${route.rootId}`)) return false;
+        if (route.path && liveRouteKeys.has(`path:${route.path}`)) return false;
+        return true;
+      });
+      const routes = [...liveRoutes, ...preservedRoutes];
+      const pathForRoot = (rootId?: NodeId) => (rootId ? byRoot.get(rootId)?.path : undefined);
+      const liveEdges =
+        flow.edges.length > 0
+          ? flow.edges
+              .filter((edge) => routeSet.has(edge.from.rootId) && routeSet.has(edge.to))
+              .map((edge) => ({
+                ...edge,
+                from: { ...edge.from, path: pathForRoot(edge.from.rootId) },
+                toPath: pathForRoot(edge.to),
+              }))
+          : deriveLinearEdges(routeIds).map((edge) => ({
+              ...edge,
+              from: { ...edge.from, path: pathForRoot(edge.from.rootId) },
+              toPath: pathForRoot(edge.to),
+            }));
+      const liveEdgeKeys = new Set(
+        liveEdges.flatMap((edge) => [
+          `${edge.from.rootId ?? ""}->${edge.to ?? ""}:${edge.kind}:${edge.from.anchorNodeId ?? ""}`,
+          edge.from.path && edge.toPath
+            ? `${edge.from.path}->${edge.toPath}:${edge.kind}:${edge.from.anchorNodeId ?? ""}`
+            : "",
+        ]),
+      );
+      const preservedEdges = (flow.manifestEdges ?? []).filter((edge) => {
+        const rootKey = `${edge.from.rootId ?? ""}->${edge.to ?? ""}:${edge.kind}:${edge.from.anchorNodeId ?? ""}`;
+        const pathKey =
+          edge.from.path && edge.toPath
+            ? `${edge.from.path}->${edge.toPath}:${edge.kind}:${edge.from.anchorNodeId ?? ""}`
+            : "";
+        return !liveEdgeKeys.has(rootKey) && !liveEdgeKeys.has(pathKey);
+      });
       return {
         id: flow.id,
         label: flow.label,
         description: flow.description,
         entryRootId: entry?.id,
+        entryPath: entry ? pathForRoot(entry.id) : flow.manifestEntryPath,
         entryName: entry?.design?.name,
         successRootId: success?.id,
-        routes: routeScreens.map((root, index) => ({
-          rootId: root.id,
-          name: flowScreenName(root, index),
-          screenKey: flowScreenKey(root, index),
-        })),
-        edges:
-          flow.edges.length > 0
-            ? flow.edges.filter((edge) => routeSet.has(edge.from.rootId) && routeSet.has(edge.to))
-            : deriveLinearEdges(routeIds),
+        successPath: success ? pathForRoot(success.id) : flow.manifestSuccessPath,
+        routes,
+        edges: [...liveEdges, ...preservedEdges],
       };
     }),
   };
@@ -898,9 +1014,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     applyFlowManifest: (body) => {
       const screenRoots = screenRootsFromDocument();
+      const { loadedRepoScreens, repoContext } = get();
       const manifestFlows = body.flows
         .filter((flow) => typeof flow.id === "string" && typeof flow.label === "string")
-        .map((flow) => manifestFlowToDefinition(flow, screenRoots));
+        .map((flow) =>
+          manifestFlowToDefinition(flow, screenRoots, loadedRepoScreens, repoContext),
+        );
       if (manifestFlows.length === 0) return;
       set({
         flowsById: Object.fromEntries(manifestFlows.map((flow) => [flow.id, flow])),
@@ -922,7 +1041,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     persistFlowManifest: async (nextFlows, screenRootsOverride) => {
       const screenRoots = screenRootsOverride ?? screenRootsFromDocument();
       const flows = nextFlows ?? flowsFromState(get());
-      const manifest = flowDefinitionsToManifest(flows, screenRoots);
+      const { loadedRepoScreens, repoContext } = get();
+      const manifest = flowDefinitionsToManifest(flows, screenRoots, loadedRepoScreens, repoContext);
       const res = await fetch("/api/flows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

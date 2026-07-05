@@ -1052,7 +1052,8 @@ export default function App() {
     return flows.map((flow) => ({
       id: flow.id,
       label: flow.label,
-      screenCount: flowRouteScreens(screenRoots, flow.id, flow.routes).length,
+      screenCount:
+        flow.manifestRoutes?.length ?? flowRouteScreens(screenRoots, flow.id, flow.routes).length,
     }));
   }, [editingComponentId, flows, roots]);
   const repoFlowItems = useMemo(
@@ -1085,12 +1086,28 @@ export default function App() {
       if (loaded.sidecarPath) rootForPath.set(loaded.sidecarPath, loaded.rootId);
     }
     const repoFlows = repoFlowItems.flatMap((flow): FlowDefinition[] => {
+      const manifestRoutes = flow.screens.map((screen) => ({
+        rootId:
+          rootForPath.get(screen.path) ??
+          (screen.sidecarPath ? rootForPath.get(screen.sidecarPath) : undefined),
+        path: screen.path,
+        name: displayScreenName(screen),
+        screenKey: `path:${screen.path}`,
+      }));
       const routes = flow.screens
-        .map((screen) => rootForPath.get(screen.path) ?? (screen.sidecarPath ? rootForPath.get(screen.sidecarPath) : undefined))
+        .map(
+          (screen) =>
+            rootForPath.get(screen.path) ??
+            (screen.sidecarPath ? rootForPath.get(screen.sidecarPath) : undefined),
+        )
         .filter((rootId): rootId is NodeId => !!rootId);
-      if (routes.length !== flow.screens.length) return [];
       const rootByScreenPath = new Map(
-        flow.screens.map((screen, index) => [screen.path, routes[index]] as const),
+        flow.screens.flatMap((screen) => {
+          const rootId =
+            rootForPath.get(screen.path) ??
+            (screen.sidecarPath ? rootForPath.get(screen.sidecarPath) : undefined);
+          return rootId ? [[screen.path, rootId] as const] : [];
+        }),
       );
       return [{
         id: flow.id,
@@ -1098,6 +1115,19 @@ export default function App() {
         description: flow.description,
         routes,
         entryRootId: flow.entryPath ? rootByScreenPath.get(flow.entryPath) : routes[0],
+        manifestEntryPath: flow.entryPath,
+        manifestRoutes,
+        manifestEdges: flow.edges.map((edge) => ({
+          from: {
+            rootId: rootByScreenPath.get(edge.fromPath),
+            path: edge.fromPath,
+            anchorNodeId: edge.anchorNodeId,
+          },
+          to: rootByScreenPath.get(edge.toPath),
+          toPath: edge.toPath,
+          kind: edge.kind,
+          condition: edge.condition,
+        })),
         edges: flow.edges
           .map((edge) => {
             const fromRootId = rootByScreenPath.get(edge.fromPath);

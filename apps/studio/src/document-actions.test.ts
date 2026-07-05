@@ -6,7 +6,14 @@ import {
   findNode,
   useDocumentStore,
 } from "@rn-canvas/document";
-import { deleteNodes, duplicateNodes, reorderFlexBlock, reorderNode } from "./document-actions";
+import {
+  createScreenFrame,
+  deleteNodes,
+  duplicateNodes,
+  nextScreenName,
+  reorderFlexBlock,
+  reorderNode,
+} from "./document-actions";
 
 function fixture() {
   return createNode("View", {
@@ -32,6 +39,15 @@ test("duplicating an ancestor and descendant clones the subtree once", () => {
   assert.equal(childrenOf(next).length, 3);
   assert.equal(childrenOf(findNode(next, created[0])!).length, 1);
   assert.equal(useDocumentStore.getState().past.length, 1);
+});
+
+test("createScreenFrame and nextScreenName produce stable screen defaults", () => {
+  const first = createScreenFrame([], "Screen 1");
+  const third = createScreenFrame([], "Screen 3");
+  assert.equal(first.type, "View");
+  assert.equal(first.style.width, 390);
+  assert.equal(first.style.height, 844);
+  assert.equal(nextScreenName([first, third], ["Screen 2"]), "Screen 4");
 });
 
 test("deleting an ancestor and descendant removes one subtree in one undo entry", () => {

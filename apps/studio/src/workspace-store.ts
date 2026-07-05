@@ -23,7 +23,12 @@ import {
   type GitStatus,
 } from "./code-artifacts";
 import { pruneCanvasManifest } from "./canvas-arrange";
-import { bindLoadedRepoScreen, type RepoPanelContext } from "./repo-project-model";
+import {
+  bindLoadedRepoScreen,
+  displayScreenName,
+  type RepoPanelContext,
+} from "./repo-project-model";
+import { createScreenFrame, nextScreenName } from "./document-actions";
 import {
   addFlowEdge,
   deriveLinearEdges,
@@ -230,6 +235,47 @@ function canvasPayload(
   return JSON.stringify({ positions, flowPositions });
 }
 
+function slugPathSegment(input: string) {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "screen";
+}
+
+function screenTargetDirectory(context: RepoPanelContext | null) {
+  const paths = [
+    ...(context?.screens.map((screen) => screen.path) ?? []),
+    ...(context?.entrypoints ?? []),
+  ];
+  const hasExpoRouter = !!context?.frameworks.some((framework) => framework.id === "expo-router");
+  if (hasExpoRouter || paths.some((path) => path.startsWith("app/") || path.startsWith("src/app/"))) {
+    return paths.some((path) => path.startsWith("src/app/")) ? "src/app" : "app";
+  }
+  const hasReactNavigation = !!context?.frameworks.some((framework) => framework.id === "react-navigation");
+  const screenDirs = ["src/screens", "screens", "src/routes", "routes"];
+  const existing = screenDirs.find((dir) => paths.some((path) => path.startsWith(`${dir}/`)));
+  if (existing) return existing;
+  if (hasReactNavigation) return "src/screens";
+  return "generated";
+}
+
+function nextScreenTargetPath(context: RepoPanelContext | null, screenName: string) {
+  const dir = screenTargetDirectory(context);
+  const base = slugPathSegment(screenName);
+  const taken = new Set<string>();
+  for (const screen of context?.screens ?? []) taken.add(screen.path);
+  for (const sidecar of context?.sidecars ?? []) {
+    if (sidecar.targetPath) taken.add(sidecar.targetPath);
+  }
+  for (let index = 1; ; index += 1) {
+    const slug = index === 1 ? base : `${base}-${index}`;
+    const path = `${dir}/${slug}.tsx`;
+    if (!taken.has(path)) return path;
+  }
+}
+
 function saveCanvasManifestLater() {
   if (canvasSaveTimer) clearTimeout(canvasSaveTimer);
   canvasSaveTimer = setTimeout(() => {
@@ -326,6 +372,7 @@ interface WorkspaceState {
   loadRepo(): Promise<void>;
   loadRepoContext(): Promise<void>;
   loadCanvasManifest(): Promise<void>;
+  createRepoScreen(): Promise<Node | null>;
   applyFlowManifest(body: FlowManifest): void;
   loadFlowManifest(): Promise<void>;
   persistFlowManifest(
@@ -372,7 +419,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
   const postCodegen = async (
     mode: "preview" | "sync",
-    payload: { root: Node; screenName: string; targetPath: string },
+    payload: { root: Node; screenName: string; targetPath: string; ifAbsent?: boolean },
   ): Promise<CodegenResult> => {
     const state = useDocumentStore.getState();
     const res = await fetch(`/api/codegen/${mode}`, {
@@ -774,6 +821,78 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         }
       } catch {
         // No canvas manifest is the normal first-run state.
+      }
+    },
+
+    createRepoScreen: async () => {
+      if (codegenInFlight) {
+        const message = "Wait for the current sync to finish before creating a screen.";
+        set({ status: message });
+        get().pushToast(message);
+        return null;
+      }
+      if (!get().repoContext) await get().loadRepoContext();
+      const context = get().repoContext;
+      const docState = useDocumentStore.getState();
+      const screenRoots = Object.values(docState.roots).filter(
+        (root) => root.id !== docState.editingComponentId,
+      );
+      const repoNames = (context?.screens ?? []).map(displayScreenName);
+      const screenName = nextScreenName(screenRoots, repoNames);
+      const targetPath = nextScreenTargetPath(context, screenName);
+      const root = createScreenFrame([], screenName);
+
+      codegenInFlight = true;
+      set({ codegenBusy: true, codegenError: null, syncState: { status: "syncing" } });
+      try {
+        const body = await postCodegen("sync", {
+          root,
+          screenName,
+          targetPath,
+          ifAbsent: true,
+        });
+        workspaceFlags.skipCodeSync = true;
+        useDocumentStore.getState().loadRoots(
+          { ...useDocumentStore.getState().roots, [root.id]: root },
+          [root.id],
+          useDocumentStore.getState().components,
+          useDocumentStore.getState().tokens,
+        );
+        studioHooks.onRepoDocumentOpened(root.id);
+        const repoScreen: ActiveRepoScreen = {
+          path: body.targetPath,
+          sidecarPath: body.sidecarPath,
+          rootId: root.id,
+          screenName: body.screenName,
+        };
+        set((state) => ({
+          screenName: body.screenName,
+          targetPath: body.targetPath,
+          sidecarPath: body.sidecarPath,
+          activeRepoScreen: repoScreen,
+          loadedRepoScreens: bindLoadedRepoScreen(
+            state.loadedRepoScreens,
+            body.targetPath,
+            repoScreen,
+            "merge",
+          ),
+          syncState: { status: "synced", path: body.targetPath },
+          status: `Created ${body.targetPath}`,
+        }));
+        dirtyRoots.delete(root.id);
+        workspaceFlags.managedDocument = true;
+        applyCodegenResult(body);
+        void get().refreshGitStatus();
+        void get().loadRepoContext();
+        return root;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Screen creation failed";
+        set({ codegenError: message, status: message, syncState: { status: "error", message } });
+        get().pushToast(message);
+        return null;
+      } finally {
+        codegenInFlight = false;
+        set({ codegenBusy: false });
       }
     },
 

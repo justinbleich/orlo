@@ -42,7 +42,6 @@ import {
   registerStudioHooks,
   setSyncRootHint,
   useWorkspaceStore,
-  workspaceFlags,
   type ActiveRepoScreen,
   type FlowDefinition,
 } from "./workspace-store";
@@ -156,31 +155,6 @@ function rootSize(root: Node): { w: number; h: number } {
   return { w, h };
 }
 
-/** Logical size of the default device canvas (iPhone 14/13, points). */
-const DEVICE_FRAME = { width: 390, height: 844 } as const;
-const DEVICE_SAFE_AREA = { top: 64, bottom: 48, side: 16 } as const;
-
-/**
- * A blank full-bleed mobile screen: device-sized, top-aligned column, white,
- * no card border/radius. The starting point for authoring a real screen.
- */
-function createScreenFrame(children: Node[] = [], name?: string): Node {
-  return createNode("View", {
-    style: {
-      width: DEVICE_FRAME.width,
-      height: DEVICE_FRAME.height,
-      backgroundColor: "#ffffff",
-      flexDirection: "column",
-      padding: DEVICE_SAFE_AREA.side,
-      paddingTop: DEVICE_SAFE_AREA.top,
-      paddingBottom: DEVICE_SAFE_AREA.bottom,
-      gap: 12,
-    },
-    design: name ? { name } : undefined,
-    children,
-  });
-}
-
 /** Create a tldraw shape for any document root that doesn't have one yet. */
 function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   const frameShapes = editor.getCurrentPageShapes().filter(isFrame).map(asFrame);
@@ -286,15 +260,6 @@ function flowDescription(flows: FlowDefinition[], id: FlowId) {
     flows.find((flow) => flow.id === id)?.description ??
     "Prototype route order for this screen group."
   );
-}
-
-function nextScreenName(roots: Iterable<Node>) {
-  const taken = new Set(
-    Array.from(roots, (root) => root.design?.name).filter((name): name is string => !!name),
-  );
-  let index = 1;
-  while (taken.has(`Screen ${index}`)) index += 1;
-  return `Screen ${index}`;
 }
 
 function FlowWorkspace({
@@ -1060,6 +1025,7 @@ export default function App() {
   const openSidecar = useWorkspaceStore((s) => s.openSidecar);
   const importSource = useWorkspaceStore((s) => s.importSource);
   const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
+  const createRepoScreen = useWorkspaceStore((s) => s.createRepoScreen);
 
   // The document store's selection is the single source of truth. The focused
   // frame is *derived* from it (the root whose subtree holds the selection), and
@@ -1252,14 +1218,13 @@ export default function App() {
 
     const store = useDocumentStore.getState();
     if (Object.keys(store.roots).length === 0) {
-      const seed = createScreenFrame(
-        [createNode("Text", { props: { text: "Hello RN Canvas" } })],
-        nextScreenName(Object.values(store.roots)),
-      );
-      workspaceFlags.skipTokenWrite = true; // seed load — don't write theme.ts
-      workspaceFlags.skipCodeSync = true; // seed load — don't write generated files
-      useWorkspaceStore.getState().setActiveRepoScreen(null);
-      store.loadRoots({ [seed.id]: seed }, [seed.id]);
+      // TODO: replace this with a dedicated repo bootstrap/onboarding flow.
+      void createRepoScreen().then((root) => {
+        if (!root) return;
+        pendingFocusRootIdRef.current = root.id;
+        syncShapes(editor);
+        focusRootFrame(editor, root.id);
+      });
     }
     syncShapes(editor);
     if (store.selection.length === 0) store.setSelection(Object.keys(store.roots).slice(0, 1));
@@ -1282,7 +1247,7 @@ export default function App() {
       { scope: "session" },
     );
 
-  }, []);
+  }, [createRepoScreen]);
 
   // The document store is the single undo history — frame moves live there too
   // (framePositions), so tldraw's own history never surfaces in the UI.
@@ -1879,28 +1844,27 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  const addFrame = useCallback(() => {
-    const store = useDocumentStore.getState();
-    const root = createScreenFrame([], nextScreenName(Object.values(store.roots)));
+  const addFrame = useCallback(async () => {
+    const root = await createRepoScreen();
+    if (!root) return null;
     pendingFocusRootIdRef.current = root.id;
-    setActiveRepoScreen(null);
-    store.addRoot(root);
-    store.setSelection([root.id]);
     return root;
-  }, []);
+  }, [createRepoScreen]);
 
   const addFrameToActiveFlow = useCallback(() => {
-    const root = addFrame();
-    const screenName = root.design?.name ?? "Screen";
-    const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
-      (item) => item.id !== useDocumentStore.getState().editingComponentId,
-    );
-    const current = flowsById[activeFlow]?.routes;
-    const nextRoutes = addFlowRoute(screenRoots, activeFlow, current, root.id);
-    void updateStoredFlowRoutes(activeFlow, nextRoutes, screenRoots).then(
-      () => setStatus(`Created ${screenName} and added it to the flow`),
-      (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
-    );
+    void addFrame().then((root) => {
+      if (!root) return;
+      const screenName = root.design?.name ?? "Screen";
+      const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
+        (item) => item.id !== useDocumentStore.getState().editingComponentId,
+      );
+      const current = flowsById[activeFlow]?.routes;
+      const nextRoutes = addFlowRoute(screenRoots, activeFlow, current, root.id);
+      void updateStoredFlowRoutes(activeFlow, nextRoutes, screenRoots).then(
+        () => setStatus(`Created ${screenName} and added it to the flow`),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
+      );
+    });
   }, [activeFlow, addFrame, flowsById, updateStoredFlowRoutes]);
 
   const setCanvasTool = useCallback((tool: CanvasTool) => {
@@ -1979,7 +1943,6 @@ export default function App() {
           onDesignSystemViewChange={setActiveDesignSystemView}
           onOpenChanges={openChangesPanel}
           onOpenRepoScreen={openRepoScreen}
-          onFocusCanvasScreen={() => setActiveRepoScreen(null)}
           gitStatus={gitStatus}
           sidecarPath={sidecarPath}
           activeRepoScreen={activeRepoScreen}

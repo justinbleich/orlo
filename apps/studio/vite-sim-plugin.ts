@@ -31,6 +31,7 @@ type CodegenRequest = {
   root?: Node;
   screenName?: string;
   targetPath?: string;
+  ifAbsent?: boolean;
   components?: ComponentRegistry;
   tokens?: TokenRegistry;
   navTargets?: Record<string, string>;
@@ -187,8 +188,7 @@ function sendJson(res: import("node:http").ServerResponse, status: number, paylo
 }
 
 function safeComponentName(input = "Screen") {
-  const name = input.replace(/[^A-Za-z0-9_$]/g, "");
-  return /^[A-Z][A-Za-z0-9_$]*$/.test(name) ? name : "Screen";
+  return input.trim() || "Screen";
 }
 
 async function resolveRepoRoot(input?: string) {
@@ -954,6 +954,9 @@ export function simScreenshotPlugin(): Plugin {
           const screenName = safeComponentName(body.screenName);
           const generated = await runCodegen(body.root, screenName, body.components, body.tokens, body.navTargets);
           const paths = resolveTargetPath(screenName, body.targetPath);
+          if (body.ifAbsent && ((await fileExists(paths.tsxPath)) || (await fileExists(paths.sidecarPath)))) {
+            throw new Error("Screen path already exists");
+          }
           const exportDir = dirname(paths.tsxPath);
           await mkdir(exportDir, { recursive: true });
           await writeFile(paths.tsxPath, `${generated.code}\n`);

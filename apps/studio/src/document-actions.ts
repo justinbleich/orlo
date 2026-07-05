@@ -12,6 +12,9 @@ import {
 } from "@rn-canvas/document";
 import { normalizeNodeSelection } from "./selection";
 
+const DEVICE_FRAME = { width: 390, height: 844 } as const;
+const DEVICE_SAFE_AREA = { top: 64, bottom: 48, side: 16 } as const;
+
 /** Run a batch of store mutations as one undo entry, rolling back on failure. */
 function asInteraction<T>(fn: () => T): T {
   const store = useDocumentStore.getState();
@@ -50,6 +53,34 @@ function cloneSubtree(node: Node): Node {
       ? childrenOf(node).map(cloneSubtree)
       : undefined,
   });
+}
+
+/** A blank full-bleed mobile screen: device-sized, top-aligned column, white. */
+export function createScreenFrame(children: Node[] = [], name?: string): Node {
+  return createNode("View", {
+    style: {
+      width: DEVICE_FRAME.width,
+      height: DEVICE_FRAME.height,
+      backgroundColor: "#ffffff",
+      flexDirection: "column",
+      padding: DEVICE_SAFE_AREA.side,
+      paddingTop: DEVICE_SAFE_AREA.top,
+      paddingBottom: DEVICE_SAFE_AREA.bottom,
+      gap: 12,
+    },
+    design: name ? { name } : undefined,
+    children,
+  });
+}
+
+export function nextScreenName(roots: Iterable<Node>, additionalNames: Iterable<string> = []) {
+  const taken = new Set([
+    ...Array.from(roots, (root) => root.design?.name).filter((name): name is string => !!name),
+    ...additionalNames,
+  ]);
+  let index = 1;
+  while (taken.has(`Screen ${index}`)) index += 1;
+  return `Screen ${index}`;
 }
 
 /** Duplicate each node as the next sibling of its original; selects the copies. */

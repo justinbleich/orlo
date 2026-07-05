@@ -758,7 +758,7 @@ export function LeftPanel({
   const screenItems = [
     ...canvasScreenEntries.map((item) => ({
       ...item,
-      detail: item.gitTitle ? shortPathLabel(item.gitTitle) : undefined,
+      detail: item.gitTitle ? shortPathLabel(item.gitTitle) : "Draft",
     })),
     ...repoScreenEntries.map((item) => ({
       ...item,

@@ -83,11 +83,12 @@ export function DocumentTree({
   const selected = selectedIds.includes(node.id);
   const locked = !!node.design?.locked;
   const hidden = !!node.design?.hidden;
+  const isRoot = depth === 0;
   const isInstance = node.type === "ComponentInstance";
   const componentName =
     node.type === "ComponentInstance" ? components[node.componentId]?.name : undefined;
   const label = node.design?.name ?? componentName ?? node.type;
-  const typeHint = isInstance ? "instance" : node.type;
+  const typeHint = isRoot ? "screen root" : isInstance ? "instance" : node.type;
   const children = childrenOf(node);
   const container = isContainer(node);
   const expanded = !collapsed;
@@ -249,7 +250,9 @@ export function DocumentTree({
         ) : (
           <span className={cn("min-w-0 flex-1 truncate")}>
             {label}
-            {isInstance && <span style={{ color: color.inkFaint }}> · instance</span>}
+            {(isRoot || isInstance) && (
+              <span style={{ color: color.inkFaint }}> · {typeHint}</span>
+            )}
           </span>
         )}
         {/* Hover affordances; hidden/locked stay visible as state. */}

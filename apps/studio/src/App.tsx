@@ -1882,13 +1882,14 @@ export default function App() {
 
   const addFrameToActiveFlow = useCallback(() => {
     const root = addFrame();
+    const screenName = root.design?.name ?? "Screen";
     const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
       (item) => item.id !== useDocumentStore.getState().editingComponentId,
     );
     const current = flowsById[activeFlow]?.routes;
     const nextRoutes = addFlowRoute(screenRoots, activeFlow, current, root.id);
     void updateStoredFlowRoutes(activeFlow, nextRoutes, screenRoots).then(
-      () => setStatus("Added screen to flow"),
+      () => setStatus(`Created ${screenName} and added it to the flow`),
       (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
     );
   }, [activeFlow, addFrame, flowsById, updateStoredFlowRoutes]);

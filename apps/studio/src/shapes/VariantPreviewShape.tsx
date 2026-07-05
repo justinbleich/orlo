@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import {
   HTMLContainer,
   Rectangle2d,
@@ -13,8 +14,9 @@ import {
   useDocumentStore,
   type ComponentRegistry,
 } from "@rn-canvas/document";
-import { FrameRenderer } from "@rn-canvas/render-web";
+import { FrameRenderer, type LayoutReadyResult } from "@rn-canvas/render-web";
 import { useShallow } from "zustand/react/shallow";
+import { LayerOverlay } from "../LayerOverlay";
 import { color, font, radius, space, text } from "../studio-theme";
 import { useStudioStore } from "../studio-store";
 import {
@@ -67,7 +69,14 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
         return out;
       }),
     );
-    if (!definition) {
+    // Layout snapshot for direct manipulation — shape-local, unlike FrameShape's
+    // rootId-keyed studio layout map (a preview isn't a document root).
+    const [layoutResult, setLayoutResult] = useState<LayoutReadyResult | null>(null);
+    const root = useMemo(
+      () => (definition ? variantPreviewRoot(definition, shape.props.variantValues) : null),
+      [definition, shape.props.variantValues],
+    );
+    if (!definition || !root) {
       return (
         <HTMLContainer style={{ width: shape.props.w, height: shape.props.h }}>
           <div style={{ padding: 12, color: "#999", fontSize: 12 }}>
@@ -77,7 +86,6 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
       );
     }
 
-    const root = variantPreviewRoot(definition, shape.props.variantValues);
     const activeKey = variantPreviewKey(definition, resolveVariant(definition, activeVariant));
     const ownKey = variantPreviewKey(definition, shape.props.variantValues);
     const active = activeKey === ownKey;
@@ -98,9 +106,13 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
             : "0 8px 24px rgba(17, 24, 39, 0.08)",
           pointerEvents: "auto",
         }}
+        onPointerDownCapture={() => {
+          // Capture phase: fires before the overlay's handlers (which stop
+          // propagation), so touching a preview always activates its combo.
+          setActiveVariantAll(shape.props.variantValues);
+        }}
         onPointerDown={(event) => {
           event.stopPropagation();
-          setActiveVariantAll(shape.props.variantValues);
         }}
       >
         <div
@@ -129,8 +141,23 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
           {variantPreviewLabel(definition, shape.props.variantValues)}
         </div>
         <div style={{ pointerEvents: "none" }}>
-          <FrameRenderer root={root} components={components} />
+          <FrameRenderer root={root} components={components} onLayoutReady={setLayoutResult} />
         </div>
+        {/* Direct manipulation: active only while this combo is the active
+            variant — first click activates (capture handler above), then the
+            overlay owns selection/drag/resize, routing writes into this
+            combination's overrides. */}
+        {layoutResult && (
+          <LayerOverlay
+            root={root}
+            result={layoutResult}
+            active={active}
+            variantTarget={{
+              componentId: shape.props.componentId,
+              values: shape.props.variantValues,
+            }}
+          />
+        )}
       </HTMLContainer>
     );
   }

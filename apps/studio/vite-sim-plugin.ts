@@ -745,7 +745,19 @@ function assetKind(path: string): RepoAssetCandidate["kind"] {
   return "other";
 }
 
-async function walkRepoFiles(root: string) {
+async function isNestedPackageRoot(dir: string) {
+  const results = await Promise.all(
+    ["package.json", ".git"].map((marker) =>
+      access(join(dir, marker)).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  );
+  return results.some(Boolean);
+}
+
+export async function walkRepoFiles(root: string) {
   const files: string[] = [];
   const rootEntries = new Set<string>();
   let truncated = false;
@@ -764,6 +776,9 @@ async function walkRepoFiles(root: string) {
       if (depth === 0) rootEntries.add(entry.name);
       if (entry.isDirectory()) {
         if (repoScanIgnoredDirs.has(entry.name) || depth >= maxDepth) continue;
+        // Nested projects (examples, test fixtures, workspace packages) are
+        // separate repos as far as the panel is concerned — never scan into them.
+        if (await isNestedPackageRoot(abs)) continue;
         await visit(abs, depth + 1);
         continue;
       }
@@ -822,6 +837,7 @@ async function readRepoContext(): Promise<RepoContext> {
       .filter((sidecar): sidecar is RepoSidecarCandidate & { targetPath: string } => !!sidecar.targetPath)
       .map((sidecar) => [sidecar.targetPath, sidecar]),
   );
+  const fileSet = new Set(files);
   const screenMap = new Map<string, RepoScreenCandidate>();
   for (const file of files) {
     if (isLikelyScreenSource(file)) {
@@ -838,12 +854,14 @@ async function readRepoContext(): Promise<RepoContext> {
   }
   for (const sidecar of sidecars) {
     if (sidecar.targetPath && !screenMap.has(sidecar.targetPath)) {
-      screenMap.set(sidecar.path, {
-        path: sidecar.path,
+      const targetExists = fileSet.has(sidecar.targetPath);
+      const path = targetExists ? sidecar.targetPath : sidecar.path;
+      screenMap.set(path, {
+        path,
         name: sidecar.screenName ?? screenNameFromPath(sidecar.path),
-        kind: "sidecar",
+        kind: targetExists ? "source" : "sidecar",
         sidecarPath: sidecar.path,
-        routeKind: routeKindForPath(sidecar.path, dependencies),
+        routeKind: routeKindForPath(path, dependencies),
         rnCanvas: true,
       });
     }

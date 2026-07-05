@@ -10,6 +10,11 @@ export type ArrangeBox = {
   height: number;
 };
 
+export type CanvasManifestPositions = Record<NodeId, { x: number; y: number }>;
+export type CanvasManifestFlowPositions = Record<string, CanvasManifestPositions>;
+export type FrameSize = { width: number; height: number };
+export type FramePosition = { x: number; y: number };
+
 function start(box: ArrangeBox, axis: PhysicalAxis): number {
   return axis === "horizontal" ? box.left : box.top;
 }
@@ -59,4 +64,67 @@ export function distributionDeltas(
     cursor += size(box, axis) + gap;
   }
   return deltas;
+}
+
+export function pruneCanvasManifest(
+  positions: CanvasManifestPositions,
+  flowPositions: CanvasManifestFlowPositions,
+  knownRootIds: ReadonlySet<NodeId>,
+  knownFlowIds: ReadonlySet<string>,
+) {
+  const nextPositions: CanvasManifestPositions = {};
+  for (const [rootId, position] of Object.entries(positions)) {
+    if (knownRootIds.has(rootId)) nextPositions[rootId] = position;
+  }
+
+  const nextFlowPositions: CanvasManifestFlowPositions = {};
+  for (const [flowId, byRoot] of Object.entries(flowPositions)) {
+    if (!knownFlowIds.has(flowId)) continue;
+    const nextByRoot: CanvasManifestPositions = {};
+    for (const [rootId, position] of Object.entries(byRoot)) {
+      if (knownRootIds.has(rootId)) nextByRoot[rootId] = position;
+    }
+    if (Object.keys(nextByRoot).length > 0) nextFlowPositions[flowId] = nextByRoot;
+  }
+
+  return { positions: nextPositions, flowPositions: nextFlowPositions };
+}
+
+function intersects(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+export function nextFreeFramePosition(
+  occupied: readonly Array<FramePosition & FrameSize>,
+  frame: FrameSize,
+  gutter: number,
+  origin: FramePosition,
+  columns = 3,
+): FramePosition {
+  const columnCount = Math.max(1, Math.floor(columns));
+  const slotWidth = frame.width + gutter;
+  const slotHeight = frame.height + gutter;
+  for (let index = 0; index < 10_000; index += 1) {
+    const candidate = {
+      x: origin.x + (index % columnCount) * slotWidth,
+      y: origin.y + Math.floor(index / columnCount) * slotHeight,
+      width: frame.width,
+      height: frame.height,
+    };
+    if (!occupied.some((box) => intersects(candidate, box))) {
+      return { x: candidate.x, y: candidate.y };
+    }
+  }
+  return {
+    x: origin.x,
+    y: origin.y + Math.ceil(occupied.length / columnCount) * slotHeight,
+  };
 }

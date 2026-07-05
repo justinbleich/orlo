@@ -22,6 +22,7 @@ import {
   type CodegenResult,
   type GitStatus,
 } from "./code-artifacts";
+import { pruneCanvasManifest } from "./canvas-arrange";
 import { bindLoadedRepoScreen, type RepoPanelContext } from "./repo-project-model";
 import {
   addFlowEdge,
@@ -232,15 +233,26 @@ function canvasPayload(
 function saveCanvasManifestLater() {
   if (canvasSaveTimer) clearTimeout(canvasSaveTimer);
   canvasSaveTimer = setTimeout(() => {
-    const positions = useDocumentStore.getState().framePositions;
-    const flowPositions = useWorkspaceStore.getState().flowPositions;
-    const payload = canvasPayload(positions, flowPositions);
+    const documentState = useDocumentStore.getState();
+    const workspaceState = useWorkspaceStore.getState();
+    const knownRootIds = new Set<NodeId>(Object.keys(documentState.roots));
+    for (const sidecar of workspaceState.repoContext?.sidecars ?? []) {
+      if (sidecar.rootId) knownRootIds.add(sidecar.rootId);
+    }
+    const knownFlowIds = new Set<string>(Object.keys(workspaceState.flowsById));
+    const manifest = pruneCanvasManifest(
+      documentState.framePositions,
+      workspaceState.flowPositions,
+      knownRootIds,
+      knownFlowIds,
+    );
+    const payload = canvasPayload(manifest.positions, manifest.flowPositions);
     if (payload === canvasSaved) return;
     canvasSaved = payload;
     void fetch("/api/canvas", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ manifest: { version: 1, positions, flowPositions } }),
+      body: JSON.stringify({ manifest: { version: 1, ...manifest } }),
     }).catch(() => {});
   }, 500);
 }

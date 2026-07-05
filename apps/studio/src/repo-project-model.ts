@@ -35,7 +35,7 @@ export type RepoPanelContext = {
     routeKind: "expo-router" | "react-navigation" | "unknown";
     rnCanvas: boolean;
   }>;
-  sidecars: Array<{ path: string; screenName?: string; targetPath?: string }>;
+  sidecars: Array<{ path: string; rootId?: string; screenName?: string; targetPath?: string }>;
   assets: Array<{ path: string; kind: string }>;
   entrypoints: string[];
   truncated?: boolean;

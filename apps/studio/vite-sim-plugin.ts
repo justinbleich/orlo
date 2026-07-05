@@ -110,6 +110,7 @@ type RepoFlowCandidate = RepoFlowGraphCandidate & {
 type RepoSidecarCandidate = {
   path: string;
   screenName?: string;
+  rootId?: string;
   targetPath?: string;
 };
 
@@ -718,10 +719,12 @@ function inferLinearRepoFlows(screens: RepoScreenCandidate[]): RepoFlowCandidate
 async function maybeReadSidecar(path: string): Promise<RepoSidecarCandidate> {
   try {
     const raw = await readFile(join(activeRepoRoot, path), "utf8");
-    const parsed = JSON.parse(raw) as { screenName?: string };
+    const parsed = JSON.parse(raw) as { root?: { id?: unknown }; screenName?: string };
+    const rootId = typeof parsed.root?.id === "string" ? parsed.root.id : undefined;
     return {
       path,
       screenName: parsed.screenName,
+      rootId,
       targetPath: path.replace(/\.rncanvas\.json$/, ".tsx"),
     };
   } catch {

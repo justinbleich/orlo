@@ -82,6 +82,7 @@ import {
   TooltipProvider,
   cn,
 } from "./studio-ui";
+import { nextFreeFramePosition } from "./canvas-arrange";
 import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
@@ -182,23 +183,31 @@ function createScreenFrame(children: Node[] = [], name?: string): Node {
 
 /** Create a tldraw shape for any document root that doesn't have one yet. */
 function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
-  const existing = new Set(
-    editor
-      .getCurrentPageShapes()
-      .filter(isFrame)
-      .map((s) => asFrame(s).props.rootId),
-  );
+  const frameShapes = editor.getCurrentPageShapes().filter(isFrame).map(asFrame);
+  const existing = new Set(frameShapes.map((shape) => shape.props.rootId));
+  const occupied = frameShapes.map((shape) => ({
+    x: shape.x,
+    y: shape.y,
+    width: shape.props.w,
+    height: shape.props.h,
+  }));
   const store = useDocumentStore.getState();
   const seeded: Record<NodeId, { x: number; y: number }> = {};
-  let i = existing.size;
   for (const root of Object.values(roots)) {
     if (existing.has(root.id)) continue;
     const { w, h } = rootSize(root);
     // Stored position wins (persisted arrangement / undo state); new frames get
     // the grid slot, recorded back so the layout is durable from the start.
     const stored = store.framePositions[root.id];
-    const x = stored?.x ?? 80 + (i % 3) * (DEVICE_FRAME.width + 50);
-    const y = stored?.y ?? 80 + Math.floor(i / 3) * (DEVICE_FRAME.height + 56);
+    const position =
+      stored ??
+      nextFreeFramePosition(
+        occupied,
+        { width: w, height: h },
+        56,
+        { x: 80, y: 80 },
+      );
+    const { x, y } = position;
     if (!stored) seeded[root.id] = { x, y };
     editor.createShape({
       id: createShapeId(),
@@ -208,7 +217,7 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
       props: { rootId: root.id, w, h },
       isLocked: !!root.design?.locked,
     } as unknown as CreatePartial);
-    i += 1;
+    occupied.push({ x, y, width: w, height: h });
   }
   store.seedFramePositions(seeded);
 }

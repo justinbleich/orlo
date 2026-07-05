@@ -33,11 +33,17 @@ export interface EmitOptions {
   components?: ComponentRegistry;
   /** Design tokens; token-bound style keys emit `theme.color.<name>` (Phase 2D). */
   tokens?: TokenRegistry;
+  /** Node id -> route href. Pressable nodes emit an expo-router onPress handler. */
+  navTargets?: Record<string, string>;
 }
 
 export function emitScreen(root: Node, opts: EmitOptions = {}): string {
   const screenName = toComponentName(opts.screenName ?? "Screen");
-  const emitter = createEmitter({ components: opts.components, tokens: opts.tokens });
+  const emitter = createEmitter({
+    components: opts.components,
+    tokens: opts.tokens,
+    navTargets: opts.navTargets,
+  });
 
   // Build the tree first so `used` + `styleEntries` + `componentImports` populate.
   const tree: t.Expression = root.design?.hidden ? t.nullLiteral() : emitter.build(root);
@@ -46,11 +52,31 @@ export function emitScreen(root: Node, opts: EmitOptions = {}): string {
     used: usesTheme(emitter.styleEntries),
     prefix: "./",
   });
+  if (opts.navTargets && Object.keys(opts.navTargets).length > 0) {
+    imports.push(
+      t.importDeclaration(
+        [t.importSpecifier(t.identifier("useRouter"), t.identifier("useRouter"))],
+        t.stringLiteral("expo-router"),
+      ),
+    );
+  }
+  const statements: t.Statement[] = [];
+  if (opts.navTargets && Object.keys(opts.navTargets).length > 0) {
+    statements.push(
+      t.variableDeclaration("const", [
+        t.variableDeclarator(
+          t.identifier("router"),
+          t.callExpression(t.identifier("useRouter"), []),
+        ),
+      ]),
+    );
+  }
+  statements.push(t.returnStatement(tree));
   const component = t.exportDefaultDeclaration(
     t.functionDeclaration(
       t.identifier(screenName),
       [],
-      t.blockStatement([t.returnStatement(tree)]),
+      t.blockStatement(statements),
     ),
   );
   const stylesConst = stylesDeclaration(emitter.styleEntries);

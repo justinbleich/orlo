@@ -105,6 +105,10 @@ type ImportSourceResult = {
   sidecarPath: string;
 };
 
+type FlowApplyResult = CodegenResult & {
+  wrote?: boolean;
+};
+
 // --- Non-reactive pipeline latches --------------------------------------------
 
 /** Cross-cutting suppression flags shared with App-side canvas glue (e.g. the
@@ -277,6 +281,7 @@ interface WorkspaceState {
   flowsById: Record<string, FlowDefinition>;
   flowOrder: string[];
   flowPositions: FlowPositions;
+  flowWireMode: boolean;
 
   /** Persistent error notices (sync/repo/git failures). Transient confirmations
    *  stay in the status strip; errors stack here until dismissed. */
@@ -309,9 +314,11 @@ interface WorkspaceState {
   setFlowEntryRoot(flowId: string, rootId: NodeId): Promise<void>;
   updateFlowRoutes(flowId: string, routeIds: NodeId[], screenRoots?: Node[]): Promise<void>;
   addFlowEdge(flowId: string, edge: FlowEdge): Promise<void>;
+  hydrateRepoFlows(flows: FlowDefinition[]): void;
   upsertFlow(flow: FlowDefinition): Promise<void>;
   removeFlow(flowId: string): Promise<void>;
   setFlowPosition(flowId: string, rootId: NodeId, x: number, y: number): void;
+  setFlowWireMode(enabled: boolean): void;
   seedFlowPositions(flowPositions: FlowPositions): void;
   requestCodegen(
     mode: "preview" | "sync",
@@ -596,6 +603,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     flowsById: defaultFlowsById(),
     flowOrder: DEFAULT_FLOWS.map((flow) => flow.id),
     flowPositions: {},
+    flowWireMode: false,
 
     toasts: [],
     pushToast: (message) =>
@@ -828,6 +836,56 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       );
       set((state) => ({ flowsById: { ...state.flowsById, [flowId]: nextFlow } }));
       await get().persistFlowManifest(nextFlows);
+      if (!edge.from.anchorNodeId) return;
+      const source = Object.values(get().loadedRepoScreens).find(
+        (screen) => screen.rootId === edge.from.rootId,
+      );
+      const target = Object.values(get().loadedRepoScreens).find(
+        (screen) => screen.rootId === edge.to,
+      );
+      if (!source?.sidecarPath || !target?.path) {
+        set({ status: "Flow edge saved as manifest intent; source is not rncanvas-owned" });
+        return;
+      }
+      const doc = useDocumentStore.getState();
+      const root = doc.roots[edge.from.rootId];
+      if (!root) return;
+      const res = await fetch("/api/flows/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "add-edge",
+          sourcePath: source.path,
+          targetPath: target.path,
+          anchorNodeId: edge.from.anchorNodeId,
+          root,
+          screenName: source.screenName,
+          components: doc.components,
+          tokens: doc.tokens,
+        }),
+      });
+      const body = (await res.json()) as FlowApplyResult & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      applyCodegenResult(body);
+      void get().refreshGitStatus();
+      void get().loadRepoContext();
+    },
+
+    hydrateRepoFlows: (flows) => {
+      if (flows.length === 0) return;
+      set((state) => {
+        const flowsById = { ...state.flowsById };
+        const repoIds = new Set(flows.map((flow) => flow.id));
+        for (const id of Object.keys(flowsById)) {
+          if (id.startsWith("repo-flow:") && !repoIds.has(id)) delete flowsById[id];
+        }
+        for (const flow of flows) {
+          flowsById[flow.id] = flow;
+        }
+        const manualOrder = state.flowOrder.filter((id) => !id.startsWith("repo-flow:"));
+        const repoOrder = flows.map((flow) => flow.id);
+        return { flowsById, flowOrder: [...manualOrder, ...repoOrder] };
+      });
     },
 
     upsertFlow: async (flow) => {
@@ -872,6 +930,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         },
       }));
       saveCanvasManifestLater();
+    },
+
+    setFlowWireMode: (flowWireMode) => {
+      set({ flowWireMode, status: flowWireMode ? "Flow wiring handles visible" : "Flow wiring handles hidden" });
     },
 
     seedFlowPositions: (flowPositions) => {

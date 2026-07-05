@@ -18,6 +18,14 @@ export type RepoPanelContext = {
     description?: string;
     routeKind?: string;
     screenPaths: string[];
+    entryPath?: string;
+    edges?: Array<{
+      fromPath: string;
+      toPath: string;
+      kind: "primary" | "conditional" | "fallback";
+      condition?: string;
+      anchorNodeId?: string;
+    }>;
   }>;
   screens: Array<{
     path: string;
@@ -40,6 +48,8 @@ export type RepoFlowPanelItem = {
   description?: string;
   routeKind?: string;
   screens: RepoPanelScreen[];
+  entryPath?: string;
+  edges: NonNullable<NonNullable<RepoPanelContext["flows"]>[number]["edges"]>;
 };
 export type RepoGitFileStatus = { path: string; index: string; workingTree: string };
 export type RepoChangeGroup = {
@@ -77,6 +87,8 @@ export function repoFlowItemsForContext(repoContext?: RepoPanelContext | null): 
       name: flow.label,
       description: flow.description,
       routeKind: flow.routeKind,
+      entryPath: flow.entryPath,
+      edges: flow.edges ?? [],
       screens: flow.screenPaths
         .map((path) => screenByPath.get(path))
         .filter((screen): screen is RepoPanelScreen => !!screen),

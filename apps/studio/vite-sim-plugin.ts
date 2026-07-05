@@ -19,6 +19,7 @@ import {
   studioBranchName,
   type FlowManifest,
 } from "./src/repo-contract";
+import { inferRepoFlowsFromNavigation, type RepoFlowGraphCandidate } from "./nav-graph";
 
 const execFileAsync = promisify(execFile);
 const pluginDir = dirname(fileURLToPath(import.meta.url));
@@ -32,6 +33,7 @@ type CodegenRequest = {
   targetPath?: string;
   components?: ComponentRegistry;
   tokens?: TokenRegistry;
+  navTargets?: Record<string, string>;
 };
 
 type GeneratedComponent = {
@@ -57,6 +59,17 @@ type TokensSaveRequest = {
 
 type FlowManifestRequest = {
   manifest?: FlowManifest;
+};
+
+type FlowApplyRequest = {
+  operation?: "add-edge";
+  sourcePath?: string;
+  targetPath?: string;
+  anchorNodeId?: string;
+  root?: Node;
+  screenName?: string;
+  components?: ComponentRegistry;
+  tokens?: TokenRegistry;
 };
 
 type RepoRequest = {
@@ -86,7 +99,7 @@ type RepoScreenCandidate = {
   rnCanvas: boolean;
 };
 
-type RepoFlowCandidate = {
+type RepoFlowCandidate = RepoFlowGraphCandidate & {
   id: string;
   label: string;
   description: string;
@@ -216,11 +229,12 @@ async function runCodegen(
   screenName: string,
   components?: ComponentRegistry,
   tokens?: TokenRegistry,
+  navTargets?: Record<string, string>,
 ): Promise<GeneratedScreen> {
   const dir = await mkdtemp(join(tmpdir(), "rncanvas-codegen-"));
   const inputPath = join(dir, "input.json");
   try {
-    await writeFile(inputPath, JSON.stringify({ root, screenName, components, tokens }));
+    await writeFile(inputPath, JSON.stringify({ root, screenName, components, tokens, navTargets }));
     const { stdout } = await execFileAsync("pnpm", [
       "--filter",
       "@rn-canvas/codegen",
@@ -329,6 +343,7 @@ async function readDesignSession(root: string): Promise<RepoDesignSession> {
   const branchName = displayBranchName(branch);
   const studioBranch = studioBranchName(root);
   const onStudioBranch = branchName.startsWith("studio/");
+
   return {
     mode: onStudioBranch ? "studio-branch" : "current-branch",
     branch: branchName,
@@ -646,6 +661,19 @@ function routePartsForPath(path: string) {
   return parts;
 }
 
+function expoHrefForPath(path: string) {
+  const parts = routePartsForPath(path);
+  const last = parts[parts.length - 1];
+  if (!last) return "/";
+  const base = last.replace(/\.[^.]+$/, "");
+  if (base === "_layout" || base.startsWith("+")) return "/";
+  const segments = [...parts.slice(0, -1), base]
+    .filter((part) => !part.startsWith("("))
+    .filter((part) => part !== "index")
+    .map((part) => part.replace(/^\[(.+)\]$/, ":$1"));
+  return `/${segments.join("/")}`.replace(/\/+$/, "") || "/";
+}
+
 function slugId(input: string) {
   return input
     .trim()
@@ -662,7 +690,7 @@ function flowSegmentForScreen(screen: RepoScreenCandidate) {
   return segment;
 }
 
-function inferRepoFlows(screens: RepoScreenCandidate[]): RepoFlowCandidate[] {
+function inferLinearRepoFlows(screens: RepoScreenCandidate[]): RepoFlowCandidate[] {
   // Repo-derived flows are product objects over the current branch, not Studio-only
   // metadata. Mutating one should eventually resolve to route/navigation file changes.
   const groups = new Map<string, RepoScreenCandidate[]>();
@@ -682,6 +710,7 @@ function inferRepoFlows(screens: RepoScreenCandidate[]): RepoFlowCandidate[] {
       description: `${label} journey inferred from repo routes.`,
       routeKind,
       screenPaths: screens.map((screen) => screen.path),
+      edges: [],
     };
   });
 }
@@ -824,6 +853,8 @@ async function readRepoContext(): Promise<RepoContext> {
     .map((file) => ({ path: file, kind: assetKind(file) }));
 
   const screens = [...screenMap.values()].slice(0, 80);
+  const extractedFlows = await inferRepoFlowsFromNavigation(root, screens, sidecars);
+  const flows = extractedFlows.length > 0 ? extractedFlows : inferLinearRepoFlows(screens);
 
   return {
     repoPath: root,
@@ -834,7 +865,7 @@ async function readRepoContext(): Promise<RepoContext> {
     designSession: await readDesignSession(root),
     frameworks,
     dependencies,
-    flows: inferRepoFlows(screens),
+    flows,
     screens,
     sidecars,
     assets,
@@ -894,7 +925,7 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName, body.components, body.tokens);
+          const generated = await runCodegen(body.root, screenName, body.components, body.tokens, body.navTargets);
           const paths = resolveTargetPath(screenName, body.targetPath);
           sendJson(res, 200, {
             ...generated,
@@ -918,7 +949,7 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName, body.components, body.tokens);
+          const generated = await runCodegen(body.root, screenName, body.components, body.tokens, body.navTargets);
           const paths = resolveTargetPath(screenName, body.targetPath);
           const exportDir = dirname(paths.tsxPath);
           await mkdir(exportDir, { recursive: true });
@@ -954,6 +985,58 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Codegen sync failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/flows/apply", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<FlowApplyRequest>(req);
+          if (body.operation !== "add-edge") throw new Error("Unsupported flow operation");
+          if (!body.root) throw new Error("Missing source document root");
+          if (!body.anchorNodeId) throw new Error("Missing source anchor node");
+          if (!body.sourcePath || !body.targetPath) throw new Error("Missing source or target path");
+          const sourcePath = resolveExternalSourcePath(body.sourcePath);
+          const screenName = safeComponentName(body.screenName);
+          const generated = await runCodegen(body.root, screenName, body.components, body.tokens, {
+            [body.anchorNodeId]: expoHrefForPath(body.targetPath),
+          });
+          const sourceDir = dirname(sourcePath);
+          await mkdir(sourceDir, { recursive: true });
+          await writeFile(sourcePath, `${generated.code}\n`);
+          await writeFile(sourcePath.replace(/\.tsx$/, ".rncanvas.json"), `${generated.sidecar}\n`);
+          const componentPaths: string[] = [];
+          if (generated.components.length > 0) {
+            const componentsDir = join(sourceDir, "components");
+            await mkdir(componentsDir, { recursive: true });
+            for (const component of generated.components) {
+              const filePath = join(componentsDir, component.fileName);
+              await writeFile(filePath, `${component.code}\n`);
+              componentPaths.push(relative(activeRepoRoot, filePath));
+            }
+          }
+          let themePath: string | undefined;
+          if (generated.theme) {
+            const filePath = join(sourceDir, generated.theme.fileName);
+            await writeFile(filePath, `${generated.theme.code}\n`);
+            themePath = relative(activeRepoRoot, filePath);
+          }
+          sendJson(res, 200, {
+            ...generated,
+            repoPath: activeRepoRoot,
+            targetPath: relative(activeRepoRoot, sourcePath),
+            sidecarPath: relative(activeRepoRoot, sourcePath).replace(/\.tsx$/, ".rncanvas.json"),
+            componentPaths,
+            themePath,
+            wrote: true,
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Flow apply failed",
           });
         }
       });

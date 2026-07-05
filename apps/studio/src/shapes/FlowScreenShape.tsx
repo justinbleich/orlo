@@ -1,4 +1,5 @@
 import { BatteryFull, Signal, Wifi } from "lucide-react";
+import { useState, type PointerEvent } from "react";
 import {
   HTMLContainer,
   Rectangle2d,
@@ -16,8 +17,8 @@ import {
   type ComponentRegistry,
 } from "@rn-canvas/document";
 import { useShallow } from "zustand/react/shallow";
-import { FrameRenderer } from "@rn-canvas/render-web";
-import { color, font } from "../studio-theme";
+import { FrameRenderer, type LayoutBox, type LayoutReadyResult } from "@rn-canvas/render-web";
+import { color, font, radius, text } from "../studio-theme";
 import { useWorkspaceStore } from "../workspace-store";
 
 const LOD_MIN_ONSCREEN_WIDTH = 150;
@@ -30,12 +31,43 @@ export type FlowScreenShape = TLBaseShape<
 >;
 
 let openFlowScreen: (rootId: string) => void = () => {};
+let startFlowAnchorDrag: (
+  flowId: string,
+  rootId: string,
+  anchorNodeId: string,
+  event: PointerEvent<HTMLButtonElement>,
+) => void = () => {};
 
 export function registerFlowScreenOpenHandler(handler: (rootId: string) => void) {
   openFlowScreen = handler;
   return () => {
     if (openFlowScreen === handler) openFlowScreen = () => {};
   };
+}
+
+export function registerFlowAnchorDragHandler(
+  handler: (
+    flowId: string,
+    rootId: string,
+    anchorNodeId: string,
+    event: PointerEvent<HTMLButtonElement>,
+  ) => void,
+) {
+  startFlowAnchorDrag = handler;
+  return () => {
+    if (startFlowAnchorDrag === handler) startFlowAnchorDrag = () => {};
+  };
+}
+
+function flattenLayout(box: LayoutBox, out: LayoutBox[] = []) {
+  if (box.node.design?.hidden) return out;
+  out.push(box);
+  for (const child of box.children) flattenLayout(child, out);
+  return out;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function LODProxy({ w, h, label }: { w: number; h: number; label: string }) {
@@ -156,6 +188,19 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
   override component(shape: FlowScreenShape) {
     const editor = useEditor();
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
+    const [layoutResult, setLayoutResult] = useState<LayoutReadyResult | null>(null);
+    const [hoveredAnchorId, setHoveredAnchorId] = useState<string | null>(null);
+    const flowWireMode = useWorkspaceStore((s) => s.flowWireMode);
+    const wiredAnchorIds = useWorkspaceStore(
+      useShallow((s) => {
+        const flow = s.flowsById[shape.props.flowId];
+        return new Set(
+          (flow?.edges ?? [])
+            .filter((edge) => edge.from.rootId === shape.props.rootId && edge.from.anchorNodeId)
+            .map((edge) => edge.from.anchorNodeId as string),
+        );
+      }),
+    );
     const components = useDocumentStore(
       useShallow((s): ComponentRegistry => {
         const tree = s.roots[shape.props.rootId];
@@ -178,7 +223,11 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
       () => shape.props.w * editor.getZoomLevel() >= LOD_MIN_ONSCREEN_WIDTH,
       [editor, shape.id, shape.props.w],
     );
+    const zoomLevel = useValue("rnflowscreen-zoom-level", () => editor.getZoomLevel(), [editor]);
     const live = selected || largeEnough;
+    const showUnusedAnchors = selected || flowWireMode;
+    const inverseZoom = 1 / Math.max(0.05, zoomLevel);
+    const screenPx = (value: number) => value * inverseZoom;
     return (
       <HTMLContainer
         data-flow-root-id={shape.props.rootId}
@@ -202,12 +251,118 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
           </div>
         ) : live ? (
           <div style={{ pointerEvents: "none" }}>
-            <FrameRenderer root={root} components={components} />
+            <FrameRenderer root={root} components={components} onLayoutReady={setLayoutResult} />
           </div>
         ) : (
           <LODProxy w={shape.props.w} h={shape.props.h} label={root.design?.name ?? root.type} />
         )}
         {root && live && <IOSDeviceChrome w={shape.props.w} h={shape.props.h} />}
+        {root &&
+          live &&
+          layoutResult &&
+          flattenLayout(layoutResult.layout)
+            .filter((box) => box.node.id !== root.id)
+            .filter((box) => wiredAnchorIds.has(box.node.id) || showUnusedAnchors)
+            .map((box) => {
+              const wired = wiredAnchorIds.has(box.node.id);
+              const label = box.node.design?.name ?? box.node.type;
+              const hovered = hoveredAnchorId === box.node.id;
+              const anchorWidth = Math.max(screenPx(36), box.width);
+              const anchorHeight = Math.max(screenPx(22), box.height);
+              const anchorBorder = screenPx(2);
+              const nubSize = screenPx(wired || hovered ? 16 : 12);
+              const labelHeight = screenPx(20);
+              const labelTop =
+                box.top > screenPx(24) ? box.top - labelHeight - screenPx(4) : box.top + screenPx(4);
+              const labelLeft = clamp(box.left, screenPx(4), shape.props.w - screenPx(168));
+              return (
+                <button
+                  key={box.instanceKey}
+                  type="button"
+                  data-flow-anchor-id={box.node.id}
+                  data-flow-anchor-state={wired ? "wired" : "available"}
+                  className="flow-anchor"
+                  title={wired ? `Wired from ${label}` : `Connect from ${label}`}
+                  aria-label={wired ? `Wired from ${label}` : `Connect from ${label}`}
+                  onPointerDown={(event) => startFlowAnchorDrag(shape.props.flowId, root.id, box.node.id, event)}
+                  onPointerEnter={() => setHoveredAnchorId(box.node.id)}
+                  onPointerLeave={() => setHoveredAnchorId((current) => (current === box.node.id ? null : current))}
+                  onMouseEnter={() => setHoveredAnchorId(box.node.id)}
+                  onMouseLeave={() => setHoveredAnchorId((current) => (current === box.node.id ? null : current))}
+                  style={{
+                    position: "absolute",
+                    left: box.left,
+                    top: box.top,
+                    width: anchorWidth,
+                    height: anchorHeight,
+                    borderRadius: Math.min(screenPx(10), Math.max(screenPx(4), Math.min(anchorWidth, anchorHeight) * 0.18)),
+                    border: `${anchorBorder}px solid ${
+                      wired || hovered ? color.accent : color.accentLine
+                    }`,
+                    background: wired
+                      ? "rgba(59, 130, 246, 0.08)"
+                      : hovered
+                        ? "rgba(59, 130, 246, 0.06)"
+                      : "rgba(59, 130, 246, 0.025)",
+                    boxShadow: wired
+                      ? "0 0 0 4px rgba(59, 130, 246, 0.14), 0 3px 12px rgba(17, 24, 39, 0.2)"
+                      : hovered
+                        ? "0 0 0 3px rgba(59, 130, 246, 0.1), 0 2px 8px rgba(17, 24, 39, 0.14)"
+                        : "0 0 0 2px rgba(59, 130, 246, 0.08)",
+                    opacity: wired || hovered ? 1 : 0.9,
+                    pointerEvents: "auto",
+                    cursor: "crosshair",
+                    padding: 0,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="flow-anchor-label"
+                    data-flow-anchor-label={box.node.id}
+                    style={{
+                      position: "absolute",
+                      left: labelLeft - box.left,
+                      top: labelTop - box.top,
+                      maxWidth: screenPx(160),
+                      minHeight: labelHeight,
+                      display: "flex",
+                      alignItems: "center",
+                      padding: `0 ${screenPx(7)}px`,
+                      borderRadius: screenPx(Number.parseFloat(radius.xs) || 4),
+                      background: color.accent,
+                      border: `${screenPx(1)}px solid ${color.accent}`,
+                      boxShadow: "var(--shadow-control)",
+                      color: color.chrome,
+                      fontFamily: font.sans,
+                      fontSize: screenPx(Number.parseFloat(text["2xs"]) || 10),
+                      fontWeight: 700,
+                      lineHeight: `${screenPx(14)}px`,
+                      overflow: "hidden",
+                      pointerEvents: "none",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      right: -nubSize / 2,
+                      top: "50%",
+                      width: nubSize,
+                      height: nubSize,
+                      transform: "translateY(-50%)",
+                      borderRadius: 999,
+                      border: `${anchorBorder}px solid ${wired || hovered ? color.accent : color.accentLine}`,
+                      background: wired ? color.accent : color.chrome,
+                      boxShadow: "0 2px 8px rgba(17, 24, 39, 0.2)",
+                    }}
+                  />
+                </button>
+              );
+            })}
       </HTMLContainer>
     );
   }

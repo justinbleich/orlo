@@ -100,7 +100,7 @@ export function generateScreen(root: Node, opts: EmitOptions = {}): GeneratedScr
     hasTokenBinding(root, tokens) || used.some((def) => hasTokenBinding(def.template, tokens));
   return {
     screenName,
-    code: emitScreen(root, { screenName, components: registry, tokens }),
+    code: emitScreen(root, { screenName, components: registry, tokens, navTargets: opts.navTargets }),
     sidecar: serializeSidecar(buildSidecar(root, { screenName, components: registry, tokens })),
     components: used.map((def) => emitComponent(def, registry, tokens)),
     theme: referencesToken ? emitTheme(tokens) : undefined,

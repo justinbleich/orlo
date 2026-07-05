@@ -9,11 +9,16 @@ import {
   type TLUiOverrides,
 } from "tldraw";
 import "tldraw/tldraw.css";
-import { Plus, Route, ZoomIn, ZoomOut } from "lucide-react";
+import { MousePointerClick, Plus, Route, ZoomIn, ZoomOut } from "lucide-react";
 import { useDocumentStore, type Node, type NodeId } from "@rn-canvas/document";
 import { flowGraphLayers } from "./flow-model";
-import { FlowScreenShapeUtil, registerFlowScreenOpenHandler, type FlowScreenShape } from "./shapes/FlowScreenShape";
-import { IconButton, cn } from "./studio-ui";
+import {
+  FlowScreenShapeUtil,
+  registerFlowAnchorDragHandler,
+  registerFlowScreenOpenHandler,
+  type FlowScreenShape,
+} from "./shapes/FlowScreenShape";
+import { IconButton, IconToggle, cn } from "./studio-ui";
 import { color } from "./studio-theme";
 import { useWorkspaceStore, type FlowDefinition } from "./workspace-store";
 import type { FlowEdge } from "./repo-contract";
@@ -151,7 +156,13 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
   const editor = useEditor();
   const addStoredFlowEdge = useWorkspaceStore((s) => s.addFlowEdge);
   const setStatus = useWorkspaceStore((s) => s.setStatus);
-  const [drag, setDrag] = useState<{ fromRootId: NodeId; x: number; y: number } | null>(null);
+  const [drag, setDrag] = useState<{
+    fromRootId: NodeId;
+    anchorNodeId?: NodeId;
+    startPage: { x: number; y: number };
+    x: number;
+    y: number;
+  } | null>(null);
   const shapeMap = useValue(
     "flow-screen-shapes",
     () => {
@@ -165,10 +176,10 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
   );
 
   const connectorEdges = flow.edges.length > 0 ? flow.edges : [];
-  const commitEdge = useCallback(
+  const findTargetAtClientPoint = useCallback(
     (fromRootId: NodeId, clientX: number, clientY: number) => {
       const point = editor.screenToPage({ x: clientX, y: clientY });
-      const target = [...shapeMap.values()].find(
+      return [...shapeMap.values()].find(
         (shape) =>
           shape.props.rootId !== fromRootId &&
           point.x >= shape.x &&
@@ -176,15 +187,67 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
           point.y >= shape.y &&
           point.y <= shape.y + shape.props.h,
       );
-      if (!target) return;
-      const edge: FlowEdge = { from: { rootId: fromRootId }, to: target.props.rootId, kind: "primary" };
+    },
+    [editor, shapeMap],
+  );
+  const commitEdge = useCallback(
+    (fromRootId: NodeId, clientX: number, clientY: number, anchorNodeId?: NodeId) => {
+      const target = findTargetAtClientPoint(fromRootId, clientX, clientY);
+      if (!target) {
+        setStatus("Drop on another screen to create a flow connection");
+        return;
+      }
+      const edge: FlowEdge = {
+        from: { rootId: fromRootId, anchorNodeId },
+        to: target.props.rootId,
+        kind: "primary",
+      };
       void addStoredFlowEdge(flow.id, edge).then(
         () => setStatus("Added flow edge"),
         (error) => setStatus(error instanceof Error ? error.message : "Flow edge save failed"),
       );
     },
-    [addStoredFlowEdge, editor, flow.id, setStatus, shapeMap],
+    [addStoredFlowEdge, findTargetAtClientPoint, flow.id, setStatus],
   );
+
+  useEffect(
+    () =>
+      registerFlowAnchorDragHandler((flowId, rootId, anchorNodeId, event) => {
+        if (flowId !== flow.id) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDrag({
+          fromRootId: rootId,
+          anchorNodeId,
+          startPage: editor.screenToPage({ x: event.clientX, y: event.clientY }),
+          x: event.clientX,
+          y: event.clientY,
+        });
+      }),
+    [editor, flow.id],
+  );
+
+  useEffect(() => {
+    if (!drag) return undefined;
+    const onPointerMove = (event: PointerEvent) => {
+      setDrag((current) => (current ? { ...current, x: event.clientX, y: event.clientY } : current));
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      commitEdge(drag.fromRootId, event.clientX, event.clientY, drag.anchorNodeId);
+      setDrag(null);
+    };
+    const onPointerCancel = () => setDrag(null);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+    window.addEventListener("pointercancel", onPointerCancel, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+    };
+  }, [commitEdge, drag]);
+
+  const dragTarget = drag ? findTargetAtClientPoint(drag.fromRootId, drag.x, drag.y) : undefined;
 
   return (
     <>
@@ -237,12 +300,7 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
         {drag && (
           <path
             d={elbowPath(
-              {
-                x: (shapeMap.get(drag.fromRootId)?.x ?? 0) + (shapeMap.get(drag.fromRootId)?.props.w ?? 0),
-                y:
-                  (shapeMap.get(drag.fromRootId)?.y ?? 0) +
-                  (shapeMap.get(drag.fromRootId)?.props.h ?? 0) / 2,
-              },
+              drag.startPage,
               editor.screenToPage({ x: drag.x, y: drag.y }),
             )}
             fill="none"
@@ -251,6 +309,20 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
             strokeDasharray="8 8"
             strokeLinecap="round"
             opacity={0.55}
+          />
+        )}
+        {dragTarget && (
+          <rect
+            x={dragTarget.x - 12}
+            y={dragTarget.y - 12}
+            width={dragTarget.props.w + 24}
+            height={dragTarget.props.h + 24}
+            rx={34}
+            fill="none"
+            stroke="var(--accent)"
+            strokeWidth={4}
+            strokeDasharray="12 10"
+            opacity={0.7}
           />
         )}
       </svg>
@@ -264,11 +336,25 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
             event.preventDefault();
             event.stopPropagation();
             event.currentTarget.setPointerCapture(event.pointerId);
-            setDrag({ fromRootId: shape.props.rootId, x: event.clientX, y: event.clientY });
+            setDrag({
+              fromRootId: shape.props.rootId,
+              startPage: { x: shape.x + shape.props.w, y: shape.y + shape.props.h / 2 },
+              x: event.clientX,
+              y: event.clientY,
+            });
           }}
           onPointerMove={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-            setDrag({ fromRootId: shape.props.rootId, x: event.clientX, y: event.clientY });
+            setDrag((current) =>
+              current
+                ? { ...current, x: event.clientX, y: event.clientY }
+                : {
+                    fromRootId: shape.props.rootId,
+                    startPage: { x: shape.x + shape.props.w, y: shape.y + shape.props.h / 2 },
+                    x: event.clientX,
+                    y: event.clientY,
+                  },
+            );
           }}
           onPointerUp={(event) => {
             if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -293,6 +379,31 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
           }}
         />
       ))}
+      {drag && (
+        <button
+          type="button"
+          aria-hidden="true"
+          tabIndex={-1}
+          onPointerMove={(event) =>
+            setDrag((current) =>
+              current ? { ...current, x: event.clientX, y: event.clientY } : current,
+            )
+          }
+          onPointerUp={(event) => {
+            commitEdge(drag.fromRootId, event.clientX, event.clientY, drag.anchorNodeId);
+            setDrag(null);
+          }}
+          onPointerCancel={() => setDrag(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 50,
+            cursor: "crosshair",
+            opacity: 0,
+            pointerEvents: "auto",
+          }}
+        />
+      )}
     </>
   );
 }
@@ -308,6 +419,8 @@ export function FlowCanvas({
 }) {
   const editorRef = useRef<Editor | null>(null);
   const storedPositions = useWorkspaceStore((s) => s.flowPositions[flow.id]);
+  const flowWireMode = useWorkspaceStore((s) => s.flowWireMode);
+  const setFlowWireMode = useWorkspaceStore((s) => s.setFlowWireMode);
   const [ready, setReady] = useState(false);
   const components = useMemo<TLComponents>(
     () => ({
@@ -367,6 +480,9 @@ export function FlowCanvas({
         overrides={flowOverrides}
       />
       <div className="studio-chrome absolute right-md top-md z-10 flex items-center gap-xs rounded-sm border border-line bg-chrome p-xs shadow-control">
+        <IconToggle title="Show connect handles" pressed={flowWireMode} onPressedChange={setFlowWireMode}>
+          <MousePointerClick size={14} aria-hidden="true" />
+        </IconToggle>
         <IconButton title="Fit flow" onClick={fitFlow}>
           <Route size={14} aria-hidden="true" />
         </IconButton>

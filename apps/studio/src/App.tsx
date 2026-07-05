@@ -291,23 +291,19 @@ function nextScreenName(roots: Iterable<Node>) {
 function FlowWorkspace({
   roots,
   flows,
-  repoFlows,
   activeFlow,
   entryRootId,
   routeIds,
   onSelectScreen,
-  onOpenRepoScreen,
   onAddFrame,
   onRenameFlow,
 }: {
   roots: Node[];
   flows: FlowDefinition[];
-  repoFlows: RepoFlowPanelItem[];
   activeFlow: FlowId;
   entryRootId?: NodeId;
   routeIds?: NodeId[];
   onSelectScreen: (rootId: NodeId) => void;
-  onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   onAddFrame: () => void;
   onRenameFlow: (flowId: FlowId, label: string) => boolean;
 }) {
@@ -327,7 +323,6 @@ function FlowWorkspace({
     screenLabels.get(root.id) ?? flowScreenName(root, fallbackIndex);
   const entryLabel = entryScreen ? labelFor(entryScreen, 0) : null;
   const flowViewportRef = useRef<HTMLDivElement | null>(null);
-  const repoFlow = repoFlows.find((flow) => flow.id === activeFlow);
   const activeFlowDefinition = flows.find((flow) => flow.id === activeFlow);
   const activeFlowLabel = activeFlowDefinition?.label ?? flowLabel(flows, activeFlow);
   const [flowNameDraft, setFlowNameDraft] = useState(activeFlowLabel);
@@ -355,67 +350,6 @@ function FlowWorkspace({
     }
     if (!onRenameFlow(activeFlow, nextLabel)) resetFlowNameDraft();
   };
-
-  if (repoFlow) {
-    const entry = repoFlow.screens[0];
-    return (
-      <div className="studio-chrome flex h-full flex-col bg-canvas">
-        <div className="flex items-center gap-sm border-b border-line bg-chrome px-lg py-sm">
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-ink">{repoFlow.name}</span>
-            <span className="text-xs text-ink-faint">
-              Repo-inferred journey from route order
-            </span>
-          </div>
-          {entry && (
-            <div className="ml-lg rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-              Start <span className="font-medium text-ink">{displayScreenName(entry)}</span>
-            </div>
-          )}
-        </div>
-        <div ref={flowViewportRef} className="relative flex-1 overflow-auto">
-          <div className="overflow-auto p-2xl">
-            <div className="flex min-w-max items-start gap-2xl">
-              {repoFlow.screens.map((screen, index) => (
-                <div key={screen.path} className="relative flex w-44 flex-col items-center gap-sm">
-                  {index > 0 && (
-                    <div
-                      className="absolute -left-2xl top-20 h-px w-2xl bg-accent-line"
-                      aria-hidden="true"
-                    />
-                  )}
-                  <div className="flex h-5 items-center gap-xs text-xs font-medium text-ink-dim">
-                    <span>{displayScreenName(screen)}</span>
-                    {index === 0 && (
-                      <span className="rounded-pill bg-accent-soft px-xs py-px text-2xs font-semibold text-accent">
-                        Start
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onOpenRepoScreen(screen)}
-                    className="flex h-40 w-36 flex-col items-center justify-center gap-sm rounded-sm border border-line bg-chrome p-md text-center shadow-control transition-colors hover:border-accent-line hover:bg-raised"
-                    title={screen.path}
-                  >
-                    <span className="flex size-9 items-center justify-center rounded-sm bg-accent-soft text-sm font-semibold text-accent">
-                      {index + 1}
-                    </span>
-                    <span className="max-w-full truncate text-sm font-semibold text-ink">
-                      {displayScreenName(screen)}
-                    </span>
-                    <span className="max-w-full truncate text-2xs text-ink-faint">
-                      {screen.path}
-                    </span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="studio-chrome flex h-full flex-col bg-canvas">
@@ -1083,6 +1017,7 @@ export default function App() {
   const reconcilingShapesRef = useRef(false);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
   const pendingFlowManifestRef = useRef<FlowManifest | null>(null);
+  const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
 
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
@@ -1110,6 +1045,7 @@ export default function App() {
   const loadCanvasManifest = useWorkspaceStore((s) => s.loadCanvasManifest);
   const applyFlowManifestToStore = useWorkspaceStore((s) => s.applyFlowManifest);
   const updateStoredFlowRoutes = useWorkspaceStore((s) => s.updateFlowRoutes);
+  const hydrateRepoFlows = useWorkspaceStore((s) => s.hydrateRepoFlows);
   const upsertStoredFlow = useWorkspaceStore((s) => s.upsertFlow);
   const removeStoredFlow = useWorkspaceStore((s) => s.removeFlow);
   const openSidecar = useWorkspaceStore((s) => s.openSidecar);
@@ -1156,6 +1092,55 @@ export default function App() {
     if (!activeRepoScreen || roots[activeRepoScreen.rootId]) return;
     setActiveRepoScreen(null);
   }, [activeRepoScreen, roots, setActiveRepoScreen]);
+
+  useEffect(() => {
+    for (const flow of repoFlowItems) {
+      for (const screen of flow.screens) {
+        if (!screen.sidecarPath || repoFlowAutoloadedRef.current.has(screen.sidecarPath)) continue;
+        repoFlowAutoloadedRef.current.add(screen.sidecarPath);
+        void openSidecar(screen.sidecarPath, "merge");
+      }
+    }
+  }, [openSidecar, repoFlowItems]);
+
+  useEffect(() => {
+    const rootForPath = new Map<string, NodeId>();
+    for (const loaded of Object.values(loadedRepoScreens)) {
+      rootForPath.set(loaded.path, loaded.rootId);
+      if (loaded.sidecarPath) rootForPath.set(loaded.sidecarPath, loaded.rootId);
+    }
+    const repoFlows = repoFlowItems.flatMap((flow): FlowDefinition[] => {
+      const routes = flow.screens
+        .map((screen) => rootForPath.get(screen.path) ?? (screen.sidecarPath ? rootForPath.get(screen.sidecarPath) : undefined))
+        .filter((rootId): rootId is NodeId => !!rootId);
+      if (routes.length !== flow.screens.length) return [];
+      const rootByScreenPath = new Map(
+        flow.screens.map((screen, index) => [screen.path, routes[index]] as const),
+      );
+      return [{
+        id: flow.id,
+        label: flow.name,
+        description: flow.description,
+        routes,
+        entryRootId: flow.entryPath ? rootByScreenPath.get(flow.entryPath) : routes[0],
+        edges: flow.edges
+          .map((edge) => {
+            const fromRootId = rootByScreenPath.get(edge.fromPath);
+            const to = rootByScreenPath.get(edge.toPath);
+            return fromRootId && to
+              ? {
+                  from: { rootId: fromRootId, anchorNodeId: edge.anchorNodeId },
+                  to,
+                  kind: edge.kind,
+                  condition: edge.condition,
+                }
+              : null;
+          })
+          .filter((edge): edge is FlowDefinition["edges"][number] => !!edge),
+      }];
+    });
+    hydrateRepoFlows(repoFlows);
+  }, [hydrateRepoFlows, loadedRepoScreens, repoFlowItems]);
 
   // Canvas-side effects for repo document opens: focus the new frame and clear
   // tldraw's (inert) history.
@@ -1997,12 +1982,10 @@ export default function App() {
             <FlowWorkspace
               roots={Object.values(roots)}
               flows={flows}
-              repoFlows={repoFlowItems}
               activeFlow={activeFlow}
               entryRootId={activeFlowDefinition?.entryRootId}
               routeIds={activeFlowDefinition?.routes}
               onSelectScreen={selectScreenFromWorkspace}
-              onOpenRepoScreen={openRepoScreen}
               onAddFrame={addFrameToActiveFlow}
               onRenameFlow={renameFlow}
             />

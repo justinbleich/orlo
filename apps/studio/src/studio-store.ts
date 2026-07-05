@@ -31,6 +31,10 @@ interface StudioState {
   setActiveVariant(propertyName: string, value: string): void;
   setActiveVariantAll(values: Record<string, string>): void;
   resetActiveVariant(): void;
+  /** Last definition edit per component (ms epoch), for the workspace header's
+   *  "edited Nm ago" pill. Session-scoped; never serialized. */
+  componentEditedAt: Record<string, number>;
+  markComponentEdited(componentId: string): void;
   /** Collapsed layer-tree rows, keyed by node id. Lifted here (not per-row
    *  React state) so expand state survives tree remounts. */
   collapsedLayers: Record<NodeId, boolean>;
@@ -57,6 +61,11 @@ export const useStudioStore = create<StudioState>((set) => ({
     set((state) => ({ activeVariant: { ...state.activeVariant, [propertyName]: value } })),
   setActiveVariantAll: (values) => set({ activeVariant: values }),
   resetActiveVariant: () => set({ activeVariant: {} }),
+  componentEditedAt: {},
+  markComponentEdited: (componentId) =>
+    set((state) => ({
+      componentEditedAt: { ...state.componentEditedAt, [componentId]: Date.now() },
+    })),
   collapsedLayers: {},
   toggleLayerCollapsed: (nodeId) =>
     set((state) => ({

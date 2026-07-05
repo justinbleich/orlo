@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Menu } from "@base-ui/react/menu";
 import {
   Check,
@@ -235,6 +235,28 @@ export function CodePanel() {
   const onImportSource = () => void importSourceAction();
 
   const artifacts = useMemo(() => codeArtifacts(codegenResult), [codegenResult]);
+
+  // While a component is being edited, open its generated file — once per
+  // component, so a manual artifact pick afterwards isn't fought.
+  const editingComponentName = useDocumentStore((s) =>
+    s.editingComponentId ? s.components[s.editingComponentId]?.name : undefined,
+  );
+  const autoSelectedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editingComponentName) {
+      autoSelectedForRef.current = null;
+      return;
+    }
+    if (autoSelectedForRef.current === editingComponentName) return;
+    const artifact = artifacts.find(
+      (candidate) =>
+        candidate.path.endsWith(`components/${editingComponentName}.tsx`) ||
+        candidate.label === `${editingComponentName}.tsx`,
+    );
+    if (!artifact) return;
+    autoSelectedForRef.current = editingComponentName;
+    setActiveArtifactId(artifact.id);
+  }, [editingComponentName, artifacts, setActiveArtifactId]);
   const workspaceFolderLabel = scopedPathLabel(
     repoContext?.repoPath ?? repoPath,
     repoContext?.gitRootPath,

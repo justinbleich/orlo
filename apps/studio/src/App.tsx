@@ -1174,7 +1174,7 @@ export default function App() {
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
   const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
 
-  const [inspectorTab, setInspectorTab] = useState("Design");
+  const [inspectorTab, setInspectorTab] = useState("Inspect");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
   const [componentWorkspaceTab, setComponentWorkspaceTab] =
     useState<ComponentWorkspaceTab>("Canvas");
@@ -1392,7 +1392,7 @@ export default function App() {
   useEffect(() => startMcpBridge(handleMcpCommand), []);
 
   useEffect(() => {
-    if (inspectorTab === "Props") setInspectorTab("Design");
+    if (inspectorTab === "Props") setInspectorTab("Inspect");
   }, [inspectorTab]);
 
   useEffect(() => {
@@ -1550,7 +1550,7 @@ export default function App() {
     pendingFocusRootIdRef.current = rootId;
     useDocumentStore.getState().setSelection([rootId]);
     setWorkspace("Screen");
-    setInspectorTab("Design");
+    setInspectorTab("Inspect");
     setStatus("Opened screen");
   }, []);
 
@@ -2537,7 +2537,7 @@ export default function App() {
                   <div style={{ padding: space.md, paddingBottom: 0 }}>
                     <div className="mb-xs flex items-center gap-xs">
                       <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
-                      {inspectorTab !== "Design" && (
+                      {inspectorTab !== "Inspect" && (
                         <span className="text-2xs font-semibold text-ink-faint">
                           {inspectorTab}
                         </span>
@@ -2545,14 +2545,14 @@ export default function App() {
                     </div>
                     {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
                     <Tabs
-                      tabs={["Design", "Code", "History"]}
+                      tabs={["Inspect", "Code", "History"]}
                       active={inspectorTab}
                       onSelect={setInspectorTab}
                       variant="underline"
                     />
                   </div>
                   <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-                    {inspectorTab === "Design" ? (
+                    {inspectorTab === "Inspect" ? (
                       <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
                         <Inspector rootId={focusedRootId} />
                       </ErrorBoundary>

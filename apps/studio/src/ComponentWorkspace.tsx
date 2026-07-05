@@ -23,6 +23,13 @@ import {
 
 export type ComponentWorkspaceTab = "Canvas" | "Variants" | "Usage" | "Docs";
 
+function editedAgoLabel(editedAt: number): string {
+  const minutes = Math.floor((Date.now() - editedAt) / 60_000);
+  if (minutes < 1) return "edited just now";
+  if (minutes < 60) return `edited ${minutes}m ago`;
+  return `edited ${Math.floor(minutes / 60)}h ago`;
+}
+
 export function ComponentWorkspace({
   definition,
   roots,
@@ -58,6 +65,27 @@ export function ComponentWorkspace({
   const skipNextNameCommitRef = useRef(false);
 
   useEffect(() => setNameDraft(definition.name), [definition.name]);
+
+  // "edited Nm ago": mark when this component's definition identity changes —
+  // skipping mount and component switches, so opening the workspace alone
+  // doesn't count as an edit.
+  const markComponentEdited = useStudioStore((s) => s.markComponentEdited);
+  const editedAt = useStudioStore((s) => s.componentEditedAt[definition.id]);
+  const prevDefinitionRef = useRef<ComponentDefinition | null>(null);
+  useEffect(() => {
+    const prev = prevDefinitionRef.current;
+    prevDefinitionRef.current = definition;
+    if (prev && prev.id === definition.id && prev !== definition) {
+      markComponentEdited(definition.id);
+    }
+  }, [definition, markComponentEdited]);
+  // Re-render on a coarse tick so the relative label stays current.
+  const [, setEditedTick] = useState(0);
+  useEffect(() => {
+    if (!editedAt) return;
+    const interval = setInterval(() => setEditedTick((tick) => tick + 1), 30_000);
+    return () => clearInterval(interval);
+  }, [editedAt]);
 
   const resetNameDraft = () => setNameDraft(definition.name);
   const commitNameDraft = () => {
@@ -147,9 +175,11 @@ export function ComponentWorkspace({
               className="h-7 max-w-72 border-transparent bg-transparent px-2xs text-sm font-semibold text-ink shadow-none hover:border-line hover:bg-raised focus-visible:border-accent-line focus-visible:bg-chrome-2"
             />
           </div>
-          <div className="rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-            edited now
-          </div>
+          {editedAt !== undefined && (
+            <div className="rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
+              {editedAgoLabel(editedAt)}
+            </div>
+          )}
           <div className="ml-auto flex items-center gap-xs">
             <Button variant="ghost" onClick={onCancel}>
               <X size={14} aria-hidden="true" /> Cancel

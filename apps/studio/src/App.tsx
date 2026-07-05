@@ -57,6 +57,7 @@ import {
   type DesignSystemView,
   type FlowId,
   type FlowPanelItem,
+  type ScreenFlowBadges,
 } from "./shell";
 import {
   displayScreenName,
@@ -997,6 +998,7 @@ export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
+  const [pendingDeleteScreenPath, setPendingDeleteScreenPath] = useState<string | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
   const [rightColumnWidth, setRightColumnWidth] = useState(readStoredRightColumnWidth);
@@ -1022,6 +1024,8 @@ export default function App() {
   const hydrateRepoFlows = useWorkspaceStore((s) => s.hydrateRepoFlows);
   const upsertStoredFlow = useWorkspaceStore((s) => s.upsertFlow);
   const removeStoredFlow = useWorkspaceStore((s) => s.removeFlow);
+  const renameStoredRepoScreen = useWorkspaceStore((s) => s.renameRepoScreen);
+  const deleteStoredRepoScreen = useWorkspaceStore((s) => s.deleteRepoScreen);
   const openSidecar = useWorkspaceStore((s) => s.openSidecar);
   const importSource = useWorkspaceStore((s) => s.importSource);
   const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
@@ -1056,6 +1060,32 @@ export default function App() {
         flow.manifestRoutes?.length ?? flowRouteScreens(screenRoots, flow.id, flow.routes).length,
     }));
   }, [editingComponentId, flows, roots]);
+  const screenFlowBadges = useMemo<ScreenFlowBadges>(() => {
+    const pathForRoot = new Map<NodeId, string>();
+    for (const screen of Object.values(loadedRepoScreens)) {
+      pathForRoot.set(screen.rootId, screen.path);
+    }
+    const badges: ScreenFlowBadges = {};
+    const addBadge = (path: string | undefined, label: string) => {
+      if (!path) return;
+      badges[path] = [...(badges[path] ?? []), label];
+    };
+    for (const flow of flows) {
+      const seen = new Set<string>();
+      for (const route of flow.manifestRoutes ?? []) {
+        if (!route.path || seen.has(route.path)) continue;
+        seen.add(route.path);
+        addBadge(route.path, flow.label);
+      }
+      for (const rootId of flow.routes) {
+        const path = pathForRoot.get(rootId);
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        addBadge(path, flow.label);
+      }
+    }
+    return badges;
+  }, [flows, loadedRepoScreens]);
   const repoFlowItems = useMemo(
     () => repoFlowItemsForContext(repoContext),
     [repoContext],
@@ -1922,6 +1952,47 @@ export default function App() {
     [importSource, openSidecar],
   );
 
+  const loadedRepoScreenForPanelScreen = useCallback(
+    (screen: RepoPanelScreen): ActiveRepoScreen | undefined =>
+      loadedRepoScreens[screen.path] ??
+      (screen.sidecarPath ? loadedRepoScreens[screen.sidecarPath] : undefined) ??
+      Object.values(loadedRepoScreens).find(
+        (loaded) =>
+          loaded.path === screen.path ||
+          loaded.path === screen.sidecarPath ||
+          loaded.sidecarPath === screen.path ||
+          loaded.sidecarPath === screen.sidecarPath,
+      ),
+    [loadedRepoScreens],
+  );
+
+  const renameRepoScreen = useCallback(
+    (screen: RepoPanelScreen, name: string) => {
+      const loaded = loadedRepoScreenForPanelScreen(screen);
+      if (!loaded) {
+        setStatus("Open the screen to rename it");
+        return;
+      }
+      renameStoredRepoScreen(loaded.rootId, name);
+    },
+    [loadedRepoScreenForPanelScreen, renameStoredRepoScreen, setStatus],
+  );
+
+  const deleteRepoScreen = useCallback(
+    (screen: RepoPanelScreen) => {
+      if (pendingDeleteScreenPath !== screen.path) {
+        setPendingDeleteScreenPath(screen.path);
+        setStatus(`Confirm delete ${displayScreenName(screen)}`);
+        return;
+      }
+      setPendingDeleteScreenPath(null);
+      void deleteStoredRepoScreen(screen).catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Screen delete failed");
+      });
+    },
+    [deleteStoredRepoScreen, pendingDeleteScreenPath, setStatus],
+  );
+
 
 
   // Read-only context crumb mirroring the active workspace (and its object where known).
@@ -1973,6 +2044,11 @@ export default function App() {
           onDesignSystemViewChange={setActiveDesignSystemView}
           onOpenChanges={openChangesPanel}
           onOpenRepoScreen={openRepoScreen}
+          onRenameRepoScreen={renameRepoScreen}
+          onDeleteRepoScreen={deleteRepoScreen}
+          onCancelDeleteRepoScreen={() => setPendingDeleteScreenPath(null)}
+          pendingDeleteScreenPath={pendingDeleteScreenPath}
+          screenFlowBadges={screenFlowBadges}
           gitStatus={gitStatus}
           sidecarPath={sidecarPath}
           activeRepoScreen={activeRepoScreen}

@@ -73,6 +73,11 @@ type FlowApplyRequest = {
   tokens?: TokenRegistry;
 };
 
+type ScreenDeleteRequest = {
+  targetPath?: string;
+  sidecarPath?: string;
+};
+
 type RepoRequest = {
   repoPath?: string;
 };
@@ -1043,6 +1048,40 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Flow apply failed",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/screens/delete", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<ScreenDeleteRequest>(req);
+          if (!body.targetPath?.trim() || !body.sidecarPath?.trim()) {
+            throw new Error("Screen delete requires a target path and RNCanvas sidecar");
+          }
+          const tsxPath = resolve(
+            isAbsolute(body.targetPath) ? body.targetPath : join(activeRepoRoot, body.targetPath),
+          );
+          const sidecarPath = resolve(
+            isAbsolute(body.sidecarPath) ? body.sidecarPath : join(activeRepoRoot, body.sidecarPath),
+          );
+          if (!pathInRoot(activeRepoRoot, tsxPath) || extname(tsxPath) !== ".tsx") {
+            throw new Error("Screen path must stay inside the connected repository and end in .tsx");
+          }
+          if (!pathInRoot(activeRepoRoot, sidecarPath) || !sidecarPath.endsWith(".rncanvas.json")) {
+            throw new Error("Sidecar path must stay inside the connected repository and end in .rncanvas.json");
+          }
+          await rm(tsxPath);
+          await rm(sidecarPath);
+          sendJson(res, 200, {
+            deleted: [relative(activeRepoRoot, tsxPath), relative(activeRepoRoot, sidecarPath)],
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Screen delete failed",
           });
         }
       });

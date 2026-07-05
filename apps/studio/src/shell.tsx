@@ -58,6 +58,7 @@ type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
 export type FlowId = string;
 export type FlowPanelItem = { id: FlowId; label: string; gitCode?: string; screenCount?: number };
 export type DesignSystemView = "Tokens" | "Typography" | "Colors" | "Spacing" | "Radius";
+export type ScreenFlowBadges = Record<string, string[]>;
 type GitFileStatus = { path: string; index: string; workingTree: string };
 type PanelGitStatus =
   | { status: "loading" }
@@ -489,6 +490,11 @@ export function LeftPanel({
   onDesignSystemViewChange,
   onOpenChanges,
   onOpenRepoScreen = () => {},
+  onRenameRepoScreen = () => {},
+  onDeleteRepoScreen = () => {},
+  onCancelDeleteRepoScreen = () => {},
+  pendingDeleteScreenPath,
+  screenFlowBadges = {},
   gitStatus,
   sidecarPath,
   activeRepoScreen,
@@ -509,6 +515,11 @@ export function LeftPanel({
   onDesignSystemViewChange: (view: DesignSystemView) => void;
   onOpenChanges: () => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
+  onRenameRepoScreen: (screen: RepoPanelScreen, name: string) => void;
+  onDeleteRepoScreen: (screen: RepoPanelScreen) => void;
+  onCancelDeleteRepoScreen: () => void;
+  pendingDeleteScreenPath?: string | null;
+  screenFlowBadges?: ScreenFlowBadges;
   gitStatus: PanelGitStatus;
   sidecarPath: string;
   activeRepoScreen?: { path: string; sidecarPath?: string; rootId: NodeId } | null;
@@ -530,6 +541,8 @@ export function LeftPanel({
   const [collapsedLayerRoots, setCollapsedLayerRoots] = useState<Record<string, boolean>>(
     () => readLeftPanelCollapseState().layers,
   );
+  const [editingScreenPath, setEditingScreenPath] = useState<string | null>(null);
+  const [screenNameDraft, setScreenNameDraft] = useState("");
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -694,6 +707,25 @@ export function LeftPanel({
     return loadedRepoScreenForRepoScreen(screen)?.rootId;
   }
 
+  function beginRenameScreen(screen: RepoPanelScreen, label: string) {
+    if (!loadedRootIdForRepoScreen(screen)) return;
+    setEditingScreenPath(screen.path);
+    setScreenNameDraft(label);
+  }
+
+  function commitRenameScreen(screen: RepoPanelScreen) {
+    const next = screenNameDraft.trim();
+    if (next) onRenameRepoScreen(screen, next);
+    setEditingScreenPath(null);
+  }
+
+  function badgesForScreen(screen: RepoPanelScreen) {
+    const labels = screenFlowBadges[screen.path] ??
+      (screen.sidecarPath ? screenFlowBadges[screen.sidecarPath] : undefined) ??
+      [];
+    return labels;
+  }
+
   function isActiveRepoScreen(screen: RepoPanelScreen) {
     const loadedRootId = loadedRootIdForRepoScreen(screen);
     return (
@@ -759,6 +791,12 @@ export function LeftPanel({
   function renderScreenItem(item: (typeof repoScreenItems)[number]) {
     const repoLayerRoot =
       rootList.find((root) => root.id === loadedRootIdForRepoScreen(item.screen)) ?? activeRepoRootById;
+    const loadedRootId = loadedRootIdForRepoScreen(item.screen);
+    const editing = editingScreenPath === item.screen.path;
+    const deleteArmed = pendingDeleteScreenPath === item.screen.path;
+    const canDelete = item.screen.rnCanvas && !!item.screen.sidecarPath;
+    const flowLabels = badgesForScreen(item.screen);
+    const flowTitle = flowLabels.join(", ");
     return (
       <div key={item.id} className="flex flex-col gap-xs">
         <PanelRow
@@ -766,11 +804,87 @@ export function LeftPanel({
           onClick={() => onOpenRepoScreen(item.screen)}
           active={item.active}
           title={`Open ${item.screen.path}`}
+          action={deleteArmed ? (
+            <>
+              <PanelAction
+                onClick={() => onDeleteRepoScreen(item.screen)}
+                title={`Confirm delete ${item.label}`}
+                className="text-amber opacity-100"
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </PanelAction>
+              <PanelAction
+                onClick={onCancelDeleteRepoScreen}
+                title="Cancel delete screen"
+                className="opacity-100"
+              >
+                <X size={14} aria-hidden="true" />
+              </PanelAction>
+            </>
+          ) : (
+            <>
+              <PanelAction
+                onClick={() => beginRenameScreen(item.screen, item.label)}
+                disabled={!loadedRootId}
+                title={loadedRootId ? `Rename ${item.label}` : "Open the screen to rename it"}
+                className={rowAction}
+              >
+                <Pencil size={14} aria-hidden="true" />
+              </PanelAction>
+              {canDelete && (
+                <PanelAction
+                  onClick={() => onDeleteRepoScreen(item.screen)}
+                  title={`Delete ${item.label}`}
+                  className={rowAction}
+                >
+                  <Trash2 size={14} aria-hidden="true" />
+                </PanelAction>
+              )}
+            </>
+          )}
         >
-          <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          {editing ? (
+            <input
+              autoFocus
+              value={screenNameDraft}
+              onChange={(event) => setScreenNameDraft(event.currentTarget.value)}
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onBlur={() => commitRenameScreen(item.screen)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitRenameScreen(item.screen);
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setEditingScreenPath(null);
+                }
+              }}
+              className="min-w-0 flex-1 rounded-sm border border-accent-line bg-chrome-2 px-xs py-0.5 text-xs text-ink outline-none"
+            />
+          ) : (
+            <span
+              className="min-w-0 flex-1 truncate"
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                beginRenameScreen(item.screen, item.label);
+              }}
+            >
+              {item.label}
+            </span>
+          )}
           {item.detail && (
             <span className="min-w-0 max-w-28 truncate text-2xs text-ink-faint">
               {item.detail}
+            </span>
+          )}
+          {flowLabels.length > 0 && (
+            <span
+              className="max-w-20 truncate rounded-sm border border-line-soft bg-raised px-xs py-0.5 text-2xs text-ink-dim"
+              title={flowTitle}
+            >
+              {flowLabels.length === 1 ? flowLabels[0] : `${flowLabels.length} flows`}
             </span>
           )}
           <GitBadge code={item.gitCode} title={item.gitTitle} />

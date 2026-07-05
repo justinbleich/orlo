@@ -96,6 +96,7 @@ export type ActiveRepoScreen = {
   screenName?: string;
 };
 export type LoadedRepoScreens = Record<string, ActiveRepoScreen>;
+export type RepoScreenTarget = { path: string; sidecarPath?: string; rnCanvas?: boolean };
 
 type OpenDocumentResult = {
   version: 1;
@@ -489,6 +490,8 @@ interface WorkspaceState {
   loadRepoContext(): Promise<void>;
   loadCanvasManifest(): Promise<void>;
   createRepoScreen(): Promise<Node | null>;
+  renameRepoScreen(rootId: NodeId, name: string): void;
+  deleteRepoScreen(screen: RepoScreenTarget): Promise<void>;
   applyFlowManifest(body: FlowManifest): void;
   loadFlowManifest(): Promise<void>;
   persistFlowManifest(
@@ -1010,6 +1013,114 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         codegenInFlight = false;
         set({ codegenBusy: false });
       }
+    },
+
+    renameRepoScreen: (rootId, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const doc = useDocumentStore.getState();
+      const root = doc.roots[rootId];
+      if (!root || root.design?.name === trimmed) return;
+      doc.updateDesign(rootId, rootId, { name: trimmed });
+      dirtyRoots.add(rootId);
+      syncRootHint = rootId;
+      set((state) => {
+        const loadedRepoScreens = Object.fromEntries(
+          Object.entries(state.loadedRepoScreens).map(([key, screen]) => [
+            key,
+            screen.rootId === rootId ? { ...screen, screenName: trimmed } : screen,
+          ]),
+        );
+        const activeRepoScreen =
+          state.activeRepoScreen?.rootId === rootId
+            ? { ...state.activeRepoScreen, screenName: trimmed }
+            : state.activeRepoScreen;
+        return {
+          loadedRepoScreens,
+          activeRepoScreen,
+          screenName: activeRepoScreen?.rootId === rootId ? trimmed : state.screenName,
+          status: `Renamed screen to ${trimmed}`,
+        };
+      });
+      get().scheduleAutoSync();
+    },
+
+    deleteRepoScreen: async (screen) => {
+      if (!screen.sidecarPath || !screen.rnCanvas) {
+        const message = "Only RNCanvas-owned screens can be deleted";
+        set({ status: message });
+        get().pushToast(message);
+        return;
+      }
+      const res = await fetch("/api/screens/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetPath: screen.path, sidecarPath: screen.sidecarPath }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+
+      const { byPath } = screenPathMap(get().loadedRepoScreens);
+      const loaded = byPath.get(screen.path) ?? byPath.get(screen.sidecarPath);
+      if (loaded) {
+        useDocumentStore.getState().removeRoot(loaded.rootId);
+        dirtyRoots.delete(loaded.rootId);
+      }
+      const deletedPaths = new Set([screen.path, screen.sidecarPath]);
+      const deletedRootId = loaded?.rootId;
+      const nextFlows = flowsFromState(get()).map((flow) => {
+        const routes = deletedRootId
+          ? flow.routes.filter((rootId) => rootId !== deletedRootId)
+          : flow.routes;
+        const routeSet = new Set(routes);
+        return {
+          ...flow,
+          routes,
+          entryRootId:
+            flow.entryRootId && routeSet.has(flow.entryRootId) ? flow.entryRootId : routes[0],
+          successRootId:
+            flow.successRootId && routeSet.has(flow.successRootId) ? flow.successRootId : undefined,
+          edges: flow.edges.filter((edge) => routeSet.has(edge.from.rootId) && routeSet.has(edge.to)),
+          manifestRoutes: (flow.manifestRoutes ?? []).filter(
+            (route) =>
+              !(route.path && deletedPaths.has(route.path)) &&
+              !(deletedRootId && route.rootId === deletedRootId),
+          ),
+          manifestEdges: (flow.manifestEdges ?? []).filter(
+            (edge) =>
+              !(edge.from.path && deletedPaths.has(edge.from.path)) &&
+              !(edge.toPath && deletedPaths.has(edge.toPath)) &&
+              !(deletedRootId && edge.from.rootId === deletedRootId) &&
+              !(deletedRootId && edge.to === deletedRootId),
+          ),
+        };
+      });
+      set((state) => {
+        const loadedRepoScreens = Object.fromEntries(
+          Object.entries(state.loadedRepoScreens).filter(
+            ([key, value]) =>
+              !deletedPaths.has(key) &&
+              !deletedPaths.has(value.path) &&
+              (!value.sidecarPath || !deletedPaths.has(value.sidecarPath)) &&
+              (!deletedRootId || value.rootId !== deletedRootId),
+          ),
+        );
+        return {
+          loadedRepoScreens,
+          activeRepoScreen:
+            state.activeRepoScreen &&
+            (deletedPaths.has(state.activeRepoScreen.path) ||
+              (!!state.activeRepoScreen.sidecarPath && deletedPaths.has(state.activeRepoScreen.sidecarPath)) ||
+              (!!deletedRootId && state.activeRepoScreen.rootId === deletedRootId))
+              ? null
+              : state.activeRepoScreen,
+          flowsById: Object.fromEntries(nextFlows.map((flow) => [flow.id, flow])),
+          status: `Deleted ${screen.path}`,
+        };
+      });
+      await get().persistFlowManifest(nextFlows);
+      void get().refreshGitStatus();
+      void get().loadRepoContext();
     },
 
     applyFlowManifest: (body) => {

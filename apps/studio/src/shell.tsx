@@ -574,6 +574,22 @@ export function LeftPanel({
     });
   }, [collapsedLayerRoots]);
 
+  useEffect(() => {
+    if (!editingComponentId) return;
+    setCollapsedLayerRoots((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const root of Object.values(roots)) {
+        const key = layerCollapseKey(root);
+        if (next[key] !== true) {
+          next[key] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [editingComponentId, roots]);
+
   function createComponent() {
     if (!focusedRoot || !selectedId || !selectedNode) return;
     const pascal = pascalCase(selectedNode.design?.name ?? selectedNode.type);
@@ -610,7 +626,7 @@ export function LeftPanel({
 
   function layerAccordion(root: typeof rootList[number]) {
     const collapseKey = layerCollapseKey(root);
-    const collapsed = collapsedLayerRoots[collapseKey] ?? !!editingComponentId;
+    const collapsed = collapsedLayerRoots[collapseKey] ?? false;
     const count = layerCount(root);
     const rootLabel = root.design?.name ?? "Screen";
     return (

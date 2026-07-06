@@ -1161,13 +1161,6 @@ function VariantControls({
                 {isDefault ? "Base" : "Override"}
               </span>
             </div>
-            <VariantPicker
-              properties={valuedProperties}
-              activeValues={activeValues}
-              onSelect={(values) => {
-                for (const p of valuedProperties) setActiveVariant(p.name, values[p.name]);
-              }}
-            />
             <VariantMatrix
               definition={def}
               properties={valuedProperties}

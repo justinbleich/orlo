@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { type Node, type NodeId } from "@rn-canvas/document";
 import { Field, IconButton, Section, Select, TextField, cn } from "./studio-ui";
 import { controlClass } from "./studio-ui/controls";
@@ -50,6 +50,13 @@ export function FlowInspector({
     () => availableScreens.map((root) => ({ value: root.id, label: screenLabel(root, screens) })),
     [availableScreens, screens],
   );
+
+  useEffect(() => {
+    if (pendingScreenId && availableScreens.some((screen) => screen.id === pendingScreenId)) {
+      return;
+    }
+    setPendingScreenId(availableScreens[0]?.id);
+  }, [availableScreens, pendingScreenId]);
 
   if (!flow) {
     return (

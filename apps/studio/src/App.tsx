@@ -408,7 +408,7 @@ function FlowWorkspace({
   entryRootId,
   routeIds,
   onSelectScreen,
-  onAddFrame,
+  onAddRoute,
   onRenameFlow,
 }: {
   roots: Node[];
@@ -417,7 +417,7 @@ function FlowWorkspace({
   entryRootId?: NodeId;
   routeIds?: NodeId[];
   onSelectScreen: (rootId: NodeId) => void;
-  onAddFrame: () => void;
+  onAddRoute: (rootId: NodeId) => void;
   onRenameFlow: (flowId: FlowId, label: string) => boolean;
 }) {
   const screens = roots.filter(
@@ -426,6 +426,7 @@ function FlowWorkspace({
       root.id !== useDocumentStore.getState().editingComponentId,
   );
   const routeScreens = flowRouteScreens(screens, activeFlow, routeIds);
+  const availableScreens = flowAvailableScreens(screens, activeFlow, routeIds);
   const entryScreen =
     (entryRootId ? routeScreens.find((root) => root.id === entryRootId) : undefined) ??
     routeScreens[0];
@@ -496,7 +497,14 @@ function FlowWorkspace({
           Routes <span className="font-medium tabular-nums text-ink">{routeScreens.length}</span>
         </div>
         <div className="ml-auto flex items-center gap-xs">
-          <IconButton title="Add screen" onClick={onAddFrame}>
+          <IconButton
+            title="Add route to flow"
+            onClick={() => {
+              const next = availableScreens[0];
+              if (next) onAddRoute(next.id);
+            }}
+            disabled={availableScreens.length === 0}
+          >
             <PlusIcon />
           </IconButton>
         </div>
@@ -1302,6 +1310,23 @@ export default function App() {
       }
     }
   }, [openSidecar, repoFlowItems]);
+
+  useEffect(() => {
+    const manifestRoutes = flowsById[activeFlow]?.manifestRoutes;
+    if (workspace !== "Flow" || !manifestRoutes?.length) return;
+    const screenByPath = new Map<string, RepoPanelScreen>();
+    for (const screen of repoContext?.screens ?? []) {
+      screenByPath.set(screen.path, screen);
+      if (screen.sidecarPath) screenByPath.set(screen.sidecarPath, screen);
+    }
+    for (const route of manifestRoutes) {
+      if (!route.path) continue;
+      const screen = screenByPath.get(route.path);
+      if (!screen?.sidecarPath || repoFlowAutoloadedRef.current.has(screen.sidecarPath)) continue;
+      repoFlowAutoloadedRef.current.add(screen.sidecarPath);
+      void openSidecar(screen.sidecarPath, "merge");
+    }
+  }, [activeFlow, flowsById, openSidecar, repoContext, workspace]);
 
   useEffect(() => {
     const rootForPath = new Map<string, NodeId>();
@@ -2155,22 +2180,6 @@ export default function App() {
     return root;
   }, [createRepoScreen]);
 
-  const addFrameToActiveFlow = useCallback(() => {
-    void addFrame().then((root) => {
-      if (!root) return;
-      const screenName = root.design?.name ?? "Screen";
-      const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
-        (item) => item.id !== useDocumentStore.getState().editingComponentId,
-      );
-      const current = flowsById[activeFlow]?.routes;
-      const nextRoutes = addFlowRoute(screenRoots, activeFlow, current, root.id);
-      void updateStoredFlowRoutes(activeFlow, nextRoutes, screenRoots).then(
-        () => setStatus(`Created ${screenName} and added it to the flow`),
-        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
-      );
-    });
-  }, [activeFlow, addFrame, flowsById, updateStoredFlowRoutes]);
-
   const setCanvasTool = useCallback((tool: CanvasTool) => {
     useStudioStore.getState().setCanvasTool(tool);
     editorRef.current?.setCurrentTool(tool);
@@ -2380,7 +2389,7 @@ export default function App() {
               entryRootId={activeFlowDefinition?.entryRootId}
               routeIds={activeFlowDefinition?.routes}
               onSelectScreen={selectScreenFromWorkspace}
-              onAddFrame={addFrameToActiveFlow}
+              onAddRoute={addScreenToFlow}
               onRenameFlow={renameFlow}
             />
           ) : workspace === "Design System" ? (

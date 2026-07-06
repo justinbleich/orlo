@@ -28,6 +28,7 @@ import {
   displayScreenName,
   type RepoPanelContext,
 } from "./repo-project-model";
+import { mergeLoadedTokens } from "./token-merge";
 import { createScreenFrame, nextScreenName } from "./document-actions";
 import {
   addFlowEdge,
@@ -741,13 +742,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     ) {
       delete nextRoots[previousLoadedScreen.rootId];
     }
-    nextRoots[opts.root.id] = opts.root;
-    const nextComponents =
+    const rawNextComponents =
       opts.mode === "merge"
         ? { ...state.components, ...(opts.components ?? {}) }
         : opts.components;
-    const nextTokens =
-      opts.mode === "merge" ? { ...state.tokens, ...(opts.tokens ?? {}) } : opts.tokens;
+    const tokenMerge =
+      opts.mode === "merge"
+        ? mergeLoadedTokens({
+            existing: state.tokens,
+            incoming: opts.tokens,
+            root: opts.root,
+            components: rawNextComponents,
+          })
+        : { tokens: opts.tokens, root: opts.root, components: rawNextComponents };
+    nextRoots[opts.root.id] = tokenMerge.root;
+    const nextComponents = tokenMerge.components;
+    const nextTokens = tokenMerge.tokens;
     state.loadRoots(nextRoots, [opts.root.id], nextComponents, nextTokens);
     studioHooks.onRepoDocumentOpened(opts.root.id);
     const repoScreen: ActiveRepoScreen = {

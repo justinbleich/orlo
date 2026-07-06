@@ -49,7 +49,7 @@ import {
   type ActiveRepoScreen,
   type FlowDefinition,
 } from "./workspace-store";
-import { ComponentPropsPanel, Inspector } from "./Inspector";
+import { ComponentEditPanel, Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { color, layout, radius, space, text } from "./studio-theme";
@@ -1174,7 +1174,7 @@ export default function App() {
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
   const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
 
-  const [inspectorTab, setInspectorTab] = useState("Inspect");
+  const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
   const [componentWorkspaceTab, setComponentWorkspaceTab] =
     useState<ComponentWorkspaceTab>("Canvas");
@@ -1391,12 +1391,6 @@ export default function App() {
 
   useEffect(() => startMcpBridge(handleMcpCommand), []);
 
-  // Props only exists while the Component workspace is open; fall back when the
-  // workspace changes underneath it.
-  useEffect(() => {
-    if (inspectorTab === "Props" && workspace !== "Component") setInspectorTab("Inspect");
-  }, [inspectorTab, workspace]);
-
   useEffect(() => {
     if (flows.length === 0) return;
     const hasManualFlow = flows.some((flow) => flow.id === activeFlow);
@@ -1523,7 +1517,6 @@ export default function App() {
     if (!editingComponentId) return;
     setWorkspace("Component");
     setComponentWorkspaceTab("Canvas");
-    setInspectorTab("Props");
     if (workspace === "Flow" || workspace === "Design System") return;
     pendingFocusRootIdRef.current = editingComponentId;
     const editor = editorRef.current;
@@ -1553,7 +1546,7 @@ export default function App() {
     pendingFocusRootIdRef.current = rootId;
     useDocumentStore.getState().setSelection([rootId]);
     setWorkspace("Screen");
-    setInspectorTab("Inspect");
+    setInspectorTab("Design");
     setStatus("Opened screen");
   }, []);
 
@@ -2540,7 +2533,7 @@ export default function App() {
                   <div style={{ padding: space.md, paddingBottom: 0 }}>
                     <div className="mb-xs flex items-center gap-xs">
                       <div className="eyebrow min-w-0 flex-1 truncate">Inspector</div>
-                      {inspectorTab !== "Inspect" && (
+                      {inspectorTab !== "Design" && (
                         <span className="text-2xs font-semibold text-ink-faint">
                           {inspectorTab}
                         </span>
@@ -2550,8 +2543,8 @@ export default function App() {
                     <Tabs
                       tabs={
                         workspace === "Component"
-                          ? ["Inspect", "Props", "Code", "History"]
-                          : ["Inspect", "Code", "History"]
+                          ? ["Design", "Code", "History"]
+                          : ["Design", "Code", "History"]
                       }
                       active={inspectorTab}
                       onSelect={setInspectorTab}
@@ -2559,13 +2552,13 @@ export default function App() {
                     />
                   </div>
                   <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-                    {inspectorTab === "Inspect" ? (
+                    {inspectorTab === "Design" ? (
                       <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
-                        <Inspector rootId={focusedRootId} />
-                      </ErrorBoundary>
-                    ) : inspectorTab === "Props" && editingComponentId ? (
-                      <ErrorBoundary label="Props" resetKey={editingComponentId}>
-                        <ComponentPropsPanel componentId={editingComponentId} />
+                        {editingComponentId ? (
+                          <ComponentEditPanel componentId={editingComponentId} />
+                        ) : (
+                          <Inspector rootId={focusedRootId} />
+                        )}
                       </ErrorBoundary>
                     ) : inspectorTab === "Code" ? (
                       <CodePanel />

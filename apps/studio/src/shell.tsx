@@ -610,7 +610,7 @@ export function LeftPanel({
 
   function layerAccordion(root: typeof rootList[number]) {
     const collapseKey = layerCollapseKey(root);
-    const collapsed = collapsedLayerRoots[collapseKey] ?? false;
+    const collapsed = collapsedLayerRoots[collapseKey] ?? !!editingComponentId;
     const count = layerCount(root);
     const rootLabel = root.design?.name ?? "Screen";
     return (

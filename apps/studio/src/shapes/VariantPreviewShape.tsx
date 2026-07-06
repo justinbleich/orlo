@@ -151,7 +151,7 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
           <LayerOverlay
             root={root}
             result={layoutResult}
-            active={active}
+            active
             variantTarget={{
               componentId: shape.props.componentId,
               values: shape.props.variantValues,

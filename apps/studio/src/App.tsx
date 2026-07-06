@@ -1517,6 +1517,7 @@ export default function App() {
     if (!editingComponentId) return;
     setWorkspace("Component");
     setComponentWorkspaceTab("Canvas");
+    setInspectorTab("Design");
     if (workspace === "Flow" || workspace === "Design System") return;
     pendingFocusRootIdRef.current = editingComponentId;
     const editor = editorRef.current;

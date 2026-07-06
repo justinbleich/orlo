@@ -1180,6 +1180,7 @@ export default function App() {
   const reconcilingShapesRef = useRef(false);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
+  const repoComponentHydratedRef = useRef<Set<string>>(new Set());
   const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
 
   const [inspectorTab, setInspectorTab] = useState("Design");
@@ -1222,6 +1223,7 @@ export default function App() {
   const importSource = useWorkspaceStore((s) => s.importSource);
   const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
   const createRepoScreen = useWorkspaceStore((s) => s.createRepoScreen);
+  const hydrateSidecarComponents = useWorkspaceStore((s) => s.hydrateSidecarComponents);
 
   // The document store's selection is the single source of truth. The focused
   // frame is *derived* from it (the root whose subtree holds the selection), and
@@ -1310,6 +1312,24 @@ export default function App() {
       }
     }
   }, [openSidecar, repoFlowItems]);
+
+  useEffect(() => {
+    if (!repoContext?.screens.length) return;
+    const sidecarPaths = repoContext.screens
+      .filter((screen) => screen.rnCanvas && screen.sidecarPath)
+      .map((screen) => screen.sidecarPath as string)
+      .filter((path) => {
+        if (repoComponentHydratedRef.current.has(path)) return false;
+        repoComponentHydratedRef.current.add(path);
+        return true;
+      });
+    if (sidecarPaths.length === 0) return;
+    void (async () => {
+      for (const path of sidecarPaths) {
+        await hydrateSidecarComponents(path);
+      }
+    })();
+  }, [hydrateSidecarComponents, repoContext]);
 
   useEffect(() => {
     const manifestRoutes = flowsById[activeFlow]?.manifestRoutes;
@@ -2286,9 +2306,10 @@ export default function App() {
   const flowInspectorAvailableScreens = activeFlowDefinition
     ? flowAvailableScreens(flowInspectorScreens, activeFlow, activeFlowDefinition.routes)
     : [];
+  const isComponentWorkspace = workspace === "Component" && !!editingComponentDefinition;
   const workspaceContext =
-    workspace === "Component"
-      ? `Component · ${editingComponentName ?? "Untitled"}`
+    isComponentWorkspace
+      ? `Component · ${editingComponentName}`
       : workspace === "Flow"
         ? `Flow · ${flowPanelItems.find((flow) => flow.id === activeFlow)?.label ?? "Untitled"}`
         : workspace === "Design System"
@@ -2399,7 +2420,7 @@ export default function App() {
               onViewChange={setActiveDesignSystemView}
               onCreateToken={createToken}
             />
-          ) : workspace === "Component" && editingComponentDefinition ? (
+          ) : isComponentWorkspace ? (
             <ComponentWorkspace
               definition={editingComponentDefinition}
               roots={roots}
@@ -2564,7 +2585,7 @@ export default function App() {
                   <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
                     {inspectorTab === "Design" ? (
                       <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
-                        {editingComponentId ? (
+                        {isComponentWorkspace && editingComponentId ? (
                           <ComponentEditPanel componentId={editingComponentId} />
                         ) : (
                           <Inspector rootId={focusedRootId} />

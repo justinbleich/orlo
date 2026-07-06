@@ -514,6 +514,7 @@ interface WorkspaceState {
   ): Promise<CodegenResult | null>;
   scheduleAutoSync(): void;
   openSidecar(path?: string, mode?: "replace" | "merge"): Promise<void>;
+  hydrateSidecarComponents(path: string): Promise<void>;
   importSource(path?: string, mode?: "replace" | "merge"): Promise<void>;
   connectRepo(): Promise<void>;
   selectRepoFolder(): Promise<void>;
@@ -1456,6 +1457,44 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         get().pushToast(message);
       } finally {
         set({ codegenBusy: false });
+      }
+    },
+
+    hydrateSidecarComponents: async (path) => {
+      try {
+        const res = await fetch("/api/documents/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sidecarPath: path }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        const opened = body as OpenDocumentResult;
+        if (
+          Object.keys(opened.components ?? {}).length === 0 &&
+          Object.keys(opened.tokens ?? {}).length === 0
+        ) {
+          return;
+        }
+        workspaceFlags.skipTokenWrite = true;
+        workspaceFlags.skipCodeSync = true;
+        const state = useDocumentStore.getState();
+        const rawNextComponents = { ...state.components, ...(opened.components ?? {}) };
+        const tokenMerge = mergeLoadedTokens({
+          existing: state.tokens,
+          incoming: opened.tokens,
+          root: opened.root,
+          components: rawNextComponents,
+        });
+        state.loadRoots(
+          state.roots,
+          state.selection,
+          tokenMerge.components,
+          tokenMerge.tokens,
+        );
+      } catch {
+        // Component hydration is opportunistic; opening a screen still surfaces
+        // any document-specific load errors in the normal user-facing path.
       }
     },
 

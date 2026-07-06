@@ -967,10 +967,10 @@ export function LeftPanel({
                   icon={Component}
                   onClick={() => {
                     setArmedComponent(armed ? null : comp.id);
-                    onWorkspaceChange("Component");
+                    if (workspace === "Component") onWorkspaceChange("Screen");
                   }}
                   title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
-                  active={workspace === "Component" || armed}
+                  active={armed}
                   action={(
                     <>
                       <PanelAction

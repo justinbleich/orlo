@@ -135,6 +135,7 @@ export function FlowInspector({
               options={availableOptions}
               placeholder="Add screen"
               disabled={availableOptions.length === 0}
+              ariaLabel="Add screen to flow"
             />
           </div>
           <IconButton
@@ -196,6 +197,7 @@ export function FlowInspector({
           options={screenOptions}
           placeholder="Select entry"
           disabled={screenOptions.length === 0}
+          ariaLabel="Entry screen"
         />
       </Section>
 
@@ -208,6 +210,7 @@ export function FlowInspector({
           options={screenOptions}
           placeholder="Select success"
           disabled={screenOptions.length === 0}
+          ariaLabel="Success screen"
         />
       </Section>
 
@@ -241,6 +244,7 @@ export function FlowInspector({
                     options={screenOptions}
                     placeholder="Destination"
                     disabled={screenOptions.length === 0}
+                    ariaLabel="Condition destination"
                   />
                 </div>
                 <IconButton title="Remove condition" onClick={() => removeCondition(index)}>

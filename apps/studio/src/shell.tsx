@@ -41,8 +41,8 @@ import {
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
-import { toComponentName } from "@rn-canvas/codegen";
 import { Menu } from "@base-ui/react/menu";
+import { toComponentFileName } from "./component-name";
 import { color, radius, space, text } from "./studio-theme";
 import { type CanvasTool, useStudioStore } from "./studio-store";
 import { cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
@@ -959,7 +959,7 @@ export function LeftPanel({
           ) : (
             componentList.map((comp) => {
               const armed = armedComponentId === comp.id;
-              const componentFileName = toComponentName(comp.name);
+              const componentFileName = toComponentFileName(comp.name);
               const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${componentFileName}.tsx`);
               return (
                 <PanelRow

@@ -435,7 +435,10 @@ export function LayerOverlay({
 
     // Empty space or the frame background → marquee (or clear when not additive).
     if (!hit || hit.node.id === root.id) {
-      if (!additive) setSelection([]);
+      if (!additive) {
+        const editingComponentId = useDocumentStore.getState().editingComponentId;
+        setSelection(editingComponentId === root.id ? [root.id] : []);
+      }
       beginMarquee(event, additive);
       return;
     }

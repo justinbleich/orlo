@@ -25,7 +25,7 @@ import { childrenOf, isContainer } from "./types";
 import { validateTree, type NodeError } from "./validate";
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
-const PASCAL_CASE = /^[A-Z][A-Za-z0-9_$]*$/;
+const COMPONENT_DISPLAY_NAME = /^[A-Z][A-Za-z0-9_$]*(?:\.[A-Z][A-Za-z0-9_$]*)*$/;
 const VALUE_TYPES = new Set(["string", "number", "boolean", "color", "enum", "node"]);
 
 function newId(): NodeId {
@@ -37,6 +37,34 @@ function newId(): NodeId {
 /** Structural deep clone — nodes are JSON by construction (sidecar relies on it). */
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function splitPlacementStyle(style: RNStyle): { templateStyle: RNStyle; instanceStyle: RNStyle } {
+  const {
+    position,
+    top,
+    right,
+    bottom,
+    left,
+    ...templateStyle
+  } = style;
+  const instanceStyle: RNStyle = {};
+  if (position !== undefined) instanceStyle.position = position;
+  if (top !== undefined) instanceStyle.top = top;
+  if (right !== undefined) instanceStyle.right = right;
+  if (bottom !== undefined) instanceStyle.bottom = bottom;
+  if (left !== undefined) instanceStyle.left = left;
+  return { templateStyle, instanceStyle };
+}
+
+function emittedComponentName(name: string): string {
+  const pascal = name
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+  return IDENTIFIER.test(pascal) ? pascal : "";
 }
 
 /** Index every node in a tree by id, including slot children. */
@@ -68,13 +96,16 @@ export function promoteToComponent(
   node: Node,
   name: string,
 ): { definition: ComponentDefinition; instance: ComponentInstanceNode } {
+  const template = clone(node);
+  const { templateStyle, instanceStyle } = splitPlacementStyle(template.style);
+  template.style = templateStyle;
   const definition: ComponentDefinition = {
     id: newId(),
     name,
-    template: clone(node),
+    template,
     props: [],
   };
-  return { definition, instance: createInstance(definition.id) };
+  return { definition, instance: createInstance(definition.id, { style: instanceStyle }) };
 }
 
 /** The four authoring presets over the general prop model (Phase 2C). */
@@ -512,12 +543,27 @@ function defaultMatches(prop: ComponentProp): boolean {
 /** Validate the whole registry: definition names, templates, and prop bindings. */
 export function validateComponentRegistry(registry: ComponentRegistry): NodeError[] {
   const errors: NodeError[] = [];
+  const componentNames = new Map<string, string>();
+  const emittedNames = new Map<string, string>();
   for (const [id, definition] of Object.entries(registry)) {
     if (definition.id !== id) {
       errors.push({ nodeId: id, key: "id", reason: "registry key must equal definition id" });
     }
-    if (!PASCAL_CASE.test(definition.name)) {
-      errors.push({ nodeId: id, key: "name", reason: "expected a PascalCase component name" });
+    if (!COMPONENT_DISPLAY_NAME.test(definition.name)) {
+      errors.push({ nodeId: id, key: "name", reason: "expected a PascalCase component name or dotted path" });
+    }
+    const existingId = componentNames.get(definition.name);
+    if (existingId && existingId !== id) {
+      errors.push({ nodeId: id, key: "name", reason: "duplicate component name" });
+    } else {
+      componentNames.set(definition.name, id);
+    }
+    const emittedName = emittedComponentName(definition.name);
+    const existingEmittedId = emittedNames.get(emittedName);
+    if (emittedName && existingEmittedId && existingEmittedId !== id) {
+      errors.push({ nodeId: id, key: "name", reason: "component name collides after codegen sanitization" });
+    } else if (emittedName) {
+      emittedNames.set(emittedName, id);
     }
     for (const e of validateTree(definition.template)) {
       errors.push({ nodeId: id, key: `template.${e.key}`, reason: e.reason });

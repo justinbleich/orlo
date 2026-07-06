@@ -72,6 +72,13 @@ export function NumberField({
       <BaseNumberField.Group className="flex min-w-0 flex-1">
         <BaseNumberField.Input
           placeholder={mixed ? "Mixed" : placeholder}
+          onFocus={(event) => {
+            const input = event.currentTarget;
+            requestAnimationFrame(() => input.select());
+          }}
+          onPointerUp={(event) => {
+            if (event.currentTarget === document.activeElement) event.preventDefault();
+          }}
           className={cn(
             "h-full w-full min-w-0 bg-transparent pr-sm text-sm tabular-nums text-ink",
             "placeholder:text-ink-faint focus-visible:outline-none",

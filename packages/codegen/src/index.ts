@@ -14,6 +14,7 @@ import { buildSidecar, parseSidecar, serializeSidecar, type SidecarDocument } fr
 
 export { emitScreen, type EmitOptions } from "./emit";
 export { emitComponent, type GeneratedComponent } from "./emit-component";
+export { toComponentName } from "./emit-core";
 export { emitTheme, type GeneratedTheme } from "./emit-theme";
 export {
   buildSidecar,

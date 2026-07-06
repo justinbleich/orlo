@@ -41,6 +41,7 @@ import {
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
+import { toComponentName } from "@rn-canvas/codegen";
 import { Menu } from "@base-ui/react/menu";
 import { color, radius, space, text } from "./studio-theme";
 import { type CanvasTool, useStudioStore } from "./studio-store";
@@ -958,7 +959,8 @@ export function LeftPanel({
           ) : (
             componentList.map((comp) => {
               const armed = armedComponentId === comp.id;
-              const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${comp.name}.tsx`);
+              const componentFileName = toComponentName(comp.name);
+              const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${componentFileName}.tsx`);
               return (
                 <PanelRow
                   key={comp.id}
@@ -992,7 +994,7 @@ export function LeftPanel({
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate">{comp.name}</span>
-                  <GitBadge code={componentGitCode} title={`generated/components/${comp.name}.tsx`} />
+                  <GitBadge code={componentGitCode} title={`generated/components/${componentFileName}.tsx`} />
                 </PanelRow>
               );
             })

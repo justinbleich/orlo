@@ -1442,6 +1442,7 @@ function VariantMatrix({
               onClick={() => onSelect(values)}
               className={cn(
                 "flex min-h-14 flex-col justify-between rounded-sm border p-xs text-left transition-colors",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-line focus-visible:ring-offset-1 focus-visible:ring-offset-chrome",
                 active
                   ? "border-accent-line bg-accent-soft text-accent"
                   : overrideCount > 0
@@ -2227,9 +2228,12 @@ function TemplateTokensSection({ componentId }: { componentId: NodeId }) {
       {rows.length === 0 ? (
         <p className="m-0 text-sm text-ink-faint">No token links in this template.</p>
       ) : (
-        <div className="flex flex-col gap-control">
+        <div className="flex flex-col gap-2xs">
           {rows.map(({ token, uses }) => (
-            <div key={token.id} className="flex h-7 items-center gap-sm">
+            <div
+              key={token.id}
+              className="grid min-h-8 grid-cols-[minmax(2rem,auto)_minmax(0,1fr)_auto_auto] items-center gap-sm rounded-xs border border-line-soft bg-chrome-2 px-xs"
+            >
               {token.category === "color" ? (
                 <span
                   className="size-4 shrink-0 rounded-xs border border-line"
@@ -2237,7 +2241,7 @@ function TemplateTokensSection({ componentId }: { componentId: NodeId }) {
                   aria-hidden="true"
                 />
               ) : (
-                <span className="w-6 shrink-0 text-right text-2xs tabular-nums text-ink-faint">
+                <span className="text-right text-2xs tabular-nums text-ink-faint">
                   {String(token.value)}
                 </span>
               )}

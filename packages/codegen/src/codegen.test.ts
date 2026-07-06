@@ -378,6 +378,23 @@ test("a screen emits instances as parameterized usages + a component import", ()
   assertParses(gen.components[0].code);
 });
 
+test("dotted component display names emit sanitized component identifiers", () => {
+  const button = cardDefinition();
+  button.name = "Button.Primary";
+  const screen = createNode("View", {
+    id: "screen",
+    children: [createInstance("card1", { id: "button" })],
+  });
+  const gen = generateScreen(screen, { screenName: "Home", components: { card1: button } });
+
+  assert.match(gen.code, /import \{ ButtonPrimary \} from "\.\/components\/ButtonPrimary"/);
+  assert.match(gen.code, /<ButtonPrimary \/>/);
+  assert.deepEqual(gen.components.map((c) => c.fileName), ["ButtonPrimary.tsx"]);
+  assert.match(gen.components[0].code, /function ButtonPrimary/);
+  assertParses(gen.code);
+  assertParses(gen.components[0].code);
+});
+
 test("a nested instance pulls in its sub-component module", () => {
   const card = cardDefinition();
   const outer: ComponentDefinition = {

@@ -323,7 +323,7 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
   /** A ComponentInstance → `<Name prop={…} slot={…} />` usage. */
   function buildInstance(node: Node & { type: "ComponentInstance" }): t.Expression {
     const definition = components?.[node.componentId];
-    const name = definition ? definition.name : "View";
+    const name = definition ? toComponentName(definition.name) : "View";
     if (definition) componentImports.add(name);
     else used.add("View");
     const attrs: t.JSXAttribute[] = [];

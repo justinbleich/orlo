@@ -307,18 +307,33 @@ function UsageList({
   return (
     <div className="h-full overflow-auto p-lg">
       {rows.length === 0 ? (
-        <div className="text-sm text-ink-faint">No placed instances.</div>
+        <div className="flex h-full items-center justify-center">
+          <div className="rounded-sm border border-dashed border-line bg-chrome px-lg py-md text-sm text-ink-faint">
+            No placed instances.
+          </div>
+        </div>
       ) : (
-        <div className="mx-auto flex max-w-2xl flex-col overflow-hidden rounded-sm border border-line bg-chrome">
+        <div className="mx-auto flex max-w-3xl flex-col gap-sm">
+          <div className="flex items-center justify-between gap-md border-b border-line-soft pb-sm">
+            <div>
+              <div className="text-sm font-semibold text-ink">Placed instances</div>
+              <div className="text-xs text-ink-faint">
+                {usage.length} total across {rows.length} {rows.length === 1 ? "screen" : "screens"}
+              </div>
+            </div>
+          </div>
           {rows.map(([rootId, row], index) => (
             <div
               key={rootId}
               className={cn(
-                "flex min-h-10 items-center gap-sm px-md text-sm",
-                index > 0 && "border-t border-line-soft",
+                "flex min-h-12 items-center gap-sm rounded-sm border border-line bg-chrome px-md text-sm",
+                index === 0 && "border-accent-line/60",
               )}
             >
-              <span className="min-w-0 flex-1 truncate text-ink">{row.label}</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-ink">{row.label}</div>
+                <div className="text-xs text-ink-faint">Screen root {rootId}</div>
+              </div>
               <span
                 style={{
                   borderRadius: radius.pill,

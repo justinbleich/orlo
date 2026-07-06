@@ -16,6 +16,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import { toComponentName } from "@rn-canvas/codegen";
 import { findRootContaining, useDocumentStore } from "@rn-canvas/document";
 import { Eyebrow } from "./shell";
 import { color } from "./studio-theme";
@@ -248,10 +249,11 @@ export function CodePanel() {
       return;
     }
     if (autoSelectedForRef.current === editingComponentName) return;
+    const emittedName = toComponentName(editingComponentName);
     const artifact = artifacts.find(
       (candidate) =>
-        candidate.path.endsWith(`components/${editingComponentName}.tsx`) ||
-        candidate.label === `${editingComponentName}.tsx`,
+        candidate.path.endsWith(`components/${emittedName}.tsx`) ||
+        candidate.label === `${emittedName}.tsx`,
     );
     if (!artifact) return;
     autoSelectedForRef.current = editingComponentName;

@@ -66,6 +66,37 @@ test("promoteToComponent clones the subtree and returns a referencing instance",
   assert.deepEqual(placed.overrides, {});
 });
 
+test("promoteToComponent moves screen placement from template root to instance", () => {
+  const node = createNode("Pressable", {
+    id: "button",
+    style: {
+      position: "absolute",
+      left: 16,
+      right: 16,
+      bottom: 40,
+      height: 64,
+      padding: 8,
+      backgroundColor: "#2563eb",
+      borderRadius: 999,
+    },
+    children: [createNode("Text", { props: { text: "Next" } })],
+  });
+  const { definition, instance: placed } = promoteToComponent(node, "ButtonPrimary");
+
+  assert.deepEqual(definition.template.style, {
+    height: 64,
+    padding: 8,
+    backgroundColor: "#2563eb",
+    borderRadius: 999,
+  });
+  assert.deepEqual(placed.style, {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 40,
+  });
+});
+
 test("applyOverrides resolves text, falling back to the prop default", () => {
   const def = cardDef();
   const withValue = applyOverrides(def, instance({ overrides: { title: "Hello" } }));
@@ -236,6 +267,26 @@ test("validateComponentRegistry catches bad prop names, targets, and defaults", 
     props: [{ name: "x", valueType: "number", default: "nope", targets: [{ kind: "prop", nodeId: "title", path: "text" }] }],
   };
   assert.ok(validateComponentRegistry({ comp1: badDefault }).some((e) => e.key.endsWith(".default")));
+});
+
+test("validateComponentRegistry accepts dotted PascalCase display paths", () => {
+  const def = cardDef();
+  def.name = "Button.Primary";
+  assert.deepEqual(validateComponentRegistry({ comp1: def }), []);
+});
+
+test("validateComponentRegistry rejects display paths with colliding emitted names", () => {
+  const primary = cardDef();
+  primary.id = "primary";
+  primary.name = "Button.Primary";
+  const flat = cardDef();
+  flat.id = "flat";
+  flat.name = "ButtonPrimary";
+  assert.ok(
+    validateComponentRegistry({ primary, flat }).some(
+      (e) => e.reason === "component name collides after codegen sanitization",
+    ),
+  );
 });
 
 test("validateInstance checks names and value types against the registry", () => {

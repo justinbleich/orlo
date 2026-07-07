@@ -1,9 +1,11 @@
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { PressableComponent } from "./components/PressableComponent";
+import { TextComponent } from "./components/TextComponent";
 import { theme } from "./theme";
 export default function Screen() {
   return <View style={styles.view}><Image style={styles.image} source={{
       uri: ""
-    }} resizeMode={"cover"} /><Pressable style={styles.pressable}><Text style={styles.text}>Next</Text></Pressable></View>;
+    }} resizeMode={"cover"} /><Pressable style={styles.pressable}><Text style={styles.text}>Start planning</Text></Pressable><TextComponent /><PressableComponent /></View>;
 }
 const styles = StyleSheet.create({
   view: {
@@ -23,22 +25,20 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.canvas
   },
   pressable: {
-    padding: theme.spacing.space1,
-    backgroundColor: "#3a3a45",
-    borderRadius: theme.spacing["full.radius"],
-    position: "absolute",
-    left: 16,
-    bottom: 40,
-    height: 64,
-    right: 16,
-    justifyContent: "center",
-    alignItems: "center"
+    width: 295,
+    height: 56,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 16,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center"
   },
   text: {
     fontFamily: "Inter",
-    fontSize: theme.fontSize.text2,
-    color: theme.color.color1,
-    textAlign: "center",
-    fontWeight: "600"
+    fontSize: 15,
+    color: "#FFFFFF",
+    fontWeight: "600",
+    textAlign: "center"
   }
 });

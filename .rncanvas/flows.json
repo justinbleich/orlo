@@ -1,25 +1,33 @@
 {
   "version": 3,
-  "updatedAt": "2026-07-05T18:33:28.781Z",
+  "updatedAt": "2026-07-06T23:04:41.850Z",
   "flows": [
     {
       "id": "onboarding",
       "label": "Onboarding Flow",
-      "entryRootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
-      "entryPath": "generated/Screen.tsx",
-      "entryName": "HomeScreen",
+      "entryRootId": "e926d431-39ca-4e2b-8460-a7674d0c61ea",
+      "entryPath": "generated/screen-1-2.tsx",
+      "entryName": "Screen 1",
+      "successRootId": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
+      "successPath": "generated/screen-1.tsx",
       "routes": [
         {
-          "rootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
-          "path": "generated/Screen.tsx",
-          "name": "Screen",
-          "screenKey": "name:homescreen"
+          "rootId": "e926d431-39ca-4e2b-8460-a7674d0c61ea",
+          "path": "generated/screen-1-2.tsx",
+          "name": "Screen 1",
+          "screenKey": "name:screen 1"
         },
         {
           "rootId": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
           "path": "generated/screen-1.tsx",
           "name": "Hero",
           "screenKey": "name:hero"
+        },
+        {
+          "rootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+          "path": "generated/Screen.tsx",
+          "name": "Screen",
+          "screenKey": "name:homescreen"
         }
       ],
       "edges": [
@@ -27,6 +35,16 @@
           "from": {
             "rootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
             "path": "generated/Screen.tsx"
+          },
+          "to": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
+          "toPath": "generated/screen-1.tsx",
+          "kind": "primary"
+        },
+        {
+          "from": {
+            "rootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+            "path": "generated/Screen.tsx",
+            "anchorNodeId": "dd82ca9c-e23b-442b-8a5c-0eb94ca7fa77::df61b4b0-483b-495e-9233-cd8a608c39d1"
           },
           "to": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
           "toPath": "generated/screen-1.tsx",
@@ -41,15 +59,48 @@
       "entryRootId": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
       "entryPath": "generated/screen-1.tsx",
       "entryName": "Hero",
+      "successRootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+      "successPath": "generated/Screen.tsx",
       "routes": [
         {
           "rootId": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
           "path": "generated/screen-1.tsx",
           "name": "Hero",
           "screenKey": "name:hero"
+        },
+        {
+          "rootId": "e926d431-39ca-4e2b-8460-a7674d0c61ea",
+          "path": "generated/screen-1-2.tsx",
+          "name": "Screen 1",
+          "screenKey": "name:screen 1"
+        },
+        {
+          "rootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+          "path": "generated/Screen.tsx",
+          "name": "Screen",
+          "screenKey": "name:homescreen"
         }
       ],
-      "edges": []
+      "edges": [
+        {
+          "from": {
+            "rootId": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
+            "path": "generated/screen-1.tsx"
+          },
+          "to": "e926d431-39ca-4e2b-8460-a7674d0c61ea",
+          "toPath": "generated/screen-1-2.tsx",
+          "kind": "primary"
+        },
+        {
+          "from": {
+            "rootId": "e926d431-39ca-4e2b-8460-a7674d0c61ea",
+            "path": "generated/screen-1-2.tsx"
+          },
+          "to": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+          "toPath": "generated/Screen.tsx",
+          "kind": "primary"
+        }
+      ]
     }
   ]
 }

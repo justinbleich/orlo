@@ -17,7 +17,18 @@
       "name": "Hero"
     },
     "type": "View",
-    "children": []
+    "children": [
+      {
+        "id": "687af1f2-1743-417d-adb7-855d14ed36be",
+        "type": "ComponentInstance",
+        "componentId": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
+        "overrides": {},
+        "style": {},
+        "variant": {
+          "size": "Small"
+        }
+      }
+    ]
   },
   "components": {
     "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a": {
@@ -36,7 +47,120 @@
         },
         "type": "Text"
       },
-      "props": []
+      "props": [
+        {
+          "name": "textColor",
+          "valueType": "color",
+          "targets": [
+            {
+              "kind": "style",
+              "nodeId": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
+              "styleKey": "color"
+            }
+          ]
+        }
+      ],
+      "variants": [
+        {
+          "name": "size",
+          "values": [
+            "Small",
+            "Medium",
+            "Large"
+          ]
+        }
+      ],
+      "combinations": [
+        {
+          "values": {
+            "size": "Medium"
+          },
+          "overrides": [
+            {
+              "nodeId": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
+              "style": {
+                "fontSize": 18
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "df61b4b0-483b-495e-9233-cd8a608c39d1": {
+      "id": "df61b4b0-483b-495e-9233-cd8a608c39d1",
+      "name": "PressableComponent",
+      "template": {
+        "id": "df61b4b0-483b-495e-9233-cd8a608c39d1",
+        "props": {},
+        "style": {
+          "padding": 8,
+          "backgroundColor": "#3a3a45",
+          "borderRadius": 999,
+          "position": "absolute",
+          "left": 16,
+          "bottom": 40,
+          "height": 64,
+          "right": 16,
+          "justifyContent": "center",
+          "alignItems": "center"
+        },
+        "type": "Pressable",
+        "children": [
+          {
+            "id": "da144436-da89-48d2-a5b4-e911337265a8",
+            "props": {
+              "text": "Next"
+            },
+            "style": {
+              "fontFamily": "Inter",
+              "fontSize": 20,
+              "color": "#ffffff",
+              "textAlign": "center",
+              "fontWeight": "600"
+            },
+            "type": "Text",
+            "design": {
+              "tokens": {
+                "color": "9aa6484d-7a8c-419a-9252-95f26cd9ef01",
+                "fontSize": "dfb1f16d-c196-48b9-8b99-79706a7c921a"
+              }
+            }
+          }
+        ],
+        "design": {
+          "tokens": {
+            "padding": "c5b0a54d-bbf5-4f94-a55e-6a824cea04eb",
+            "borderRadius": "3253d704-6ccd-4819-9542-4ce4bf3cb220"
+          }
+        }
+      },
+      "props": [],
+      "variants": [
+        {
+          "name": "state",
+          "values": [
+            "Default",
+            "Hover",
+            "Pressed",
+            "Disabled"
+          ]
+        }
+      ],
+      "combinations": [
+        {
+          "values": {
+            "state": "Hover"
+          },
+          "overrides": [
+            {
+              "nodeId": "df61b4b0-483b-495e-9233-cd8a608c39d1",
+              "style": {
+                "backgroundColor": "rgba(58, 58, 69, 0.776)"
+              }
+            }
+          ]
+        }
+      ]
     }
   },
   "tokens": {
@@ -78,3 +202,4 @@
     }
   }
 }
+

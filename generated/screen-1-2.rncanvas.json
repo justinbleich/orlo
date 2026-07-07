@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "screenName": "Screen",
+  "screenName": "Screen 1",
   "root": {
-    "id": "c1b1d45c-b115-4330-ac39-963831a9fcae",
+    "id": "e926d431-39ca-4e2b-8460-a7674d0c61ea",
     "props": {},
     "style": {
       "width": 390,
@@ -12,98 +12,112 @@
       "padding": 16,
       "paddingTop": 64,
       "paddingBottom": 48,
-      "gap": 14
+      "gap": 12
     },
     "design": {
-      "name": "HomeScreen"
+      "name": "Screen 1"
     },
     "type": "View",
     "children": [
       {
-        "id": "b9be6171-e9f0-4391-87d9-5f8802a818b1",
+        "id": "6d020f3c-0c96-484e-aec3-d8549bd08ae1",
         "props": {
-          "source": {
-            "uri": ""
-          },
-          "resizeMode": "cover"
-        },
-        "style": {
-          "height": 144,
-          "alignSelf": "stretch",
-          "borderRadius": 8,
-          "backgroundColor": "#F7F8FB"
-        },
-        "type": "Image",
-        "design": {
-          "tokens": {
-            "borderRadius": "c5b0a54d-bbf5-4f94-a55e-6a824cea04eb",
-            "backgroundColor": "color-canvas"
-          }
-        }
-      },
-      {
-        "id": "dcaaa9df-476a-417f-85a0-19ae6f66f7ba",
-        "props": {
-          "text": "Hello RN Canvas"
+          "text": "Focus Planner"
         },
         "style": {
           "fontFamily": "Inter",
           "fontSize": 14,
-          "color": "#111111",
-          "textAlign": "left"
+          "color": "#111111"
         },
-        "type": "Text",
+        "type": "Text"
+      },
+      {
+        "id": "c5faea9a-1a2e-4285-a9b5-ccf946829e6c",
+        "props": {
+          "text": "Today"
+        },
+        "style": {
+          "fontFamily": "Inter",
+          "fontSize": 14,
+          "color": "#111111"
+        },
+        "type": "Text"
+      },
+      {
+        "id": "195f354a-241d-4232-ae51-15c527b8ff80",
+        "type": "ComponentInstance",
+        "componentId": "32e5899e-bdd9-4a45-a110-90e5ae5f695c",
+        "overrides": {},
+        "style": {},
         "design": {
-          "hidden": true
+          "name": "TaskCard"
         }
       },
       {
-        "id": "2c5ee0d1-831f-4ef3-8f10-505e6ece6128",
+        "id": "153fef00-a8b0-448a-8c58-b8097cd4c37e",
+        "type": "ComponentInstance",
+        "componentId": "f86b37a8-fae1-44e0-9e79-30f12263a1e6",
+        "overrides": {},
+        "style": {}
+      },
+      {
+        "id": "520ad417-1a0e-42d5-8900-1c7a5ada8dda",
+        "props": {
+          "text": "Text"
+        },
+        "style": {
+          "fontFamily": "Inter",
+          "fontSize": 14,
+          "color": "#111111"
+        },
+        "type": "Text"
+      },
+      {
+        "id": "6b083665-2e16-480d-a902-34fd85cd651b",
         "props": {},
         "style": {
-          "width": 295,
-          "height": 56,
-          "paddingHorizontal": 16,
-          "paddingVertical": 10,
-          "borderRadius": 16,
-          "backgroundColor": "#2563EB",
-          "alignItems": "center",
-          "justifyContent": "center"
+          "width": 166,
+          "height": 90,
+          "backgroundColor": "#F8FAFC",
+          "opacity": 1,
+          "borderRadius": 18
         },
-        "type": "Pressable",
+        "type": "View",
         "children": [
           {
-            "id": "b583f7b5-3f88-4c16-9273-10b9d08afbf1",
+            "id": "a740265c-761e-4811-9f6b-60bf5e33e732",
             "props": {
-              "text": "Start planning"
+              "text": "2 tasks dueText2 tasks due"
             },
             "style": {
               "fontFamily": "Inter",
-              "fontSize": 15,
-              "color": "#FFFFFF",
-              "fontWeight": "600",
-              "textAlign": "center"
+              "fontSize": 14,
+              "color": "#111111"
             },
             "type": "Text"
           }
         ]
       },
       {
-        "id": "06206284-bb16-4e30-8932-47e99e0034f2",
+        "id": "d0334a62-0ab8-498b-8ae2-24855f992353",
         "type": "ComponentInstance",
-        "componentId": "fa5ac6ba-02ff-4126-a15d-59ddc8fb2a3a",
+        "componentId": "32e5899e-bdd9-4a45-a110-90e5ae5f695c",
         "overrides": {},
         "style": {}
       },
       {
-        "id": "dd82ca9c-e23b-442b-8a5c-0eb94ca7fa77",
+        "id": "a4fce8fd-561a-45fc-ae82-245554a9c138",
         "type": "ComponentInstance",
-        "componentId": "df61b4b0-483b-495e-9233-cd8a608c39d1",
+        "componentId": "f86b37a8-fae1-44e0-9e79-30f12263a1e6",
         "overrides": {},
-        "style": {},
-        "design": {
-          "name": "Button"
-        }
+        "style": {}
+      },
+      {
+        "id": "97ca9b72-3950-45ba-be99-20f96a77a56b",
+        "type": "ComponentInstance",
+        "componentId": "32e5899e-bdd9-4a45-a110-90e5ae5f695c",
+        "overrides": {},
+        "style": {}
       }
     ]
   },

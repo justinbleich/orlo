@@ -37,6 +37,7 @@ export function ComponentWorkspace({
   onTabChange,
   onRename,
   onSelectVariant,
+  onSelectUsage,
   onCancel,
   onDone,
   children,
@@ -49,6 +50,7 @@ export function ComponentWorkspace({
   onTabChange: (tab: ComponentWorkspaceTab) => void;
   onRename: (name: string) => boolean;
   onSelectVariant: (values: Record<string, string>) => void;
+  onSelectUsage: (rootId: NodeId, nodeId: NodeId) => void;
   onCancel: () => void;
   onDone: () => void;
   children: React.ReactNode;
@@ -210,7 +212,12 @@ export function ComponentWorkspace({
           {activeTab === "Canvas" ? (
             children
           ) : activeTab === "Usage" ? (
-            <UsageList usage={usage} roots={roots} components={components} />
+            <UsageList
+              usage={usage}
+              roots={roots}
+              components={components}
+              onSelectUsage={onSelectUsage}
+            />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-ink-faint">
               Docs coming soon.
@@ -226,18 +233,25 @@ function UsageList({
   usage,
   roots,
   components,
+  onSelectUsage,
 }: {
   usage: { rootId: NodeId; nodeId: NodeId }[];
   roots: Record<NodeId, Node>;
   components: ComponentRegistry;
+  onSelectUsage: (rootId: NodeId, nodeId: NodeId) => void;
 }) {
-  const grouped = new Map<NodeId, { label: string; count: number }>();
+  const grouped = new Map<NodeId, { label: string; count: number; firstNodeId: NodeId; kind: string }>();
   for (const item of usage) {
     const root = roots[item.rootId];
     const component = components[item.rootId];
     const label = root?.design?.name ?? component?.name ?? item.rootId;
     const current = grouped.get(item.rootId);
-    grouped.set(item.rootId, { label, count: (current?.count ?? 0) + 1 });
+    grouped.set(item.rootId, {
+      label,
+      count: (current?.count ?? 0) + 1,
+      firstNodeId: current?.firstNodeId ?? item.nodeId,
+      kind: component ? "Component" : "Screen",
+    });
   }
   const rows = [...grouped.entries()];
   return (
@@ -259,16 +273,19 @@ function UsageList({
             </div>
           </div>
           {rows.map(([rootId, row], index) => (
-            <div
+            <button
               key={rootId}
+              type="button"
+              onClick={() => onSelectUsage(rootId, row.firstNodeId)}
               className={cn(
-                "flex min-h-12 items-center gap-sm rounded-sm border border-line bg-chrome px-md text-sm",
+                "flex min-h-12 items-center gap-sm rounded-sm border border-line bg-chrome px-md text-left text-sm transition-colors",
+                "hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
                 index === 0 && "border-accent-line/60",
               )}
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium text-ink">{row.label}</div>
-                <div className="text-xs text-ink-faint">Screen root {rootId}</div>
+                <div className="text-xs text-ink-faint">{row.kind} root {rootId}</div>
               </div>
               <span
                 style={{
@@ -281,7 +298,7 @@ function UsageList({
               >
                 x{row.count}
               </span>
-            </div>
+            </button>
           ))}
         </div>
       )}

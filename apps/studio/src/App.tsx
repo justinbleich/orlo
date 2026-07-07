@@ -2289,6 +2289,38 @@ export default function App() {
     [componentRegistry, editingComponentId],
   );
 
+  const selectComponentUsage = useCallback(
+    (rootId: NodeId, nodeId: NodeId) => {
+      const store = useDocumentStore.getState();
+      try {
+        if (store.editingComponentId) store.endComponentEdit(true);
+        if (store.roots[rootId]) {
+          store.setSelection([nodeId]);
+          setWorkspace("Screen");
+          setComponentWorkspaceTab("Canvas");
+          const editor = editorRef.current;
+          if (editor) focusRootFrame(editor, rootId);
+          setStatus("Selected placed component instance");
+          return;
+        }
+        const definition = store.components[rootId];
+        if (definition) {
+          store.beginComponentEdit(rootId);
+          store.setSelection([nodeId]);
+          setWorkspace("Component");
+          setComponentWorkspaceTab("Canvas");
+          setInspectorTab("Design");
+          setStatus(`Editing ${definition.name} usage`);
+          return;
+        }
+        setStatus("Usage target not found");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Could not open usage");
+      }
+    },
+    [setStatus],
+  );
+
   const openComponentForEdit = useCallback(
     (componentId: NodeId) => {
       const store = useDocumentStore.getState();
@@ -2650,6 +2682,7 @@ export default function App() {
               onTabChange={setComponentWorkspaceTab}
               onRename={renameEditingComponent}
               onSelectVariant={selectComponentVariant}
+              onSelectUsage={selectComponentUsage}
               onCancel={() => {
                 useDocumentStore.getState().endComponentEdit(false);
                 setWorkspace("Screen");

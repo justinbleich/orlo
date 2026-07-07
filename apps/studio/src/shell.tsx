@@ -974,20 +974,42 @@ export function LeftPanel({
                   title={`Edit ${comp.name}`}
                   active={editingComponentId === comp.id || armed}
                   action={(
-                    <PanelAction
-                      onClick={() => {
-                        try {
-                          removeComponent(comp.id);
-                          setStatus(`Deleted ${comp.name}`);
-                        } catch (error) {
-                          setStatus(error instanceof Error ? error.message : "Component delete failed");
-                        }
-                      }}
-                      title="Delete component"
-                      className={rowAction}
-                    >
-                      <Trash2 size={14} aria-hidden="true" />
-                    </PanelAction>
+                    <>
+                      <PanelAction
+                        onClick={() => {
+                          if (editingComponentId) {
+                            setStatus("Finish component edit before placing components");
+                            return;
+                          }
+                          const nextArmed = armed ? null : comp.id;
+                          setArmedComponent(nextArmed);
+                          setStatus(
+                            nextArmed
+                              ? `${comp.name} ready to place. Click or drag on a screen.`
+                              : `${comp.name} placement canceled`,
+                          );
+                          if (nextArmed) onWorkspaceChange("Screen");
+                        }}
+                        title={armed ? "Cancel placing component" : "Place component"}
+                        className={rowAction}
+                      >
+                        <MousePointerClick size={14} aria-hidden="true" />
+                      </PanelAction>
+                      <PanelAction
+                        onClick={() => {
+                          try {
+                            removeComponent(comp.id);
+                            setStatus(`Deleted ${comp.name}`);
+                          } catch (error) {
+                            setStatus(error instanceof Error ? error.message : "Component delete failed");
+                          }
+                        }}
+                        title="Delete component"
+                        className={rowAction}
+                      >
+                        <Trash2 size={14} aria-hidden="true" />
+                      </PanelAction>
+                    </>
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate">{comp.name}</span>

@@ -556,6 +556,21 @@ export function LeftPanel({
     canDeleteLayer &&
     selectedNode?.type !== "ComponentInstance";
   const componentList = Object.values(components);
+  const componentGroups = componentList.reduce(
+    (groups, comp) => {
+      const parts = comp.name.split(".");
+      const group = parts.length > 1 ? parts.slice(0, -1).join(".") : "";
+      const label = parts.at(-1) || comp.name;
+      let current = groups.find((item) => item.group === group);
+      if (!current) {
+        current = { group, items: [] };
+        groups.push(current);
+      }
+      current.items.push({ comp, label });
+      return groups;
+    },
+    [] as { group: string; items: { comp: (typeof componentList)[number]; label: string }[] }[],
+  );
 
   useEffect(() => {
     writeLeftPanelCollapseState({
@@ -935,64 +950,78 @@ export function LeftPanel({
           {componentList.length === 0 ? (
             <p className="m-0 px-sm text-xs text-ink-faint">No components yet.</p>
           ) : (
-            componentList.map((comp) => {
-              const armed = armedComponentId === comp.id;
-              const componentFileName = toComponentFileName(comp.name);
-              const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${componentFileName}.tsx`);
-              return (
-                <PanelRow
-                  key={comp.id}
-                  icon={Component}
-                  onClick={() => {
-                    setArmedComponent(null);
-                    onOpenComponent(comp.id);
-                  }}
-                  title={`Edit ${comp.name}`}
-                  active={editingComponentId === comp.id || armed}
-                  action={(
-                    <>
-                      <PanelAction
-                        onClick={() => {
-                          if (editingComponentId) {
-                            setStatus("Finish component edit before placing components");
-                            return;
-                          }
-                          const nextArmed = armed ? null : comp.id;
-                          setArmedComponent(nextArmed);
-                          setStatus(
-                            nextArmed
-                              ? `${comp.name} ready to place. Click or drag on a screen.`
-                              : `${comp.name} placement canceled`,
-                          );
-                          if (nextArmed) onWorkspaceChange("Screen");
-                        }}
-                        title={armed ? "Cancel placing component" : "Place component"}
-                        className={rowAction}
-                      >
-                        <MousePointerClick size={14} aria-hidden="true" />
-                      </PanelAction>
-                      <PanelAction
-                        onClick={() => {
-                          try {
-                            removeComponent(comp.id);
-                            setStatus(`Deleted ${comp.name}`);
-                          } catch (error) {
-                            setStatus(error instanceof Error ? error.message : "Component delete failed");
-                          }
-                        }}
-                        title="Delete component"
-                        className={rowAction}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </PanelAction>
-                    </>
-                  )}
-                >
-                  <span className="min-w-0 flex-1 truncate">{comp.name}</span>
-                  <GitBadge code={componentGitCode} title={`generated/components/${componentFileName}.tsx`} />
-                </PanelRow>
-              );
-            })
+            componentGroups.map(({ group, items }) => (
+              <div key={group || "__flat"} className="flex flex-col gap-xs">
+                {group && (
+                  <div className="px-sm pt-xs text-2xs font-semibold uppercase tracking-[0.12em] text-ink-faint">
+                    {group}
+                  </div>
+                )}
+                {items.map(({ comp, label }) => {
+                  const armed = armedComponentId === comp.id;
+                  const componentFileName = toComponentFileName(comp.name);
+                  const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${componentFileName}.tsx`);
+                  return (
+                    <PanelRow
+                      key={comp.id}
+                      icon={Component}
+                      onClick={() => {
+                        setArmedComponent(null);
+                        onOpenComponent(comp.id);
+                      }}
+                      title={`Edit ${comp.name}`}
+                      active={editingComponentId === comp.id || armed}
+                      action={(
+                        <>
+                          <PanelAction
+                            onClick={() => {
+                              if (editingComponentId) {
+                                setStatus("Finish component edit before placing components");
+                                return;
+                              }
+                              const nextArmed = armed ? null : comp.id;
+                              setArmedComponent(nextArmed);
+                              setStatus(
+                                nextArmed
+                                  ? `${comp.name} ready to place. Click or drag on a screen.`
+                                  : `${comp.name} placement canceled`,
+                              );
+                              if (nextArmed) onWorkspaceChange("Screen");
+                            }}
+                            title={armed ? "Cancel placing component" : "Place component"}
+                            className={rowAction}
+                          >
+                            <MousePointerClick size={14} aria-hidden="true" />
+                          </PanelAction>
+                          <PanelAction
+                            onClick={() => {
+                              try {
+                                removeComponent(comp.id);
+                                setStatus(`Deleted ${comp.name}`);
+                              } catch (error) {
+                                setStatus(error instanceof Error ? error.message : "Component delete failed");
+                              }
+                            }}
+                            title="Delete component"
+                            className={rowAction}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                          </PanelAction>
+                        </>
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{label}</span>
+                      {group && (
+                        <span className="max-w-20 truncate text-2xs text-ink-faint">
+                          {componentFileName}
+                        </span>
+                      )}
+                      <GitBadge code={componentGitCode} title={`generated/components/${componentFileName}.tsx`} />
+                    </PanelRow>
+                  );
+                })}
+              </div>
+            ))
           )}
         </PanelSection>
 

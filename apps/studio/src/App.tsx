@@ -87,6 +87,7 @@ import {
   TooltipProvider,
   cn,
 } from "./studio-ui";
+import { toComponentDisplayPath, toComponentFileName } from "./component-name";
 import { nextFreeFramePosition } from "./canvas-arrange";
 import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
@@ -184,26 +185,25 @@ function rootSize(root: Node): { w: number; h: number } {
   return { w, h };
 }
 
-function pascalComponentName(input: string): string {
-  const name = input
-    .replace(/[^A-Za-z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join("");
-  return /^[A-Z]/.test(name) ? name : name ? `C${name}` : "Component";
-}
-
-function componentNameFromDisplayPath(displayPath: string, fallback: string): string {
-  const base = pascalComponentName(displayPath || fallback);
+function componentDisplayPathFromInput(displayPath: string, fallback: string): string {
+  const base = toComponentDisplayPath(displayPath || fallback, fallback);
   return (RN_PRIMITIVES as readonly string[]).includes(base) ? `${base}Component` : base;
 }
 
-function uniqueComponentName(base: string, components: Record<string, ComponentDefinition>): string {
+function uniqueComponentDisplayPath(
+  base: string,
+  components: Record<string, ComponentDefinition>,
+): string {
   const taken = new Set(Object.values(components).map((component) => component.name));
+  const takenFiles = new Set(
+    Object.values(components).map((component) => toComponentFileName(component.name)),
+  );
+  const segments = base.split(".");
+  const last = segments.at(-1) || "Component";
   let name = base;
-  for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
+  for (let i = 2; taken.has(name) || takenFiles.has(toComponentFileName(name)); i += 1) {
+    name = [...segments.slice(0, -1), `${last}${i}`].join(".");
+  }
   return name;
 }
 
@@ -2392,14 +2392,14 @@ export default function App() {
         return;
       }
       const fallback = node.design?.name?.trim() || node.type;
-      const base = componentNameFromDisplayPath(fallback, node.type);
+      const base = componentDisplayPathFromInput(fallback, node.type);
       setCreateComponentDraft({
         rootId,
         nodeId,
         nodeLabel: fallback,
         nodeType: node.type,
         childCount: childCountFor(node),
-        displayPath: uniqueComponentName(base, store.components),
+        displayPath: uniqueComponentDisplayPath(base, store.components),
         preset: node.type === "Pressable" ? "button" : node.type === "View" ? "card" : "none",
       });
     },
@@ -2411,8 +2411,8 @@ export default function App() {
     if (!draft) return;
     if (!draft.displayPath.trim()) return;
     const store = useDocumentStore.getState();
-    const base = componentNameFromDisplayPath(draft.displayPath, draft.nodeType);
-    const name = uniqueComponentName(base, store.components);
+    const base = componentDisplayPathFromInput(draft.displayPath, draft.nodeType);
+    const name = uniqueComponentDisplayPath(base, store.components);
     try {
       store.promoteToComponent(draft.rootId, draft.nodeId, name);
       const nextStore = useDocumentStore.getState();
@@ -2523,9 +2523,11 @@ export default function App() {
           ? "Design System"
           : "Screen";
   const createComponentCodeName = createComponentDraft
-    ? uniqueComponentName(
-        componentNameFromDisplayPath(createComponentDraft.displayPath, createComponentDraft.nodeType),
-        componentRegistry,
+    ? toComponentFileName(
+        uniqueComponentDisplayPath(
+          componentDisplayPathFromInput(createComponentDraft.displayPath, createComponentDraft.nodeType),
+          componentRegistry,
+        ),
       )
     : null;
   const createComponentPresets = createComponentDraft

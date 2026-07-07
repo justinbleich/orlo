@@ -633,12 +633,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         if (source === "manual") set({ activeArtifactId: "screen" });
       }
       workspaceFlags.managedDocument = true;
+      const statusPath = displayResult?.targetPath ?? (paths.length === 1 ? paths[0] : `${paths.length} files`);
       set({
         syncState: {
           status: "synced",
-          path: paths.length === 1 ? paths[0] : `${paths.length} files`,
+          path: statusPath,
         },
-        status: `${source === "auto" ? "Autosynced" : "Synced"} ${paths.join(" · ")}`,
+        status: `${source === "auto" ? "Autosynced" : "Synced"} ${statusPath}`,
       });
       void get().refreshGitStatus();
       void get().loadRepoContext();

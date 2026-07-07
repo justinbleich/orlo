@@ -111,6 +111,11 @@ export function DocumentTree({
   return (
     <>
       <div
+        role="treeitem"
+        tabIndex={locked || renaming !== null ? -1 : 0}
+        aria-selected={selected}
+        aria-expanded={children.length > 0 ? expanded : undefined}
+        aria-label={`Select layer ${label} (${typeHint})`}
         data-layer-id={node.id}
         data-layer-type={node.type}
         title={title}
@@ -142,6 +147,24 @@ export function DocumentTree({
         onDoubleClick={(event) => {
           event.stopPropagation();
           if (!locked) setRenaming(label);
+        }}
+        onKeyDown={(event) => {
+          if (locked || renaming !== null) return;
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          event.stopPropagation();
+          const root = useDocumentStore.getState().roots[rootId];
+          if (!root) return;
+          if (event.shiftKey && selectedIds.length > 0) {
+            setSelection(selectionRange(root, selectedIds[selectedIds.length - 1], node.id));
+          } else if (event.metaKey || event.ctrlKey) {
+            const next = selected
+              ? selectedIds.filter((id) => id !== node.id)
+              : [...selectedIds, node.id];
+            setSelection(normalizeNodeSelection(root, next));
+          } else {
+            setSelection([node.id]);
+          }
         }}
         onContextMenu={(event) => {
           event.preventDefault();

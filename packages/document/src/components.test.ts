@@ -557,6 +557,30 @@ test("validateComponentRegistry rejects malformed variants/combinations", () => 
   assert.match(reason(axisCollidesProp), /collides/);
 });
 
+test("promoteToComponent seeds empty pressables with editable button text", () => {
+  const node = createNode("Pressable", {
+    id: "button",
+    style: { width: 120, height: 44, backgroundColor: "#2563EB" },
+  });
+  const { definition } = promoteToComponent(node, "ButtonPrimary");
+  assert.equal(definition.template.type, "Pressable");
+  assert.equal(definition.template.children?.length, 1);
+  assert.equal(definition.template.children?.[0]?.type, "Text");
+  assert.equal(definition.template.children?.[0]?.props.text, "Button");
+});
+
+test("promoteToComponent seeds empty card views with useful text content", () => {
+  const node = createNode("View", {
+    id: "card",
+    style: { width: 240, height: 120, backgroundColor: "#F8FAFC" },
+  });
+  const { definition } = promoteToComponent(node, "TaskCard");
+  assert.equal(definition.template.type, "View");
+  assert.equal(definition.template.children?.length, 2);
+  assert.equal(definition.template.children?.[0]?.props.text, "Task title");
+  assert.equal(definition.template.children?.[1]?.props.text, "Due today");
+});
+
 test("pruneVariants drops combinations orphaned by an axis/value edit", () => {
   // remove the "lg" value → both lg/* combinations become invalid
   const def = buttonDef();

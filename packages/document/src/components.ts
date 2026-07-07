@@ -22,6 +22,7 @@ import type {
   VariantNodeOverride,
 } from "./types";
 import { childrenOf, isContainer } from "./types";
+import { createNode } from "./tree";
 import { validateTree, type NodeError } from "./validate";
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
@@ -85,6 +86,47 @@ function collectIds(tree: Node, ids = new Set<NodeId>()): Set<NodeId> {
   return ids;
 }
 
+function seedEmptyTemplateContent(template: Node, name: string): Node {
+  if (!isContainer(template) || childrenOf(template).length > 0) return template;
+  if (template.type === "Pressable") {
+    return {
+      ...template,
+      style: {
+        ...template.style,
+        alignItems: template.style.alignItems ?? "center",
+        justifyContent: template.style.justifyContent ?? "center",
+      },
+      children: [
+        createNode("Text", {
+          props: { text: "Button" },
+          style: { color: "#FFFFFF", fontWeight: "600", textAlign: "center" },
+        }),
+      ],
+    };
+  }
+  if (template.type === "View" && /card/i.test(name)) {
+    return {
+      ...template,
+      style: {
+        padding: template.style.padding ?? 16,
+        gap: template.style.gap ?? 6,
+        ...template.style,
+      },
+      children: [
+        createNode("Text", {
+          props: { text: "Task title" },
+          style: { fontSize: 16, fontWeight: "600", color: "#111827" },
+        }),
+        createNode("Text", {
+          props: { text: "Due today" },
+          style: { fontSize: 13, color: "#64748B" },
+        }),
+      ],
+    };
+  }
+  return template;
+}
+
 // --- Authoring ---------------------------------------------------------------
 
 /**
@@ -99,10 +141,11 @@ export function promoteToComponent(
   const template = clone(node);
   const { templateStyle, instanceStyle } = splitPlacementStyle(template.style);
   template.style = templateStyle;
+  const seededTemplate = seedEmptyTemplateContent(template, name);
   const definition: ComponentDefinition = {
     id: newId(),
     name,
-    template,
+    template: seededTemplate,
     props: [],
   };
   return { definition, instance: createInstance(definition.id, { style: instanceStyle }) };

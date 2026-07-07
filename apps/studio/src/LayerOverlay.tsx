@@ -16,6 +16,7 @@ import {
   containerAt,
   drawSize,
   flexBlockInParent,
+  flexCreateInsertIndex,
   flexFlowHorizontal,
   flexInsertIndex,
   hitTestLayout,
@@ -703,7 +704,13 @@ export function LayerOverlay({
         return box ? [{ id: sibling.id, box }] : [];
       });
       const horizontal = flexFlowHorizontal(target.node.style.flexDirection);
-      const index = flexInsertIndex(siblings, start, horizontal);
+      const index = flexCreateInsertIndex(
+        siblings,
+        start,
+        horizontal,
+        target.node.id,
+        useDocumentStore.getState().selection,
+      );
       const store = useDocumentStore.getState();
       store.insertChild(root.id, target.node.id, node, index);
       store.setSelection([node.id]);
@@ -723,7 +730,13 @@ export function LayerOverlay({
         return box ? [{ id: sibling.id, box }] : [];
       });
       const horizontal = flexFlowHorizontal(target.node.style.flexDirection);
-      const index = flexInsertIndex(siblings, start, horizontal);
+      const index = flexCreateInsertIndex(
+        siblings,
+        start,
+        horizontal,
+        target.node.id,
+        useDocumentStore.getState().selection,
+      );
       const store = useDocumentStore.getState();
       store.insertChild(root.id, target.node.id, node, index);
       store.setSelection([node.id]);

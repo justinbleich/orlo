@@ -5,6 +5,7 @@ import type { LayoutHitBox } from "./canvas-interaction";
 import {
   CREATION_MODEL,
   buildDrawnNode,
+  flexCreateInsertIndex,
   containerAt,
   drawSize,
   flexBlockInParent,
@@ -72,6 +73,15 @@ test("flexInsertIndex skips block members when computing target", () => {
     { id: "c", box: { left: 0, top: 60, width: 40, height: 20 } },
   ];
   assert.equal(flexInsertIndex(siblings, { x: 10, y: 35 }, false, new Set(["b", "c"])), 1);
+});
+
+test("flexCreateInsertIndex appends into the selected container", () => {
+  const siblings = [
+    { id: "a", box: { left: 0, top: 0, width: 40, height: 20 } },
+    { id: "b", box: { left: 0, top: 30, width: 40, height: 20 } },
+  ];
+  assert.equal(flexCreateInsertIndex(siblings, { x: 10, y: 5 }, false, "root", ["root"]), 2);
+  assert.equal(flexCreateInsertIndex(siblings, { x: 10, y: 5 }, false, "root", []), 0);
 });
 
 test("flexBlockInParent returns ordered flex siblings only", () => {

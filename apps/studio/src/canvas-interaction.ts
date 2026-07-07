@@ -83,6 +83,18 @@ export function flexInsertIndex(
   return remaining.length;
 }
 
+/** Draw-to-create into the actively selected container appends by default. */
+export function flexCreateInsertIndex(
+  siblings: readonly { id: NodeId; box: Pick<LayoutHitBox, "left" | "top" | "width" | "height"> }[],
+  point: Point,
+  horizontal: boolean,
+  targetId: NodeId,
+  selectedIds: readonly NodeId[],
+): number {
+  if (selectedIds.includes(targetId)) return siblings.length;
+  return flexInsertIndex(siblings, point, horizontal);
+}
+
 /** Selected flex siblings of `parent`, in document order, excluding absolutes. */
 export function flexBlockInParent(
   root: Node,

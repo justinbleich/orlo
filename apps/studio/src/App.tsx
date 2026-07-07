@@ -25,6 +25,7 @@ import {
   findNode,
   findRootContaining,
   getParent,
+  RN_PRIMITIVES,
   resolveVariant,
   useDocumentStore,
   type ComponentDefinition,
@@ -162,11 +163,46 @@ type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 type RepoContext = RepoPanelContext;
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
+type CreateComponentDraft = {
+  rootId: NodeId;
+  nodeId: NodeId;
+  nodeLabel: string;
+  nodeType: string;
+  childCount: number;
+  displayPath: string;
+};
 
 function rootSize(root: Node): { w: number; h: number } {
   const w = typeof root.style.width === "number" ? root.style.width : 320;
   const h = typeof root.style.height === "number" ? root.style.height : 200;
   return { w, h };
+}
+
+function pascalComponentName(input: string): string {
+  const name = input
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join("");
+  return /^[A-Z]/.test(name) ? name : name ? `C${name}` : "Component";
+}
+
+function componentNameFromDisplayPath(displayPath: string, fallback: string): string {
+  const base = pascalComponentName(displayPath || fallback);
+  return (RN_PRIMITIVES as readonly string[]).includes(base) ? `${base}Component` : base;
+}
+
+function uniqueComponentName(base: string, components: Record<string, ComponentDefinition>): string {
+  const taken = new Set(Object.values(components).map((component) => component.name));
+  let name = base;
+  for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
+  return name;
+}
+
+function childCountFor(node: Node): number {
+  return "children" in node && Array.isArray(node.children) ? node.children.length : 0;
 }
 
 /** Create a tldraw shape for any document root that doesn't have one yet. */
@@ -1196,6 +1232,8 @@ export default function App() {
     componentName: string;
     currentName: string;
   } | null>(null);
+  const [createComponentDraft, setCreateComponentDraft] =
+    useState<CreateComponentDraft | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
   const [leftColumnWidth, setLeftColumnWidth] = useState(readStoredLeftColumnWidth);
@@ -2322,6 +2360,70 @@ export default function App() {
     [pendingComponentSwitch, setStatus],
   );
 
+  const requestCreateComponentFromLayer = useCallback(
+    (rootId: NodeId, nodeId: NodeId) => {
+      const store = useDocumentStore.getState();
+      if (store.editingComponentId) {
+        setStatus("Finish component edit before creating a nested component");
+        return;
+      }
+      const root = store.roots[rootId];
+      const node = root ? findNode(root, nodeId) : undefined;
+      if (!root || !node) {
+        setStatus("Select a layer to create a component");
+        return;
+      }
+      if (node.id === root.id) {
+        setStatus("Select a layer inside the screen to create a component");
+        return;
+      }
+      if (node.type === "ComponentInstance") {
+        setStatus("Instances cannot be promoted into new components");
+        return;
+      }
+      if (node.design?.locked) {
+        setStatus("Unlock the layer before creating a component");
+        return;
+      }
+      const fallback = node.design?.name?.trim() || node.type;
+      const base = componentNameFromDisplayPath(fallback, node.type);
+      setCreateComponentDraft({
+        rootId,
+        nodeId,
+        nodeLabel: fallback,
+        nodeType: node.type,
+        childCount: childCountFor(node),
+        displayPath: uniqueComponentName(base, store.components),
+      });
+    },
+    [setStatus],
+  );
+
+  const confirmCreateComponent = useCallback(() => {
+    const draft = createComponentDraft;
+    if (!draft) return;
+    if (!draft.displayPath.trim()) return;
+    const store = useDocumentStore.getState();
+    const base = componentNameFromDisplayPath(draft.displayPath, draft.nodeType);
+    const name = uniqueComponentName(base, store.components);
+    try {
+      store.promoteToComponent(draft.rootId, draft.nodeId, name);
+      const nextStore = useDocumentStore.getState();
+      const root = nextStore.roots[draft.rootId];
+      const placed = root ? findNode(root, draft.nodeId) : undefined;
+      setCreateComponentDraft(null);
+      if (placed?.type === "ComponentInstance") {
+        openComponentForEdit(placed.componentId);
+        setStatus(`Created ${name}; editing definition`);
+      } else {
+        setWorkspace("Screen");
+        setStatus(`Created ${name}`);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Component creation failed");
+    }
+  }, [createComponentDraft, openComponentForEdit, setStatus]);
+
   const openRepoSettings = useCallback(() => {
     setInspectorTab("Code");
     setStatus("Repository settings");
@@ -2404,6 +2506,12 @@ export default function App() {
         : workspace === "Design System"
           ? "Design System"
           : "Screen";
+  const createComponentCodeName = createComponentDraft
+    ? uniqueComponentName(
+        componentNameFromDisplayPath(createComponentDraft.displayPath, createComponentDraft.nodeType),
+        componentRegistry,
+      )
+    : null;
 
   return (
     <TooltipProvider>
@@ -2455,6 +2563,7 @@ export default function App() {
                 onOpenRepoScreen={openRepoScreen}
                 onRenameRepoScreen={renameRepoScreen}
                 onOpenComponent={openComponentForEdit}
+                onCreateComponentFromSelection={requestCreateComponentFromLayer}
                 screenFlowBadges={screenFlowBadges}
                 gitStatus={gitStatus}
                 sidecarPath={sidecarPath}
@@ -2788,7 +2897,86 @@ export default function App() {
           </div>
         </div>
       )}
-      <LayerContextMenu />
+      {createComponentDraft && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setCreateComponentDraft(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-component-title"
+            className="studio-chrome w-[min(460px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-accent-line bg-accent-soft text-accent">
+                <FileJson2 size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="create-component-title" className="break-words text-sm font-semibold text-ink">
+                  Create component from selection
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  The selected layer becomes a reusable definition and this screen keeps an instance.
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-md p-lg">
+              <label className="flex flex-col gap-xs">
+                <span className="text-xs font-semibold text-ink-faint">Display path</span>
+                <input
+                  autoFocus
+                  value={createComponentDraft.displayPath}
+                  onChange={(event) =>
+                    setCreateComponentDraft((current) =>
+                      current ? { ...current, displayPath: event.target.value } : current,
+                    )
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setCreateComponentDraft(null);
+                    if (event.key === "Enter") confirmCreateComponent();
+                  }}
+                  className="h-8 rounded-sm border border-line bg-chrome-2 px-sm text-sm text-ink transition-colors hover:border-line focus-visible:border-accent-line focus-visible:outline-none"
+                />
+              </label>
+              <div className="rounded-sm border border-line-soft bg-chrome-2 p-sm">
+                <div className="text-xs font-semibold text-ink-faint">Included</div>
+                <div className="mt-xs flex min-w-0 items-center gap-xs text-sm text-ink">
+                  <span className="truncate font-medium">{createComponentDraft.nodeLabel}</span>
+                  <span className="text-ink-faint">{createComponentDraft.nodeType}</span>
+                  {createComponentDraft.childCount > 0 && (
+                    <span className="ml-auto shrink-0 text-xs text-ink-faint">
+                      {createComponentDraft.childCount} child{createComponentDraft.childCount === 1 ? "" : "ren"}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="grid gap-xs text-xs text-ink-faint">
+                <div>
+                  Emits as <span className="font-mono text-ink">{createComponentCodeName}</span>
+                </div>
+                <div>Opens the new definition after creation.</div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setCreateComponentDraft(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!createComponentDraft.displayPath.trim()}
+                onClick={confirmCreateComponent}
+              >
+                Create and edit
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      <LayerContextMenu onCreateComponentFromLayer={requestCreateComponentFromLayer} />
       <Toasts />
     </div>
     </TooltipProvider>

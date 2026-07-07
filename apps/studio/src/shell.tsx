@@ -35,7 +35,6 @@ import {
   findNode,
   findRootContaining,
   getParent,
-  RN_PRIMITIVES,
   useDocumentStore,
   type NodeId,
   type RNPrimitive,
@@ -95,19 +94,6 @@ function writeLeftPanelCollapseState(state: LeftPanelCollapseState) {
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
-}
-
-/** A PascalCase identifier for a component name (falls back to "Component"). */
-function pascalCase(input: string): string {
-  const pascal = input
-    .replace(/[^A-Za-z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join("");
-  if (!pascal) return "Component";
-  return /^[A-Z]/.test(pascal) ? pascal : `C${pascal}`;
 }
 
 function gitStatusCode(file: GitFileStatus): string {
@@ -493,6 +479,7 @@ export function LeftPanel({
   onOpenRepoScreen = () => {},
   onRenameRepoScreen = () => {},
   onOpenComponent = () => {},
+  onCreateComponentFromSelection = () => {},
   screenFlowBadges = {},
   gitStatus,
   sidecarPath,
@@ -516,6 +503,7 @@ export function LeftPanel({
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   onRenameRepoScreen: (screen: RepoPanelScreen, name: string) => void;
   onOpenComponent?: (componentId: NodeId) => void;
+  onCreateComponentFromSelection?: (rootId: NodeId, nodeId: NodeId) => void;
   screenFlowBadges?: ScreenFlowBadges;
   gitStatus: PanelGitStatus;
   sidecarPath: string;
@@ -527,7 +515,6 @@ export function LeftPanel({
   const selection = useDocumentStore((state) => state.selection);
   const setSelection = useDocumentStore((state) => state.setSelection);
   const components = useDocumentStore((state) => state.components);
-  const promoteToComponent = useDocumentStore((state) => state.promoteToComponent);
   const removeComponent = useDocumentStore((state) => state.removeComponent);
   const editingComponentId = useDocumentStore((state) => state.editingComponentId);
   const setStatus = useWorkspaceStore((state) => state.setStatus);
@@ -592,20 +579,6 @@ export function LeftPanel({
       return changed ? next : current;
     });
   }, [editingComponentId, roots]);
-
-  function createComponent() {
-    if (!focusedRoot || !selectedId || !selectedNode) return;
-    const pascal = pascalCase(selectedNode.design?.name ?? selectedNode.type);
-    // Avoid auto-naming a component exactly like an RN primitive (e.g. "Text",
-    // "View"), which would shadow the imported primitive in generated screens.
-    const base = (RN_PRIMITIVES as readonly string[]).includes(pascal)
-      ? `${pascal}Component`
-      : pascal;
-    const taken = new Set(componentList.map((comp) => comp.name));
-    let name = base;
-    for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
-    promoteToComponent(focusedRoot.id, selectedId, name);
-  }
 
   const tokenList = Object.values(tokens);
   function createToken(category: "color" | "spacing" | "fontSize") {
@@ -673,7 +646,10 @@ export function LeftPanel({
                 {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
               </PanelAction>
               <PanelAction
-                onClick={createComponent}
+                onClick={() => {
+                  if (!focusedRoot || !selectedId) return;
+                  onCreateComponentFromSelection(focusedRoot.id, selectedId);
+                }}
                 disabled={!canMakeComponent}
                 title="Create component"
               >

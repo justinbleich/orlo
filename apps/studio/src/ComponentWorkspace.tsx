@@ -6,7 +6,6 @@ import {
   type Node,
   type NodeId,
 } from "@rn-canvas/document";
-import { FrameRenderer } from "@rn-canvas/render-web";
 import { Check, X } from "lucide-react";
 import { Tabs } from "./shell";
 import { Button, TextField, cn } from "./studio-ui";
@@ -18,10 +17,9 @@ import {
   variantPreviewCombinations,
   variantPreviewKey,
   variantPreviewLabel,
-  variantPreviewRoot,
 } from "./variant-workspace";
 
-export type ComponentWorkspaceTab = "Canvas" | "Variants" | "Usage" | "Docs";
+export type ComponentWorkspaceTab = "Canvas" | "Usage" | "Docs";
 
 function editedAgoLabel(editedAt: number): string {
   const minutes = Math.floor((Date.now() - editedAt) / 60_000);
@@ -61,6 +59,10 @@ export function ComponentWorkspace({
   const visibleCombos = combos.slice(0, MAX_VARIANT_PREVIEWS);
   const hiddenCount = Math.max(0, combos.length - visibleCombos.length);
   const activeKey = variantPreviewKey(definition, resolveVariant(definition, activeVariant));
+  const baseKey = variantPreviewKey(
+    definition,
+    Object.fromEntries(axes.map((axis) => [axis.name, axis.values[0]])),
+  );
   const [nameDraft, setNameDraft] = useState(definition.name);
   const skipNextNameCommitRef = useRef(false);
 
@@ -101,7 +103,7 @@ export function ComponentWorkspace({
     if (!onRename(next)) resetNameDraft();
   };
 
-  const tabLabels: ComponentWorkspaceTab[] = ["Canvas", "Variants", "Usage", "Docs"];
+  const tabLabels: ComponentWorkspaceTab[] = ["Canvas", "Usage", "Docs"];
   const tabs = tabLabels.map((tab) => (tab === "Usage" ? `Usage (${usage.length})` : tab));
   const activeTabLabel = activeTab === "Usage" ? `Usage (${usage.length})` : activeTab;
   const selectTabLabel = (label: string) => {
@@ -142,8 +144,15 @@ export function ComponentWorkspace({
                     )}
                     aria-hidden="true"
                   />
-                  <span className="min-w-0 flex-1 truncate">
-                    {variantPreviewLabel(definition, values)}
+                  <span className="flex min-w-0 flex-1 items-center gap-xs">
+                    <span className="min-w-0 truncate">
+                      {variantPreviewLabel(definition, values)}
+                    </span>
+                    {key === baseKey && (
+                      <span className="shrink-0 rounded-xs bg-raised px-2xs text-2xs text-ink-faint">
+                        default
+                      </span>
+                    )}
                   </span>
                 </button>
               );
@@ -200,14 +209,6 @@ export function ComponentWorkspace({
         <div className="relative min-h-0 flex-1">
           {activeTab === "Canvas" ? (
             children
-          ) : activeTab === "Variants" ? (
-            <VariantGrid
-              definition={definition}
-              components={components}
-              combos={visibleCombos}
-              activeKey={activeKey}
-              onSelectVariant={onSelectVariant}
-            />
           ) : activeTab === "Usage" ? (
             <UsageList usage={usage} roots={roots} components={components} />
           ) : (
@@ -216,71 +217,6 @@ export function ComponentWorkspace({
             </div>
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function VariantGrid({
-  definition,
-  components,
-  combos,
-  activeKey,
-  onSelectVariant,
-}: {
-  definition: ComponentDefinition;
-  components: ComponentRegistry;
-  combos: Record<string, string>[];
-  activeKey: string;
-  onSelectVariant: (values: Record<string, string>) => void;
-}) {
-  return (
-    <div className="h-full overflow-auto p-lg">
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-md">
-        {combos.map((values) => {
-          const key = variantPreviewKey(definition, values);
-          const active = key === activeKey;
-          const root = variantPreviewRoot(definition, values);
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onSelectVariant(values)}
-              className={cn(
-                "flex min-h-44 flex-col gap-sm rounded-sm border p-sm text-left transition-colors",
-                active
-                  ? "border-accent-line bg-accent-soft text-accent"
-                  : "border-line bg-chrome text-ink-dim hover:bg-raised",
-              )}
-            >
-              <span className="truncate text-xs font-semibold">
-                {variantPreviewLabel(definition, values)}
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  height: 120,
-                  overflow: "hidden",
-                  borderRadius: radius.xs,
-                  background: color.art,
-                  pointerEvents: "none",
-                }}
-              >
-                <span
-                  style={{
-                    display: "block",
-                    transform: "scale(0.5)",
-                    transformOrigin: "top left",
-                    width: "200%",
-                    height: "200%",
-                  }}
-                >
-                  <FrameRenderer root={root} components={components} />
-                </span>
-              </span>
-            </button>
-          );
-        })}
       </div>
     </div>
   );

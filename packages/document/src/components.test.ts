@@ -408,6 +408,33 @@ test("store: begin/end component edit hosts the template and writes it back", ()
   assert.equal(useDocumentStore.getState().editingComponentId, cid);
 });
 
+test("store: beginning component edit repairs empty button definitions", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots(
+    { frame: createNode("View", { id: "frame" }) },
+    ["frame"],
+    {
+      button: {
+        id: "button",
+        name: "ButtonPrimary",
+        template: createNode("Pressable", {
+          id: "button-root",
+          style: { width: 120, height: 44, backgroundColor: "#2563EB" },
+        }),
+        props: [],
+      },
+    },
+  );
+
+  store.beginComponentEdit("button");
+  const editing = useDocumentStore.getState().roots.button;
+  const definition = useDocumentStore.getState().components.button;
+  assert.equal(editing.type, "Pressable");
+  assert.equal(editing.children?.[0]?.type, "Text");
+  assert.equal(editing.children?.[0]?.props.text, "Button");
+  assert.equal(definition.template.children?.[0]?.props.text, "Button");
+});
+
 test("store: definition edits preserve overrides; removing a prop drops them", () => {
   const screen = createNode("View", {
     id: "frame",

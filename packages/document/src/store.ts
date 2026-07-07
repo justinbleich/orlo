@@ -37,6 +37,7 @@ import {
   promoteToComponent as promoteOp,
   pruneDefinitionProps,
   pruneVariants,
+  seedComponentTemplateContent,
   upsertVariantOverride,
   reconcileOverrides,
   validateComponentRegistry,
@@ -516,7 +517,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       // the definition's template at that same tree so the two stay in lockstep —
       // edits mirror through mutateRoot, instances re-expand live, and prop edits
       // validate against the live template.
-      const template = JSON.parse(JSON.stringify(definition.template)) as Node;
+      const template = seedComponentTemplateContent(
+        JSON.parse(JSON.stringify(definition.template)) as Node,
+        definition.name,
+      );
       const editingRoot = { ...template, id: componentId } as Node;
       commit({
         roots: { ...roots, [componentId]: editingRoot },

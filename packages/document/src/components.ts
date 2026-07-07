@@ -86,7 +86,7 @@ function collectIds(tree: Node, ids = new Set<NodeId>()): Set<NodeId> {
   return ids;
 }
 
-function seedEmptyTemplateContent(template: Node, name: string): Node {
+export function seedComponentTemplateContent(template: Node, name: string): Node {
   if (!isContainer(template) || childrenOf(template).length > 0) return template;
   if (template.type === "Pressable") {
     return {
@@ -141,7 +141,7 @@ export function promoteToComponent(
   const template = clone(node);
   const { templateStyle, instanceStyle } = splitPlacementStyle(template.style);
   template.style = templateStyle;
-  const seededTemplate = seedEmptyTemplateContent(template, name);
+  const seededTemplate = seedComponentTemplateContent(template, name);
   const definition: ComponentDefinition = {
     id: newId(),
     name,

@@ -520,6 +520,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       const template = seedComponentTemplateContent(
         JSON.parse(JSON.stringify(definition.template)) as Node,
         definition.name,
+        components,
+        componentId,
       );
       const editingRoot = { ...template, id: componentId } as Node;
       commit({

@@ -141,17 +141,19 @@ export function buildDrawnNode(type: RNPrimitive, width: number, height: number)
         style: {
           width,
           height: Math.max(height, 40),
-          paddingHorizontal: 16,
-          paddingVertical: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
           borderRadius: 8,
-          backgroundColor: "#2563EB",
+          borderWidth: 1,
+          borderColor: "#CBD5E1",
+          backgroundColor: "#FFFFFF",
           alignItems: "center",
           justifyContent: "center",
         },
         children: [
           createNode("Text", {
-            props: { text: "Button" },
-            style: { color: "#FFFFFF", fontWeight: "600", textAlign: "center" },
+            props: { text: "Pressable" },
+            style: { color: "#111827", textAlign: "center" },
           }),
         ],
       });

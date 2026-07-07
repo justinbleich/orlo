@@ -86,45 +86,40 @@ function collectIds(tree: Node, ids = new Set<NodeId>()): Set<NodeId> {
   return ids;
 }
 
-export function seedComponentTemplateContent(template: Node, name: string): Node {
-  if (!isContainer(template) || childrenOf(template).length > 0) return template;
-  if (template.type === "Pressable") {
+export function seedComponentTemplateContent(
+  template: Node,
+  _name: string,
+  components?: ComponentRegistry,
+  componentId?: NodeId,
+): Node {
+  let root = template;
+  if (root.type === "ComponentInstance") {
+    const referenced = root.componentId !== componentId ? components?.[root.componentId] : undefined;
+    root = referenced
+      ? clone(referenced.template)
+      : createNode("View", {
+          style: root.style,
+          design: root.design,
+        });
+  }
+  if (!isContainer(root) || childrenOf(root).length > 0) return root;
+  if (root.type === "Pressable") {
     return {
-      ...template,
+      ...root,
       style: {
-        ...template.style,
-        alignItems: template.style.alignItems ?? "center",
-        justifyContent: template.style.justifyContent ?? "center",
+        ...root.style,
+        alignItems: root.style.alignItems ?? "center",
+        justifyContent: root.style.justifyContent ?? "center",
       },
       children: [
         createNode("Text", {
-          props: { text: "Button" },
-          style: { color: "#FFFFFF", fontWeight: "600", textAlign: "center" },
+          props: { text: "Pressable" },
+          style: { color: "#111827", textAlign: "center" },
         }),
       ],
     };
   }
-  if (template.type === "View" && /card/i.test(name)) {
-    return {
-      ...template,
-      style: {
-        padding: template.style.padding ?? 16,
-        gap: template.style.gap ?? 6,
-        ...template.style,
-      },
-      children: [
-        createNode("Text", {
-          props: { text: "Task title" },
-          style: { fontSize: 16, fontWeight: "600", color: "#111827" },
-        }),
-        createNode("Text", {
-          props: { text: "Due today" },
-          style: { fontSize: 13, color: "#64748B" },
-        }),
-      ],
-    };
-  }
-  return template;
+  return root;
 }
 
 // --- Authoring ---------------------------------------------------------------

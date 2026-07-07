@@ -431,8 +431,40 @@ test("store: beginning component edit repairs empty button definitions", () => {
   const definition = useDocumentStore.getState().components.button;
   assert.equal(editing.type, "Pressable");
   assert.equal(editing.children?.[0]?.type, "Text");
-  assert.equal(editing.children?.[0]?.props.text, "Button");
-  assert.equal(definition.template.children?.[0]?.props.text, "Button");
+  assert.equal(editing.children?.[0]?.props.text, "Pressable");
+  const template = definition.template;
+  assert.equal(template.type, "Pressable");
+  const child = template.children?.[0];
+  assert.equal(child?.type, "Text");
+  assert.equal(child.props.text, "Pressable");
+});
+
+test("store: beginning component edit repairs invalid instance roots", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots(
+    { frame: createNode("View", { id: "frame" }) },
+    ["frame"],
+    {
+      card: {
+        id: "card",
+        name: "TaskCard",
+        template: createInstance("missing", {
+          id: "bad-root",
+          style: { width: 240, height: 120, backgroundColor: "#F8FAFC" },
+        }),
+        props: [],
+      },
+    },
+  );
+
+  store.beginComponentEdit("card");
+  const editing = useDocumentStore.getState().roots.card;
+  const definition = useDocumentStore.getState().components.card;
+  assert.equal(editing.type, "View");
+  assert.equal(editing.id, "card");
+  assert.equal(editing.style.width, 240);
+  assert.equal(editing.style.height, 120);
+  assert.equal(definition.template.type, "View");
 });
 
 test("store: definition edits preserve overrides; removing a prop drops them", () => {
@@ -584,7 +616,7 @@ test("validateComponentRegistry rejects malformed variants/combinations", () => 
   assert.match(reason(axisCollidesProp), /collides/);
 });
 
-test("promoteToComponent seeds empty pressables with editable button text", () => {
+test("promoteToComponent seeds empty pressables with neutral editable text", () => {
   const node = createNode("Pressable", {
     id: "button",
     style: { width: 120, height: 44, backgroundColor: "#2563EB" },
@@ -593,19 +625,7 @@ test("promoteToComponent seeds empty pressables with editable button text", () =
   assert.equal(definition.template.type, "Pressable");
   assert.equal(definition.template.children?.length, 1);
   assert.equal(definition.template.children?.[0]?.type, "Text");
-  assert.equal(definition.template.children?.[0]?.props.text, "Button");
-});
-
-test("promoteToComponent seeds empty card views with useful text content", () => {
-  const node = createNode("View", {
-    id: "card",
-    style: { width: 240, height: 120, backgroundColor: "#F8FAFC" },
-  });
-  const { definition } = promoteToComponent(node, "TaskCard");
-  assert.equal(definition.template.type, "View");
-  assert.equal(definition.template.children?.length, 2);
-  assert.equal(definition.template.children?.[0]?.props.text, "Task title");
-  assert.equal(definition.template.children?.[1]?.props.text, "Due today");
+  assert.equal(definition.template.children?.[0]?.props.text, "Pressable");
 });
 
 test("pruneVariants drops combinations orphaned by an axis/value edit", () => {

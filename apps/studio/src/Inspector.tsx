@@ -20,6 +20,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Component as ComponentIcon,
   Copy,
   Eye,
   EyeOff,
@@ -291,24 +292,18 @@ export function Inspector({ rootId, embedded = false }: { rootId: NodeId | null;
   // A placed instance edits its exposed-prop overrides, not raw style — its
   // structure comes from the definition (edit it via focus mode).
   if (!multi && primary.type === "ComponentInstance") {
+    const definition = componentRegistry[primary.componentId];
     return wrap(
       <>
-        <SelectionHeader
-          nodes={nodes}
+        <InstanceHeader
+          instance={primary}
+          definition={definition}
           onName={(name) => setDesignAll({ name })}
           onLock={(locked) => setDesignAll({ locked })}
           onHide={(hidden) => setDesignAll({ hidden })}
+          onEditDefinition={() => beginComponentEdit(primary.componentId)}
           {...editLifecycle}
         />
-        <div className="px-md">
-          <button
-            type="button"
-            onClick={() => beginComponentEdit(primary.componentId)}
-            className="flex w-full items-center justify-center gap-sm rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink transition-colors hover:bg-raised"
-          >
-            <Pencil size={14} aria-hidden="true" /> Edit component
-          </button>
-        </div>
         <ActionRow
           canUngroup={false}
           canGroup={false}
@@ -320,7 +315,7 @@ export function Inspector({ rootId, embedded = false }: { rootId: NodeId | null;
         <InstanceProperties
           rootId={root.id}
           instance={primary}
-          definition={componentRegistry[primary.componentId]}
+          definition={definition}
         />
         {error && <p className="px-md text-sm text-amber">{error}</p>}
       </>,
@@ -947,6 +942,88 @@ function SelectionHeader({
   );
 }
 
+function InstanceHeader({
+  instance,
+  definition,
+  onName,
+  onLock,
+  onHide,
+  onEditDefinition,
+  onEditStart,
+  onEditEnd,
+  onEditCancel,
+}: {
+  instance: ComponentInstanceNode;
+  definition: ComponentDefinition | undefined;
+  onName: (name: string) => void;
+  onLock: (locked: boolean) => void;
+  onHide: (hidden: boolean) => void;
+  onEditDefinition: () => void;
+  onEditStart: () => void;
+  onEditEnd: () => void;
+  onEditCancel: () => void;
+}) {
+  const propCount = definition?.props.length ?? 0;
+  const variantCount = definition?.variants?.length ?? 0;
+  const overrideCount = Object.keys(instance.overrides).length;
+  const slotCount = Object.keys(instance.slots ?? {}).length;
+  const locked = !!instance.design?.locked;
+  const hidden = !!instance.design?.hidden;
+  return (
+    <div className="flex flex-col gap-sm border-b border-line px-md py-md">
+      <div className="flex items-start gap-sm">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-accent-soft text-accent">
+          <ComponentIcon size={14} aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="eyebrow">Instance</div>
+          <div className="mt-1 truncate text-sm font-semibold text-ink">
+            {definition?.name ?? "Missing component"}
+          </div>
+        </div>
+        <IconToggle title={locked ? "Unlock" : "Lock"} pressed={locked} onPressedChange={onLock}>
+          {locked ? <Lock size={14} aria-hidden="true" /> : <Unlock size={14} aria-hidden="true" />}
+        </IconToggle>
+        <IconToggle title={hidden ? "Show" : "Hide"} pressed={hidden} onPressedChange={onHide}>
+          {hidden ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
+        </IconToggle>
+      </div>
+      <input
+        value={instance.design?.name ?? ""}
+        placeholder="Instance name"
+        onFocus={onEditStart}
+        onBlur={onEditEnd}
+        onChange={(event) => {
+          onEditStart();
+          onName(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onEditCancel();
+        }}
+        className="h-7 min-w-0 rounded-sm border border-line-soft bg-chrome-2 px-sm text-sm text-ink transition-colors hover:border-line focus-visible:border-accent-line focus-visible:outline-none"
+      />
+      <div className="flex flex-wrap gap-xs text-2xs text-ink-faint">
+        <span className="rounded-sm border border-line-soft bg-chrome-2 px-xs py-0.5">
+          {variantCount} variant{variantCount === 1 ? "" : "s"}
+        </span>
+        <span className="rounded-sm border border-line-soft bg-chrome-2 px-xs py-0.5">
+          {propCount} prop{propCount === 1 ? "" : "s"}
+        </span>
+        <span className="rounded-sm border border-line-soft bg-chrome-2 px-xs py-0.5">
+          {overrideCount + slotCount} override{overrideCount + slotCount === 1 ? "" : "s"}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onEditDefinition}
+        className="flex w-full items-center justify-center gap-sm rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink transition-colors hover:bg-raised"
+      >
+        <Pencil size={14} aria-hidden="true" /> Edit definition
+      </button>
+    </div>
+  );
+}
+
 /** A JS identifier derived from `base`, unique against `taken`. */
 function uniquePropName(base: string, taken: Iterable<string>): string {
   const ident = /^[A-Za-z_$]/.test(base) ? base.replace(/[^\w$]/g, "") : `p${base.replace(/[^\w$]/g, "")}`;
@@ -1018,7 +1095,7 @@ function InstanceProperties({
       {definition.props.length === 0 ? (
         <Section title="Properties">
           <p className="text-sm text-ink-faint">
-            No exposed properties yet. Use “Edit component” to expose some.
+            No exposed properties yet. Edit the definition to expose instance controls.
           </p>
         </Section>
       ) : (

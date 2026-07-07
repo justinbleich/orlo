@@ -19,7 +19,6 @@ import {
   MousePointer2,
   MousePointerClick,
   MoveVertical,
-  Pencil,
   Plus,
   Route,
   Square,
@@ -493,6 +492,7 @@ export function LeftPanel({
   onOpenChanges,
   onOpenRepoScreen = () => {},
   onRenameRepoScreen = () => {},
+  onOpenComponent = () => {},
   screenFlowBadges = {},
   gitStatus,
   sidecarPath,
@@ -515,6 +515,7 @@ export function LeftPanel({
   onOpenChanges: () => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   onRenameRepoScreen: (screen: RepoPanelScreen, name: string) => void;
+  onOpenComponent?: (componentId: NodeId) => void;
   screenFlowBadges?: ScreenFlowBadges;
   gitStatus: PanelGitStatus;
   sidecarPath: string;
@@ -529,7 +530,6 @@ export function LeftPanel({
   const promoteToComponent = useDocumentStore((state) => state.promoteToComponent);
   const removeComponent = useDocumentStore((state) => state.removeComponent);
   const editingComponentId = useDocumentStore((state) => state.editingComponentId);
-  const beginComponentEdit = useDocumentStore((state) => state.beginComponentEdit);
   const setStatus = useWorkspaceStore((state) => state.setStatus);
   const tokens = useDocumentStore((state) => state.tokens);
   const addToken = useDocumentStore((state) => state.addToken);
@@ -968,49 +968,26 @@ export function LeftPanel({
                   key={comp.id}
                   icon={Component}
                   onClick={() => {
-                    const nextArmed = armed ? null : comp.id;
-                    setArmedComponent(nextArmed);
-                    setStatus(
-                      nextArmed
-                        ? `${comp.name} armed. Click a screen to place an instance.`
-                        : `${comp.name} disarmed`,
-                    );
-                    if (workspace === "Component") onWorkspaceChange("Screen");
+                    setArmedComponent(null);
+                    onOpenComponent(comp.id);
                   }}
-                  title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
-                  active={armed}
+                  title={`Edit ${comp.name}`}
+                  active={editingComponentId === comp.id || armed}
                   action={(
-                    <>
-                      <PanelAction
-                        onClick={() => {
-                          try {
-                            beginComponentEdit(comp.id);
-                            onWorkspaceChange("Component");
-                            setStatus(`Editing ${comp.name}`);
-                          } catch (error) {
-                            setStatus(error instanceof Error ? error.message : "Component edit failed");
-                          }
-                        }}
-                        title="Edit component"
-                        className={rowAction}
-                      >
-                        <Pencil size={14} aria-hidden="true" />
-                      </PanelAction>
-                      <PanelAction
-                        onClick={() => {
-                          try {
-                            removeComponent(comp.id);
-                            setStatus(`Deleted ${comp.name}`);
-                          } catch (error) {
-                            setStatus(error instanceof Error ? error.message : "Component delete failed");
-                          }
-                        }}
-                        title="Delete component"
-                        className={rowAction}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </PanelAction>
-                    </>
+                    <PanelAction
+                      onClick={() => {
+                        try {
+                          removeComponent(comp.id);
+                          setStatus(`Deleted ${comp.name}`);
+                        } catch (error) {
+                          setStatus(error instanceof Error ? error.message : "Component delete failed");
+                        }
+                      }}
+                      title="Delete component"
+                      className={rowAction}
+                    >
+                      <Trash2 size={14} aria-hidden="true" />
+                    </PanelAction>
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate">{comp.name}</span>

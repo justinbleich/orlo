@@ -1190,6 +1190,11 @@ export default function App() {
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [confirmDeleteScreen, setConfirmDeleteScreen] = useState<RepoPanelScreen | null>(null);
+  const [pendingComponentSwitch, setPendingComponentSwitch] = useState<{
+    componentId: NodeId;
+    componentName: string;
+    currentName: string;
+  } | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
   const [leftColumnWidth, setLeftColumnWidth] = useState(readStoredLeftColumnWidth);
@@ -2232,6 +2237,66 @@ export default function App() {
     [componentRegistry, editingComponentId],
   );
 
+  const openComponentForEdit = useCallback(
+    (componentId: NodeId) => {
+      const store = useDocumentStore.getState();
+      const definition = store.components[componentId];
+      if (!definition) {
+        setStatus("Component not found");
+        return;
+      }
+      const currentId = store.editingComponentId;
+      if (currentId === componentId) {
+        setWorkspace("Component");
+        setComponentWorkspaceTab("Canvas");
+        setInspectorTab("Design");
+        setStatus(`Editing ${definition.name}`);
+        return;
+      }
+      if (currentId) {
+        const currentName = store.components[currentId]?.name ?? "current component";
+        setPendingComponentSwitch({
+          componentId,
+          componentName: definition.name,
+          currentName,
+        });
+        setStatus(`Save or discard ${currentName} edits to switch`);
+        return;
+      }
+      try {
+        store.beginComponentEdit(componentId);
+        setWorkspace("Component");
+        setComponentWorkspaceTab("Canvas");
+        setInspectorTab("Design");
+        setStatus(`Editing ${definition.name}`);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Component edit failed");
+      }
+    },
+    [setStatus],
+  );
+
+  const switchComponentForEdit = useCallback(
+    (commitCurrent: boolean) => {
+      const pending = pendingComponentSwitch;
+      if (!pending) return;
+      const store = useDocumentStore.getState();
+      try {
+        if (store.editingComponentId) store.endComponentEdit(commitCurrent);
+        store.beginComponentEdit(pending.componentId);
+        setPendingComponentSwitch(null);
+        setWorkspace("Component");
+        setComponentWorkspaceTab("Canvas");
+        setInspectorTab("Design");
+        setStatus(
+          `${commitCurrent ? "Saved" : "Discarded"} ${pending.currentName}; editing ${pending.componentName}`,
+        );
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Component switch failed");
+      }
+    },
+    [pendingComponentSwitch, setStatus],
+  );
 
   const openRepoSettings = useCallback(() => {
     setInspectorTab("Code");
@@ -2365,6 +2430,7 @@ export default function App() {
                 onOpenChanges={openChangesPanel}
                 onOpenRepoScreen={openRepoScreen}
                 onRenameRepoScreen={renameRepoScreen}
+                onOpenComponent={openComponentForEdit}
                 screenFlowBadges={screenFlowBadges}
                 gitStatus={gitStatus}
                 sidecarPath={sidecarPath}
@@ -2652,6 +2718,47 @@ export default function App() {
                 onClick={confirmDeleteRepoScreen}
               >
                 Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingComponentSwitch && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingComponentSwitch(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="switch-component-title"
+            className="studio-chrome w-[min(440px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-accent-line bg-accent-soft text-accent">
+                <AlertTriangle size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="switch-component-title" className="break-words text-sm font-semibold text-ink">
+                  Switch to {pendingComponentSwitch.componentName}?
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  Save or discard edits to {pendingComponentSwitch.currentName} before opening the next component.
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setPendingComponentSwitch(null)}>
+                Cancel
+              </Button>
+              <Button variant="ghost" onClick={() => switchComponentForEdit(false)}>
+                Discard and switch
+              </Button>
+              <Button variant="primary" onClick={() => switchComponentForEdit(true)}>
+                Save and switch
               </Button>
             </div>
           </div>

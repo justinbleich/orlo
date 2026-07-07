@@ -38,6 +38,8 @@ Implemented in the follow-up fixes:
 - Entering component edit now updates the status strip.
 - Component delete failures/successes now update the status strip.
 - Component edit `Cancel` and `Done` now update the status strip.
+- Component rows now open the component for editing directly; the redundant edit pencil was removed.
+- Selecting a different component while editing now opens a save/discard/cancel switch dialog instead of silently refusing to switch.
 
 The repair helper is applied in two places:
 
@@ -49,6 +51,6 @@ This means opening the existing `ButtonPrimary` from the recording should produc
 ## Still Needs Design Work
 
 - Revisit the component edit workspace layout so variants, canvas, usage, docs, and the inspector do not compete visually.
-- Make the row-click versus edit-click affordance clearer in the Components panel.
+- Define the placement affordance for component instances now that row click is reserved for editing.
 - Provide an obvious empty-template path for adding a label/content without prescribing component content.
 - Treat renderer failures in component edit as recoverable authoring states with a focused message and recovery action.

@@ -269,18 +269,7 @@ function TokenRow({ token, onDragStart }: { token: DesignToken; onDragStart: () 
           value={token.value as string}
           onChange={(v) => updateToken(token.id, { value: v })}
         />
-      ) : (
-        <input
-          type="number"
-          value={token.value as number}
-          onChange={(e) => updateToken(token.id, { value: Number(e.target.value) })}
-          title={`${token.category} value`}
-          className={cn(
-            "h-5 w-11 shrink-0 rounded-xs border border-line bg-chrome-2 px-xs text-right text-xs tabular-nums text-ink",
-            "outline-none transition-colors hover:bg-raised focus-visible:border-accent-line focus-visible:bg-raised",
-          )}
-        />
-      )}
+      ) : null}
       <input
         value={nameDraft}
         onChange={(e) => {
@@ -302,6 +291,7 @@ function TokenRow({ token, onDragStart }: { token: DesignToken; onDragStart: () 
         }}
         spellCheck={false}
         placeholder="tokenName"
+        aria-label={`${token.name} token name`}
         title={nameError ?? token.category}
         className={cn(
           "h-5 min-w-0 flex-1 rounded-xs border bg-transparent px-xs font-mono text-xs text-ink",
@@ -310,6 +300,24 @@ function TokenRow({ token, onDragStart }: { token: DesignToken; onDragStart: () 
           nameError ? "border-amber" : "border-transparent",
         )}
       />
+      {token.category !== "color" && (
+        <>
+          <span className="shrink-0 text-xs text-ink-faint" aria-hidden="true">
+            ·
+          </span>
+          <input
+            type="number"
+            value={token.value as number}
+            onChange={(e) => updateToken(token.id, { value: Number(e.target.value) })}
+            title={`${CATEGORY_LABEL[token.category]} token value`}
+            aria-label={`${token.name} ${CATEGORY_LABEL[token.category].toLowerCase()} token value`}
+            className={cn(
+              "h-5 w-12 shrink-0 rounded-xs border border-line bg-chrome-2 px-xs text-right text-xs tabular-nums text-ink",
+              "outline-none transition-colors hover:bg-raised focus-visible:border-accent-line focus-visible:bg-raised",
+            )}
+          />
+        </>
+      )}
       {usageCount > 0 ? (
         <button
           type="button"

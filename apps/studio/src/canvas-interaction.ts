@@ -125,7 +125,24 @@ export function buildDrawnNode(type: RNPrimitive, width: number, height: number)
     case "TextInput":
       return createNode("TextInput", { style: { width, height: Math.max(height, 36) } });
     case "Pressable":
-      return createNode("Pressable", { style: { width, height } });
+      return createNode("Pressable", {
+        style: {
+          width,
+          height: Math.max(height, 40),
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          borderRadius: 8,
+          backgroundColor: "#2563EB",
+          alignItems: "center",
+          justifyContent: "center",
+        },
+        children: [
+          createNode("Text", {
+            props: { text: "Button" },
+            style: { color: "#FFFFFF", fontWeight: "600", textAlign: "center" },
+          }),
+        ],
+      });
     case "Image":
       return createNode("Image", { style: { width, height } });
     default:

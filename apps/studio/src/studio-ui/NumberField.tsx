@@ -10,6 +10,7 @@ import type { EditLifecycle } from "./controls";
  */
 export function NumberField({
   label,
+  ariaLabel,
   value,
   onChange,
   min,
@@ -23,6 +24,7 @@ export function NumberField({
   onEditCancel,
 }: {
   label: React.ReactNode;
+  ariaLabel?: string;
   value: number | undefined;
   onChange: (value: number | undefined) => void;
   min?: number;
@@ -71,6 +73,7 @@ export function NumberField({
       </BaseNumberField.ScrubArea>
       <BaseNumberField.Group className="flex min-w-0 flex-1">
         <BaseNumberField.Input
+          aria-label={ariaLabel}
           placeholder={mixed ? "Mixed" : placeholder}
           onFocus={(event) => {
             const input = event.currentTarget;

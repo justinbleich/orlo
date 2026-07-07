@@ -45,6 +45,16 @@ test("buildDrawnNode creates FlatList with one item template", () => {
   assert.equal(list.children?.[0]?.type, "View");
 });
 
+test("buildDrawnNode creates Pressable as a labeled button", () => {
+  const button = buildDrawnNode("Pressable", 120, 32);
+  assert.equal(button.type, "Pressable");
+  assert.equal(button.style.height, 40);
+  assert.equal(button.style.alignItems, "center");
+  assert.equal(button.children?.length, 1);
+  assert.equal(button.children?.[0]?.type, "Text");
+  assert.equal(button.children?.[0]?.props.text, "Button");
+});
+
 test("flexInsertIndex picks midpoint slot", () => {
   const siblings = [
     { id: "a", box: { left: 0, top: 0, width: 40, height: 20 } },

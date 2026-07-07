@@ -9,6 +9,7 @@ import type { EditLifecycle } from "./controls";
  */
 export function ColorField({
   value,
+  ariaLabel,
   onChange,
   disabled,
   onEditStart,
@@ -16,6 +17,7 @@ export function ColorField({
   onEditCancel,
 }: {
   value: string | undefined;
+  ariaLabel?: string;
   onChange: (value: string) => void;
   disabled?: boolean;
 } & EditLifecycle) {
@@ -52,7 +54,7 @@ export function ColorField({
             <button
               type="button"
               disabled={disabled}
-              aria-label="Pick color"
+              aria-label={ariaLabel ? `Pick ${ariaLabel.toLowerCase()}` : "Pick color"}
               className="absolute inset-0 cursor-pointer disabled:cursor-not-allowed"
             />
           }
@@ -60,6 +62,7 @@ export function ColorField({
       </span>
       <input
         type="text"
+        aria-label={ariaLabel}
         value={hex}
         placeholder="—"
         disabled={disabled}

@@ -736,19 +736,19 @@ export function Inspector({ rootId, embedded = false }: { rootId: NodeId | null;
         <Section title="Typography">
           {!multi && primary.type === "Text" && (
             <Field label="Content" stacked>
-              <TextField {...editLifecycle} value={primary.props.text} onChange={(v) => setPrimaryProp("text", v)} placeholder="Text…" />
+              <TextField {...editLifecycle} aria-label="Content" value={primary.props.text} onChange={(v) => setPrimaryProp("text", v)} placeholder="Text…" />
             </Field>
           )}
           <FieldGrid>
             <Field label="Size">
               {!multi ? (
-                <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="fontSize" label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} editLifecycle={editLifecycle} />
+                <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="fontSize" label="S" ariaLabel="Size" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} editLifecycle={editLifecycle} />
               ) : (
-                <NumberField {...editLifecycle} label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
+                <NumberField {...editLifecycle} label="S" ariaLabel="Size" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
               )}
             </Field>
             <Field label="Line height">
-              <NumberField {...editLifecycle} label="LH" {...num("lineHeight")} min={0} onChange={(v) => setStyle("lineHeight", v)} />
+              <NumberField {...editLifecycle} label="LH" ariaLabel="Line height" {...num("lineHeight")} min={0} onChange={(v) => setStyle("lineHeight", v)} />
             </Field>
           </FieldGrid>
           <Field label="Weight">
@@ -771,9 +771,9 @@ export function Inspector({ rootId, embedded = false }: { rootId: NodeId | null;
           </Field>
           <Field label="Color">
             {!multi ? (
-              <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="color" value={colorVal("color")} onChange={(v) => setStyle("color", v)} editLifecycle={editLifecycle} />
+              <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="color" ariaLabel="Color" value={colorVal("color")} onChange={(v) => setStyle("color", v)} editLifecycle={editLifecycle} />
             ) : (
-              <ColorField {...editLifecycle} value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
+              <ColorField {...editLifecycle} ariaLabel="Color" value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
             )}
           </Field>
         </Section>
@@ -782,31 +782,31 @@ export function Inspector({ rootId, embedded = false }: { rootId: NodeId | null;
       <Section title="Appearance">
         <Field label="Fill">
           {!multi ? (
-            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="backgroundColor" value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} editLifecycle={editLifecycle} />
+            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="backgroundColor" ariaLabel="Fill" value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} editLifecycle={editLifecycle} />
           ) : (
-            <ColorField {...editLifecycle} value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
+            <ColorField {...editLifecycle} ariaLabel="Fill" value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
           )}
         </Field>
         <Field label="Opacity">
-          <NumberField {...editLifecycle} label="○" {...num("opacity")} min={0} max={1} step={0.05} onChange={(v) => setStyle("opacity", v)} />
+          <NumberField {...editLifecycle} label="○" ariaLabel="Opacity" {...num("opacity")} min={0} max={1} step={0.05} onChange={(v) => setStyle("opacity", v)} />
         </Field>
         <FieldGrid>
           <Field label="Border width">
-            <NumberField {...editLifecycle} label="W" {...num("borderWidth")} min={0} onChange={(v) => setStyle("borderWidth", v)} />
+            <NumberField {...editLifecycle} label="W" ariaLabel="Border width" {...num("borderWidth")} min={0} onChange={(v) => setStyle("borderWidth", v)} />
           </Field>
           <Field label="Radius">
             {!multi ? (
-              <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderRadius" label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} editLifecycle={editLifecycle} />
+              <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderRadius" label="R" ariaLabel="Radius" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} editLifecycle={editLifecycle} />
             ) : (
-              <NumberField {...editLifecycle} label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
+              <NumberField {...editLifecycle} label="R" ariaLabel="Radius" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
             )}
           </Field>
         </FieldGrid>
         <Field label="Border color">
           {!multi ? (
-            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderColor" value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} editLifecycle={editLifecycle} />
+            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderColor" ariaLabel="Border color" value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} editLifecycle={editLifecycle} />
           ) : (
-            <ColorField {...editLifecycle} value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
+            <ColorField {...editLifecycle} ariaLabel="Border color" value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
           )}
         </Field>
       </Section>
@@ -2004,6 +2004,7 @@ function ColorTokenSlot({
   nodeId,
   styleKey,
   value,
+  ariaLabel,
   onChange,
   editLifecycle,
 }: {
@@ -2011,6 +2012,7 @@ function ColorTokenSlot({
   nodeId: NodeId;
   styleKey: string;
   value: string | undefined;
+  ariaLabel?: string;
   onChange: (v: string) => void;
   editLifecycle: { onEditStart?: () => void; onEditEnd?: () => void; onEditCancel?: () => void };
 }) {
@@ -2027,6 +2029,7 @@ function ColorTokenSlot({
   return (
     <TokenColorField
       {...editLifecycle}
+      ariaLabel={ariaLabel}
       value={value}
       onChange={onChange}
       tokens={colorOptions}
@@ -2085,6 +2088,7 @@ function NumberTokenSlot({
   nodeId,
   styleKey,
   label,
+  ariaLabel,
   value,
   onChange,
   min,
@@ -2098,6 +2102,7 @@ function NumberTokenSlot({
   nodeId: NodeId;
   styleKey: string;
   label: React.ReactNode;
+  ariaLabel?: string;
   value: number | undefined;
   onChange: (v: number | undefined) => void;
   min?: number;
@@ -2120,6 +2125,7 @@ function NumberTokenSlot({
       <NumberField
         {...editLifecycle}
         label={label}
+        ariaLabel={ariaLabel}
         value={value}
         onChange={onChange}
         min={min}
@@ -2139,6 +2145,7 @@ function NumberTokenSlot({
     <TokenNumberField
       {...editLifecycle}
       label={label}
+      ariaLabel={ariaLabel}
       value={value}
       onChange={onChange}
       min={min}

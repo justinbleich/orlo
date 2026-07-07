@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   childrenOf,
   createInstance,
@@ -119,6 +119,14 @@ export function LayerOverlay({
   const [armedHover, setArmedHover] = useState(false);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    const node = findNode(root, editing.id);
+    if (!active || !node || node.type !== "Text" || !selection.includes(editing.id)) {
+      setEditing(null);
+    }
+  }, [active, editing, root, selection]);
 
   // Selected nodes that actually live in this frame's tree.
   const selectedInRoot = useMemo(
@@ -598,7 +606,7 @@ export function LayerOverlay({
               rectOf(current.start, eventPoint(event)),
             );
             if (created && current.createType === "Text") {
-              setEditing({ id: created, value: "Text" });
+              setEditing({ id: created, value: "" });
             }
           }
           store.commitInteraction();
@@ -1053,6 +1061,7 @@ export function LayerOverlay({
               value={editing.value}
               onChange={(e) => setEditing({ id: editing.id, value: e.target.value })}
               onBlur={commitEdit}
+              onFocus={(e) => e.currentTarget.select()}
               onPointerDown={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
                 e.stopPropagation();

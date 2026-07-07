@@ -46,6 +46,7 @@ import {
 import {
   canHaveChildren,
   childrenOf,
+  createNode,
   findNode,
   getParent,
   isContainer,
@@ -2288,11 +2289,94 @@ export function ComponentEditPanel({ componentId }: { componentId: NodeId }) {
     nodes.length === 1 && primary && primary.type !== "ComponentInstance" ? primary : null;
   return (
     <Shell>
+      <TemplateActions componentId={componentId} root={root} />
       <VariantControls componentId={componentId} selectedNodeId={templateNode?.id ?? null} />
       <PropertiesControls componentId={componentId} node={templateNode} />
       <Inspector rootId={componentId} embedded />
       <TemplateTokensSection componentId={componentId} />
     </Shell>
+  );
+}
+
+function firstTextDescendant(node: Node): Node | null {
+  if (node.type === "Text") return node;
+  for (const child of childrenOf(node)) {
+    const found = firstTextDescendant(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+function TemplateActions({ componentId, root }: { componentId: NodeId; root: Node }) {
+  const setSelection = useDocumentStore((s) => s.setSelection);
+  const insertChild = useDocumentStore((s) => s.insertChild);
+  const updateComponent = useDocumentStore((s) => s.updateComponent);
+  const definition = useDocumentStore((s) => s.components[componentId]);
+  const canAddLabel = root.type === "Pressable" && isContainer(root);
+  const labelNode = firstTextDescendant(root);
+
+  const ensureLabelProp = (nodeId: NodeId) => {
+    if (!definition) return;
+    const alreadyBound = definition.props.some((prop) =>
+      prop.targets.some(
+        (target) => target.kind === "prop" && target.nodeId === nodeId && target.path === "text",
+      ),
+    );
+    if (alreadyBound) return;
+    const taken = new Set(definition.props.map((prop) => prop.name));
+    let name = "label";
+    for (let i = 2; taken.has(name); i += 1) name = `label${i}`;
+    updateComponent(componentId, {
+      props: [...definition.props, presetProp(name, "text", nodeId)],
+    });
+  };
+
+  const addOrSelectLabel = () => {
+    if (labelNode) {
+      ensureLabelProp(labelNode.id);
+      setSelection([labelNode.id]);
+      return;
+    }
+    if (!canAddLabel) return;
+    const label = createNode("Text", {
+      props: { text: "Button" },
+      style: { color: "#FFFFFF", textAlign: "center" },
+      design: { name: "Label" },
+    });
+    insertChild(componentId, root.id, label);
+    ensureLabelProp(label.id);
+    setSelection([label.id]);
+  };
+
+  return (
+    <Section title="Template">
+      <div className="grid grid-cols-2 gap-xs">
+        <button
+          type="button"
+          onClick={() => setSelection([root.id])}
+          className={cn(
+            "inline-flex h-8 min-w-0 items-center justify-center gap-xs rounded-sm border border-line bg-chrome-2 px-sm text-xs font-semibold text-ink-dim",
+            "transition-colors hover:bg-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+          )}
+        >
+          <MousePointerClick size={13} aria-hidden="true" />
+          <span className="min-w-0 truncate">Select root</span>
+        </button>
+        <button
+          type="button"
+          onClick={addOrSelectLabel}
+          disabled={!canAddLabel && !labelNode}
+          className={cn(
+            "inline-flex h-8 min-w-0 items-center justify-center gap-xs rounded-sm border border-line bg-chrome-2 px-sm text-xs font-semibold text-ink-dim",
+            "transition-colors hover:bg-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+            "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-chrome-2 disabled:hover:text-ink-dim",
+          )}
+        >
+          <TypeIcon size={13} aria-hidden="true" />
+          <span className="min-w-0 truncate">{labelNode ? "Select label" : "Add label"}</span>
+        </button>
+      </div>
+    </Section>
   );
 }
 

@@ -144,6 +144,7 @@ export interface DocumentState {
   placeInstance(rootId: NodeId, parentId: NodeId, componentId: NodeId, index?: number): void;
   setInstanceOverride(rootId: NodeId, instanceId: NodeId, name: string, value: OverrideValue): void;
   setInstanceSlot(rootId: NodeId, instanceId: NodeId, name: string, children: Node[]): void;
+  resetInstanceOverrides(rootId: NodeId, instanceId: NodeId): void;
   /** Open a component's template for editing (hosted as a transient root). */
   beginComponentEdit(componentId: NodeId): void;
   /** Close focus mode; `commit` writes the edited template back to the definition. */
@@ -528,6 +529,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         };
         const errors = validateInstance(nextInstance, get().components);
         if (errors.length > 0) throw new Error(`Invalid slot: ${errors[0].reason}`);
+        return replaceNode(tree, instanceId, nextInstance);
+      }),
+
+    resetInstanceOverrides: (rootId, instanceId) =>
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, instanceId);
+        if (!node || node.type !== "ComponentInstance") {
+          throw new Error(`Instance not found: ${instanceId}`);
+        }
+        const nextInstance = { ...node, overrides: {} };
+        delete nextInstance.slots;
+        delete nextInstance.variant;
         return replaceNode(tree, instanceId, nextInstance);
       }),
 

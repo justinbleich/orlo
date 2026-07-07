@@ -540,6 +540,42 @@ test("store: definition edits preserve overrides; removing a prop drops them", (
   assert.equal(overrideOf(instId), undefined);
 });
 
+test("store: resetInstanceOverrides restores a placed instance to defaults", () => {
+  const screen = createNode("View", { id: "frame", children: [] });
+  const store = useDocumentStore.getState();
+  store.loadRoots(
+    { frame: screen },
+    ["frame"],
+    {
+      button: {
+        id: "button",
+        name: "Button",
+        template: createNode("Pressable", {
+          id: "root",
+          children: [createNode("Text", { id: "label", props: { text: "Go" } })],
+        }),
+        props: [
+          { name: "label", valueType: "string", default: "Go", targets: [{ kind: "prop", nodeId: "label", path: "text" }] },
+          { name: "body", valueType: "node", targets: [{ kind: "slot", nodeId: "root" }] },
+        ],
+        variants: [{ name: "state", values: ["default", "pressed"] }],
+      },
+    },
+  );
+  store.placeInstance("frame", "frame", "button");
+  const inst = childrenOf(useDocumentStore.getState().roots.frame)[0] as ComponentInstanceNode;
+  store.setInstanceOverride("frame", inst.id, "label", "Next");
+  store.setInstanceSlot("frame", inst.id, "body", [createNode("Text", { id: "custom", props: { text: "Slot" } })]);
+  store.setInstanceVariant("frame", inst.id, "state", "pressed");
+
+  store.resetInstanceOverrides("frame", inst.id);
+  const reset = findNode(useDocumentStore.getState().roots.frame, inst.id) as ComponentInstanceNode;
+
+  assert.deepEqual(reset.overrides, {});
+  assert.equal(reset.slots, undefined);
+  assert.equal(reset.variant, undefined);
+});
+
 // --- Variants (Phase 2D-3) ---------------------------------------------------
 
 /** A Button with a size axis (sm/lg) and a state axis (default/disabled), with

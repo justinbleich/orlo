@@ -32,6 +32,7 @@ import {
   MoveVertical,
   List as ListIcon,
   Pencil,
+  RotateCcw,
   Square,
   TextCursorInput,
   Trash2,
@@ -180,6 +181,7 @@ export function Inspector({ rootId, embedded = false }: { rootId: NodeId | null;
   const componentRegistry = useDocumentStore((s) => s.components);
   const editingComponentId = useDocumentStore((s) => s.editingComponentId);
   const beginComponentEdit = useDocumentStore((s) => s.beginComponentEdit);
+  const resetInstanceOverrides = useDocumentStore((s) => s.resetInstanceOverrides);
   const [error, setError] = useState<string | null>(null);
   const wrap = (children: React.ReactNode) =>
     embedded ? <>{children}</> : <Shell>{children}</Shell>;
@@ -302,6 +304,14 @@ export function Inspector({ rootId, embedded = false }: { rootId: NodeId | null;
           onLock={(locked) => setDesignAll({ locked })}
           onHide={(hidden) => setDesignAll({ hidden })}
           onEditDefinition={() => beginComponentEdit(primary.componentId)}
+          onResetOverrides={() => {
+            try {
+              setError(null);
+              resetInstanceOverrides(root.id, primary.id);
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            }
+          }}
           {...editLifecycle}
         />
         <ActionRow
@@ -949,6 +959,7 @@ function InstanceHeader({
   onLock,
   onHide,
   onEditDefinition,
+  onResetOverrides,
   onEditStart,
   onEditEnd,
   onEditCancel,
@@ -959,6 +970,7 @@ function InstanceHeader({
   onLock: (locked: boolean) => void;
   onHide: (hidden: boolean) => void;
   onEditDefinition: () => void;
+  onResetOverrides: () => void;
   onEditStart: () => void;
   onEditEnd: () => void;
   onEditCancel: () => void;
@@ -967,6 +979,8 @@ function InstanceHeader({
   const variantCount = definition?.variants?.length ?? 0;
   const overrideCount = Object.keys(instance.overrides).length;
   const slotCount = Object.keys(instance.slots ?? {}).length;
+  const variantOverrideCount = Object.keys(instance.variant ?? {}).length;
+  const totalOverrideCount = overrideCount + slotCount + variantOverrideCount;
   const locked = !!instance.design?.locked;
   const hidden = !!instance.design?.hidden;
   return (
@@ -1010,9 +1024,17 @@ function InstanceHeader({
           {propCount} prop{propCount === 1 ? "" : "s"}
         </span>
         <span className="rounded-sm border border-line-soft bg-chrome-2 px-xs py-0.5">
-          {overrideCount + slotCount} override{overrideCount + slotCount === 1 ? "" : "s"}
+          {totalOverrideCount} override{totalOverrideCount === 1 ? "" : "s"}
         </span>
       </div>
+      <button
+        type="button"
+        onClick={onResetOverrides}
+        disabled={totalOverrideCount === 0}
+        className="flex w-full items-center justify-center gap-sm rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-chrome-2"
+      >
+        <RotateCcw size={14} aria-hidden="true" /> Reset overrides
+      </button>
       <button
         type="button"
         onClick={onEditDefinition}

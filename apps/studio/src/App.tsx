@@ -2433,10 +2433,12 @@ export default function App() {
               onCancel={() => {
                 useDocumentStore.getState().endComponentEdit(false);
                 setWorkspace("Screen");
+                setStatus(`Canceled ${editingComponentName ?? "component"} edits`);
               }}
               onDone={() => {
                 useDocumentStore.getState().endComponentEdit(true);
                 setWorkspace("Screen");
+                setStatus(`Saved ${editingComponentName ?? "component"}`);
               }}
             >
               <div

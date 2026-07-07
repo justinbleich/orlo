@@ -46,6 +46,7 @@ import { toComponentFileName } from "./component-name";
 import { color, radius, space, text } from "./studio-theme";
 import { type CanvasTool, useStudioStore } from "./studio-store";
 import { cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
+import { useWorkspaceStore } from "./workspace-store";
 import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
 import { TokensPanel } from "./TokensPanel";
@@ -529,6 +530,7 @@ export function LeftPanel({
   const removeComponent = useDocumentStore((state) => state.removeComponent);
   const editingComponentId = useDocumentStore((state) => state.editingComponentId);
   const beginComponentEdit = useDocumentStore((state) => state.beginComponentEdit);
+  const setStatus = useWorkspaceStore((state) => state.setStatus);
   const tokens = useDocumentStore((state) => state.tokens);
   const addToken = useDocumentStore((state) => state.addToken);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
@@ -966,7 +968,13 @@ export function LeftPanel({
                   key={comp.id}
                   icon={Component}
                   onClick={() => {
-                    setArmedComponent(armed ? null : comp.id);
+                    const nextArmed = armed ? null : comp.id;
+                    setArmedComponent(nextArmed);
+                    setStatus(
+                      nextArmed
+                        ? `${comp.name} armed. Click a screen to place an instance.`
+                        : `${comp.name} disarmed`,
+                    );
                     if (workspace === "Component") onWorkspaceChange("Screen");
                   }}
                   title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
@@ -975,8 +983,13 @@ export function LeftPanel({
                     <>
                       <PanelAction
                         onClick={() => {
-                          beginComponentEdit(comp.id);
-                          onWorkspaceChange("Component");
+                          try {
+                            beginComponentEdit(comp.id);
+                            onWorkspaceChange("Component");
+                            setStatus(`Editing ${comp.name}`);
+                          } catch (error) {
+                            setStatus(error instanceof Error ? error.message : "Component edit failed");
+                          }
                         }}
                         title="Edit component"
                         className={rowAction}
@@ -984,7 +997,14 @@ export function LeftPanel({
                         <Pencil size={14} aria-hidden="true" />
                       </PanelAction>
                       <PanelAction
-                        onClick={() => removeComponent(comp.id)}
+                        onClick={() => {
+                          try {
+                            removeComponent(comp.id);
+                            setStatus(`Deleted ${comp.name}`);
+                          } catch (error) {
+                            setStatus(error instanceof Error ? error.message : "Component delete failed");
+                          }
+                        }}
                         title="Delete component"
                         className={rowAction}
                       >

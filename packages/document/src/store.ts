@@ -56,6 +56,29 @@ export interface FramePosition {
 
 export type FramePositions = Record<NodeId, FramePosition>;
 
+function remapDefinitionRootReferences(
+  definition: ComponentDefinition,
+  fromRootId: NodeId,
+  toRootId: NodeId,
+): ComponentDefinition {
+  if (fromRootId === toRootId) return definition;
+  return {
+    ...definition,
+    props: definition.props.map((prop) => ({
+      ...prop,
+      targets: prop.targets.map((target) =>
+        target.nodeId === fromRootId ? { ...target, nodeId: toRootId } : target,
+      ),
+    })),
+    combinations: definition.combinations?.map((combo) => ({
+      ...combo,
+      overrides: combo.overrides.map((override) =>
+        override.nodeId === fromRootId ? { ...override, nodeId: toRootId } : override,
+      ),
+    })),
+  };
+}
+
 /** A history entry snapshots the trees, the component registry, and the selection,
  *  so undo/redo restores a coherent document (no dangling selection or definition). */
 export interface Snapshot {
@@ -524,9 +547,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         componentId,
       );
       const editingRoot = { ...template, id: componentId } as Node;
+      const editingDefinition = remapDefinitionRootReferences(
+        { ...definition, template: editingRoot },
+        template.id,
+        componentId,
+      );
       commit({
         roots: { ...roots, [componentId]: editingRoot },
-        components: { ...components, [componentId]: { ...definition, template: editingRoot } },
+        components: { ...components, [componentId]: editingDefinition },
       });
       set({
         editingComponentId: componentId,

@@ -91,6 +91,11 @@ import { nextFreeFramePosition } from "./canvas-arrange";
 import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
+import {
+  applyCreationPreset,
+  supportedCreationPresets,
+  type CreationPreset,
+} from "./component-creation-presets";
 import { handleMcpCommand } from "./mcp-command-handler";
 import {
   addFlowRoute,
@@ -170,6 +175,7 @@ type CreateComponentDraft = {
   nodeType: string;
   childCount: number;
   displayPath: string;
+  preset: CreationPreset;
 };
 
 function rootSize(root: Node): { w: number; h: number } {
@@ -2394,6 +2400,7 @@ export default function App() {
         nodeType: node.type,
         childCount: childCountFor(node),
         displayPath: uniqueComponentName(base, store.components),
+        preset: node.type === "Pressable" ? "button" : node.type === "View" ? "card" : "none",
       });
     },
     [setStatus],
@@ -2411,6 +2418,15 @@ export default function App() {
       const nextStore = useDocumentStore.getState();
       const root = nextStore.roots[draft.rootId];
       const placed = root ? findNode(root, draft.nodeId) : undefined;
+      if (placed?.type === "ComponentInstance") {
+        const definition = nextStore.components[placed.componentId];
+        if (definition) {
+          const enhanced = applyCreationPreset(definition, draft.preset);
+          if (enhanced !== definition) {
+            useDocumentStore.getState().updateComponent(placed.componentId, enhanced);
+          }
+        }
+      }
       setCreateComponentDraft(null);
       if (placed?.type === "ComponentInstance") {
         openComponentForEdit(placed.componentId);
@@ -2512,6 +2528,9 @@ export default function App() {
         componentRegistry,
       )
     : null;
+  const createComponentPresets = createComponentDraft
+    ? supportedCreationPresets(createComponentDraft.nodeType)
+    : [];
 
   return (
     <TooltipProvider>
@@ -2942,6 +2961,40 @@ export default function App() {
                   className="h-8 rounded-sm border border-line bg-chrome-2 px-sm text-sm text-ink transition-colors hover:border-line focus-visible:border-accent-line focus-visible:outline-none"
                 />
               </label>
+              {createComponentPresets.length > 1 && (
+                <div className="flex flex-col gap-xs">
+                  <span className="text-xs font-semibold text-ink-faint">Preset</span>
+                  <div className="grid grid-cols-3 gap-xs">
+                    {createComponentPresets.map((preset) => {
+                      const selected = createComponentDraft.preset === preset;
+                      const label =
+                        preset === "button" ? "Button"
+                        : preset === "card" ? "Card"
+                        : "None";
+                      return (
+                        <button
+                          key={preset}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() =>
+                            setCreateComponentDraft((current) =>
+                              current ? { ...current, preset } : current,
+                            )
+                          }
+                          className={cn(
+                            "h-8 rounded-sm border px-sm text-sm font-medium transition-colors",
+                            selected
+                              ? "border-accent bg-accent-soft text-accent"
+                              : "border-line bg-chrome-2 text-ink-dim hover:bg-raised hover:text-ink",
+                          )}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="rounded-sm border border-line-soft bg-chrome-2 p-sm">
                 <div className="text-xs font-semibold text-ink-faint">Included</div>
                 <div className="mt-xs flex min-w-0 items-center gap-xs text-sm text-ink">
@@ -2958,6 +3011,12 @@ export default function App() {
                 <div>
                   Emits as <span className="font-mono text-ink">{createComponentCodeName}</span>
                 </div>
+                {createComponentDraft.preset === "button" && (
+                  <div>Adds label and disabled props plus default, hover, pressed, and disabled states.</div>
+                )}
+                {createComponentDraft.preset === "card" && (
+                  <div>Adds title, subtitle, and background instance controls when matching layers exist.</div>
+                )}
                 <div>Opens the new definition after creation.</div>
               </div>
             </div>

@@ -467,6 +467,52 @@ test("store: beginning component edit repairs invalid instance roots", () => {
   assert.equal(definition.template.type, "View");
 });
 
+test("store: beginning component edit remaps root prop and variant targets", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots(
+    { frame: createNode("View", { id: "frame" }) },
+    ["frame"],
+    {
+      button: {
+        id: "button",
+        name: "Button",
+        template: createNode("Pressable", {
+          id: "template-root",
+          props: { disabled: false },
+          style: { backgroundColor: "#2563EB" },
+        }),
+        props: [
+          {
+            name: "disabled",
+            valueType: "boolean",
+            default: false,
+            targets: [{ kind: "prop", nodeId: "template-root", path: "disabled" }],
+          },
+        ],
+        variants: [{ name: "state", values: ["default", "disabled"] }],
+        combinations: [
+          {
+            values: { state: "disabled" },
+            overrides: [{ nodeId: "template-root", style: { opacity: 0.5 } }],
+          },
+        ],
+      },
+    },
+  );
+
+  store.beginComponentEdit("button");
+  const definition = useDocumentStore.getState().components.button;
+
+  assert.equal(definition.template.id, "button");
+  assert.deepEqual(definition.props[0].targets, [
+    { kind: "prop", nodeId: "button", path: "disabled" },
+  ]);
+  assert.deepEqual(definition.combinations?.[0].overrides, [
+    { nodeId: "button", style: { opacity: 0.5 } },
+  ]);
+  assert.deepEqual(validateComponentRegistry({ button: definition }), []);
+});
+
 test("store: definition edits preserve overrides; removing a prop drops them", () => {
   const screen = createNode("View", {
     id: "frame",

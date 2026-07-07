@@ -92,17 +92,18 @@ export function ComponentWorkspace({
   }, [editedAt]);
 
   const resetNameDraft = () => setNameDraft(definition.name);
-  const commitNameDraft = () => {
+  const commitNameDraft = (raw = nameDraft) => {
     if (skipNextNameCommitRef.current) {
       skipNextNameCommitRef.current = false;
       return;
     }
-    const next = nameDraft.trim();
+    const next = raw.trim();
     if (!next || next === definition.name) {
       resetNameDraft();
       return;
     }
-    if (!onRename(next)) resetNameDraft();
+    if (onRename(next)) setNameDraft(next);
+    else resetNameDraft();
   };
 
   const tabLabels: ComponentWorkspaceTab[] = ["Canvas", "Usage", "Docs"];
@@ -174,9 +175,12 @@ export function ComponentWorkspace({
               aria-label="Component name"
               value={nameDraft}
               onChange={setNameDraft}
-              onBlur={commitNameDraft}
+              onBlur={(event) => commitNameDraft(event.currentTarget.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Enter") {
+                  commitNameDraft(event.currentTarget.value);
+                  event.currentTarget.blur();
+                }
                 if (event.key === "Escape") {
                   skipNextNameCommitRef.current = true;
                   resetNameDraft();

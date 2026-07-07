@@ -430,6 +430,20 @@ test("the sidecar round-trips the component registry", () => {
   assert.throws(() => parseSidecar(JSON.stringify(bad)), /Invalid .rncanvas.json sidecar/);
 });
 
+test("sidecar parser repairs stale component prop targets", () => {
+  const registry: ComponentRegistry = { card1: cardDefinition() };
+  registry.card1.props.push({
+    name: "disabled",
+    valueType: "boolean",
+    targets: [{ kind: "prop", nodeId: "missing", path: "disabled" }],
+  });
+  const screen = createNode("View", { id: "s", children: [createInstance("card1", { id: "i1" })] });
+  const sidecar = serializeSidecar(buildSidecar(screen, { screenName: "Home", components: registry }));
+  const parsed = parseSidecar(sidecar);
+
+  assert.ok(!parsed.components?.card1.props.some((prop) => prop.name === "disabled"));
+});
+
 import { emitTheme } from "./index";
 import type { TokenRegistry } from "@rn-canvas/document";
 

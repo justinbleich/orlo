@@ -11,6 +11,8 @@
  * emit.ts). Source writers may regenerate or reconcile this metadata as needed.
  */
 import {
+  pruneDefinitionProps,
+  pruneVariants,
   validateComponentRegistry,
   validateTokenRegistry,
   validateTree,
@@ -28,6 +30,17 @@ export interface SidecarDocument {
   components?: ComponentRegistry;
   /** Design tokens referenced by this document (Phase 2D). */
   tokens?: TokenRegistry;
+}
+
+function repairComponentRegistry(registry: ComponentRegistry): ComponentRegistry {
+  let changed = false;
+  const repaired: ComponentRegistry = {};
+  for (const [id, definition] of Object.entries(registry)) {
+    const next = pruneVariants(pruneDefinitionProps(definition));
+    repaired[id] = next;
+    if (next !== definition) changed = true;
+  }
+  return changed ? repaired : registry;
 }
 
 export function buildSidecar(
@@ -65,6 +78,7 @@ export function parseSidecar(json: string): SidecarDocument {
     if (typeof sidecar.components !== "object" || sidecar.components === null) {
       throw new Error("Invalid .rncanvas.json sidecar: components must be an object");
     }
+    sidecar.components = repairComponentRegistry(sidecar.components);
     const regErrors = validateComponentRegistry(sidecar.components);
     if (regErrors.length > 0) {
       const first = regErrors[0];

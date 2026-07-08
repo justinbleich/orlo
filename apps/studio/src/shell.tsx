@@ -270,7 +270,12 @@ export function ToolRail({
   const armedTool = useStudioStore((s) => s.armedTool);
   const armedComponentId = useStudioStore((s) => s.armedComponentId);
   const setArmedTool = useStudioStore((s) => s.setArmedTool);
-  const arm = (type: RNPrimitive) => setArmedTool(armedTool === type ? null : type);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
+  const arm = (type: RNPrimitive) => {
+    const next = armedTool === type ? null : type;
+    setArmedTool(next);
+    setStatus(next ? `${next} — drag to draw · Esc to cancel` : `${type} placement canceled`);
+  };
   const idle = armedTool === null && armedComponentId === null;
 
   const tools: (RailTool & { active?: boolean })[] = [
@@ -374,6 +379,7 @@ function InsertMenu({
   const components = useDocumentStore((s) => s.components);
   const armedComponentId = useStudioStore((s) => s.armedComponentId);
   const setArmedComponent = useStudioStore((s) => s.setArmedComponent);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
   const componentList = Object.values(components);
   const armedInMenu =
     INSERT_ITEMS.some((i) => i.type === armedTool) || armedComponentId !== null;
@@ -419,9 +425,15 @@ function InsertMenu({
                 {componentList.map((comp) => (
                   <Menu.Item
                     key={comp.id}
-                    onClick={() =>
-                      setArmedComponent(comp.id === armedComponentId ? null : comp.id)
-                    }
+                    onClick={() => {
+                      const next = comp.id === armedComponentId ? null : comp.id;
+                      setArmedComponent(next);
+                      setStatus(
+                        next
+                          ? `${comp.name} ready to place. Click or drag on a screen · Esc to cancel`
+                          : `${comp.name} placement canceled`,
+                      );
+                    }}
                     className={cn(
                       "flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
                       comp.id === armedComponentId
@@ -989,7 +1001,7 @@ export function LeftPanel({
                               setArmedComponent(nextArmed);
                               setStatus(
                                 nextArmed
-                                  ? `${comp.name} ready to place. Click or drag on a screen.`
+                                  ? `${comp.name} ready to place. Click or drag on a screen · Esc to cancel`
                                   : `${comp.name} placement canceled`,
                               );
                               if (nextArmed) onWorkspaceChange("Screen");

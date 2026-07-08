@@ -118,6 +118,13 @@
         "componentId": "32e5899e-bdd9-4a45-a110-90e5ae5f695c",
         "overrides": {},
         "style": {}
+      },
+      {
+        "id": "02d1a341-2924-4f8a-8807-1b908086d53c",
+        "type": "ComponentInstance",
+        "componentId": "5888ec6b-6f92-435c-9431-15a08422ec12",
+        "overrides": {},
+        "style": {}
       }
     ]
   },
@@ -294,6 +301,123 @@
         }
       },
       "props": []
+    },
+    "5888ec6b-6f92-435c-9431-15a08422ec12": {
+      "id": "5888ec6b-6f92-435c-9431-15a08422ec12",
+      "name": "ButtonQuaternary",
+      "template": {
+        "id": "5888ec6b-6f92-435c-9431-15a08422ec12",
+        "props": {},
+        "style": {
+          "borderRadius": 8,
+          "minHeight": 44,
+          "padding": 12,
+          "alignItems": "center",
+          "justifyContent": "center",
+          "width": 100,
+          "height": 40,
+          "paddingHorizontal": 12,
+          "paddingVertical": 8,
+          "borderWidth": 0,
+          "borderColor": "#CBD5E1",
+          "backgroundColor": "#2563EB"
+        },
+        "type": "Pressable",
+        "children": [
+          {
+            "id": "5538e80d-f3df-4fdf-9513-3de5df04ceb7",
+            "props": {
+              "text": "Pressable"
+            },
+            "style": {
+              "fontWeight": "600",
+              "textAlign": "center",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "color": "#FFFFFF"
+            },
+            "type": "Text"
+          }
+        ]
+      },
+      "props": [
+        {
+          "name": "label",
+          "valueType": "string",
+          "default": "Pressable",
+          "targets": [
+            {
+              "kind": "prop",
+              "nodeId": "5538e80d-f3df-4fdf-9513-3de5df04ceb7",
+              "path": "text"
+            }
+          ]
+        },
+        {
+          "name": "disabled",
+          "valueType": "boolean",
+          "default": false,
+          "targets": [
+            {
+              "kind": "prop",
+              "nodeId": "5888ec6b-6f92-435c-9431-15a08422ec12",
+              "path": "disabled"
+            }
+          ]
+        }
+      ],
+      "variants": [
+        {
+          "name": "state",
+          "values": [
+            "default",
+            "hover",
+            "pressed",
+            "disabled"
+          ]
+        }
+      ],
+      "combinations": [
+        {
+          "values": {
+            "state": "hover"
+          },
+          "overrides": [
+            {
+              "nodeId": "5888ec6b-6f92-435c-9431-15a08422ec12",
+              "style": {
+                "backgroundColor": "#2159d4"
+              }
+            }
+          ]
+        },
+        {
+          "values": {
+            "state": "pressed"
+          },
+          "overrides": [
+            {
+              "nodeId": "5888ec6b-6f92-435c-9431-15a08422ec12",
+              "style": {
+                "backgroundColor": "#1d4db7"
+              }
+            }
+          ]
+        },
+        {
+          "values": {
+            "state": "disabled"
+          },
+          "overrides": [
+            {
+              "nodeId": "5888ec6b-6f92-435c-9431-15a08422ec12",
+              "style": {
+                "opacity": 0.5
+              }
+            }
+          ]
+        }
+      ]
     }
   },
   "tokens": {

@@ -1,11 +1,15 @@
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, StyleSheet, View } from "react-native";
+import { AddTask } from "./components/AddTask";
+import { ButtonPrimary2 } from "./components/ButtonPrimary2";
+import { ButtonSecondary } from "./components/ButtonSecondary";
+import { CardTask } from "./components/CardTask";
 import { PressableComponent } from "./components/PressableComponent";
 import { TextComponent } from "./components/TextComponent";
 import { theme } from "./theme";
 export default function Screen() {
   return <View style={styles.view}><Image style={styles.image} source={{
       uri: ""
-    }} resizeMode={"cover"} /><Pressable style={styles.pressable}><Text style={styles.text}>Start planning</Text></Pressable><TextComponent /><PressableComponent /></View>;
+    }} resizeMode={"cover"} /><ButtonPrimary2 /><TextComponent /><CardTask /><AddTask /><ButtonSecondary /><PressableComponent /></View>;
 }
 const styles = StyleSheet.create({
   view: {
@@ -23,22 +27,5 @@ const styles = StyleSheet.create({
     alignSelf: "stretch",
     borderRadius: theme.spacing.space1,
     backgroundColor: theme.color.canvas
-  },
-  pressable: {
-    width: 295,
-    height: 56,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 16,
-    backgroundColor: "#2563EB",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  text: {
-    fontFamily: "Inter",
-    fontSize: 15,
-    color: "#FFFFFF",
-    fontWeight: "600",
-    textAlign: "center"
   }
 });

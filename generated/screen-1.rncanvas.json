@@ -161,6 +161,201 @@
           ]
         }
       ]
+    },
+    "32e5899e-bdd9-4a45-a110-90e5ae5f695c": {
+      "id": "32e5899e-bdd9-4a45-a110-90e5ae5f695c",
+      "name": "TaskCard",
+      "template": {
+        "id": "32e5899e-bdd9-4a45-a110-90e5ae5f695c",
+        "props": {},
+        "style": {
+          "width": 287,
+          "height": 147,
+          "backgroundColor": "#F8FAFC",
+          "borderWidth": 1,
+          "borderRadius": 16,
+          "borderColor": "#E2E8F0"
+        },
+        "type": "View",
+        "children": [],
+        "design": {
+          "name": "Task card"
+        }
+      },
+      "props": []
+    },
+    "f86b37a8-fae1-44e0-9e79-30f12263a1e6": {
+      "id": "f86b37a8-fae1-44e0-9e79-30f12263a1e6",
+      "name": "ButtonPrimary",
+      "template": {
+        "id": "f86b37a8-fae1-44e0-9e79-30f12263a1e6",
+        "props": {},
+        "style": {
+          "width": 295,
+          "height": 56,
+          "backgroundColor": "#2563EB",
+          "borderRadius": 16
+        },
+        "type": "Pressable",
+        "children": [],
+        "design": {
+          "name": "Button.Primary"
+        }
+      },
+      "props": []
+    },
+    "ffbfddaf-c238-4f75-8755-3a70fa7a2b6b": {
+      "id": "ffbfddaf-c238-4f75-8755-3a70fa7a2b6b",
+      "name": "ButtonPrimary2",
+      "template": {
+        "id": "ffbfddaf-c238-4f75-8755-3a70fa7a2b6b",
+        "props": {},
+        "style": {
+          "width": 295,
+          "height": 56,
+          "paddingHorizontal": 16,
+          "paddingVertical": 10,
+          "borderRadius": 16,
+          "backgroundColor": "#2563EB",
+          "alignItems": "center",
+          "justifyContent": "center"
+        },
+        "type": "Pressable",
+        "children": [
+          {
+            "id": "b583f7b5-3f88-4c16-9273-10b9d08afbf1",
+            "props": {
+              "text": "Start planning"
+            },
+            "style": {
+              "fontFamily": "Inter",
+              "fontSize": 15,
+              "color": "#FFFFFF",
+              "fontWeight": "600",
+              "textAlign": "center"
+            },
+            "type": "Text"
+          }
+        ]
+      },
+      "props": []
+    },
+    "470d961f-92fe-4dea-b66c-08524ee332ea": {
+      "id": "470d961f-92fe-4dea-b66c-08524ee332ea",
+      "name": "ButtonSecondary",
+      "template": {
+        "id": "470d961f-92fe-4dea-b66c-08524ee332ea",
+        "props": {},
+        "style": {
+          "backgroundColor": "#FFFFFF",
+          "borderRadius": 8,
+          "minHeight": 44,
+          "padding": 12,
+          "alignItems": "center",
+          "justifyContent": "center",
+          "width": 100,
+          "height": 40,
+          "paddingHorizontal": 12,
+          "paddingVertical": 8,
+          "borderWidth": 1,
+          "borderColor": "#CBD5E1"
+        },
+        "type": "Pressable",
+        "children": [
+          {
+            "id": "3534d6fe-ee88-4919-bd01-3e2b7f5be50b",
+            "props": {
+              "text": "Pressable"
+            },
+            "style": {
+              "fontWeight": "600",
+              "textAlign": "center",
+              "fontFamily": "Inter",
+              "fontSize": 14,
+              "color": "#FFFFFF"
+            },
+            "type": "Text"
+          }
+        ]
+      },
+      "props": [
+        {
+          "name": "label",
+          "valueType": "string",
+          "default": "Pressable",
+          "targets": [
+            {
+              "kind": "prop",
+              "nodeId": "3534d6fe-ee88-4919-bd01-3e2b7f5be50b",
+              "path": "text"
+            }
+          ]
+        },
+        {
+          "name": "disabled",
+          "valueType": "boolean",
+          "default": false,
+          "targets": [
+            {
+              "kind": "prop",
+              "nodeId": "b4744fe4-01bd-474f-b4ee-2f2a15f78ef9",
+              "path": "disabled"
+            }
+          ]
+        }
+      ],
+      "variants": [
+        {
+          "name": "state",
+          "values": [
+            "default",
+            "hover",
+            "pressed",
+            "disabled"
+          ]
+        }
+      ],
+      "combinations": [
+        {
+          "values": {
+            "state": "hover"
+          },
+          "overrides": [
+            {
+              "nodeId": "b4744fe4-01bd-474f-b4ee-2f2a15f78ef9",
+              "style": {
+                "backgroundColor": "#e6e6e6"
+              }
+            }
+          ]
+        },
+        {
+          "values": {
+            "state": "pressed"
+          },
+          "overrides": [
+            {
+              "nodeId": "b4744fe4-01bd-474f-b4ee-2f2a15f78ef9",
+              "style": {
+                "backgroundColor": "#c7c7c7"
+              }
+            }
+          ]
+        },
+        {
+          "values": {
+            "state": "disabled"
+          },
+          "overrides": [
+            {
+              "nodeId": "b4744fe4-01bd-474f-b4ee-2f2a15f78ef9",
+              "style": {
+                "opacity": 0.5
+              }
+            }
+          ]
+        }
+      ]
     }
   },
   "tokens": {

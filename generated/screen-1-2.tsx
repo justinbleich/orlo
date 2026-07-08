@@ -1,8 +1,9 @@
 import { StyleSheet, Text, View } from "react-native";
 import { ButtonPrimary } from "./components/ButtonPrimary";
+import { ButtonQuaternary } from "./components/ButtonQuaternary";
 import { TaskCard } from "./components/TaskCard";
 export default function Screen1() {
-  return <View style={styles.view}><Text style={styles.text}>Focus Planner</Text><Text style={styles.text2}>Today</Text><TaskCard /><ButtonPrimary /><Text style={styles.text3}>Text</Text><View style={styles.view2}><Text style={styles.text4}>2 tasks dueText2 tasks due</Text></View><TaskCard /><ButtonPrimary /><TaskCard /></View>;
+  return <View style={styles.view}><Text style={styles.text}>Focus Planner</Text><Text style={styles.text2}>Today</Text><TaskCard /><ButtonPrimary /><Text style={styles.text3}>Text</Text><View style={styles.view2}><Text style={styles.text4}>2 tasks dueText2 tasks due</Text></View><TaskCard /><ButtonPrimary /><TaskCard /><ButtonQuaternary /></View>;
 }
 const styles = StyleSheet.create({
   view: {

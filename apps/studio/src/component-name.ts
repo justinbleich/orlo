@@ -17,8 +17,10 @@ export function toComponentFileName(name: string): string {
 
 export function toComponentDisplayPath(input: string, fallback = "Component"): string {
   const raw = input.trim() || fallback;
+  // Slash is the designer-facing separator (Figma convention: Button/Primary);
+  // dot is the stored form the Components panel groups by.
   const segments = raw
-    .split(".")
+    .split(/[./]/)
     .map((part) => {
       const pascal = toPascalName(part);
       return /^[A-Z]/.test(pascal) ? pascal : pascal ? `C${pascal}` : "";

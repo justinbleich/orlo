@@ -1224,7 +1224,6 @@ export default function App() {
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
   const repoComponentHydratedRef = useRef<Set<string>>(new Set());
   const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
-  const componentEditOpenedAtRef = useRef<{ id: NodeId; at: number } | null>(null);
 
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
@@ -1284,7 +1283,9 @@ export default function App() {
   const componentRegistry = useDocumentStore((s) => s.components);
   const updateComponent = useDocumentStore((s) => s.updateComponent);
   const getComponentUsage = useDocumentStore((s) => s.getComponentUsage);
-  const componentEditedAt = useStudioStore((s) => s.componentEditedAt);
+  const componentEditDirty = useDocumentStore((s) =>
+    s.editingComponentId ? s.componentEditIsDirty() : false,
+  );
   const tokens = useDocumentStore((s) => s.tokens);
   const editingComponentDefinition = editingComponentId
     ? componentRegistry[editingComponentId]
@@ -1610,13 +1611,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!editingComponentId) {
-      componentEditOpenedAtRef.current = null;
-      return;
-    }
-    if (componentEditOpenedAtRef.current?.id !== editingComponentId) {
-      componentEditOpenedAtRef.current = { id: editingComponentId, at: Date.now() };
-    }
+    if (!editingComponentId) return;
     setWorkspace("Component");
     setComponentWorkspaceTab("Canvas");
     setInspectorTab("Design");
@@ -2339,9 +2334,7 @@ export default function App() {
       }
       if (currentId) {
         const currentName = store.components[currentId]?.name ?? "current component";
-        const opened = componentEditOpenedAtRef.current;
-        const editedAt = componentEditedAt[currentId] ?? 0;
-        const hasUserEdits = !!opened && opened.id === currentId && editedAt > opened.at;
+        const hasUserEdits = store.componentEditIsDirty();
         if (!hasUserEdits) {
           try {
             store.endComponentEdit(true);
@@ -2373,7 +2366,7 @@ export default function App() {
         setStatus(error instanceof Error ? error.message : "Component edit failed");
       }
     },
-    [componentEditedAt, setStatus],
+    [setStatus],
   );
 
   const switchComponentForEdit = useCallback(
@@ -2675,6 +2668,7 @@ export default function App() {
           ) : isComponentWorkspace ? (
             <ComponentWorkspace
               definition={editingComponentDefinition}
+              dirty={componentEditDirty}
               roots={roots}
               components={componentRegistry}
               usage={componentUsage}

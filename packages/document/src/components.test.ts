@@ -780,6 +780,33 @@ test("addVariantAxis preserves existing overrides by replicating combinations", 
   }
 });
 
+test("componentEditIsDirty is diff-based against the post-seed baseline", () => {
+  const store = useDocumentStore.getState();
+  // an empty Pressable gets seeded content on open — still clean vs baseline
+  const root = createNode("View", { id: "frame", children: [
+    createNode("Pressable", { id: "btn", style: { width: 100, height: 40 } }),
+  ] });
+  store.loadRoots({ frame: root }, ["btn"]);
+  store.promoteToComponent("frame", "btn", "SeededButton");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+
+  store.beginComponentEdit(cid);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+
+  // a real edit reads dirty; undoing back to the baseline reads clean again
+  useDocumentStore.getState().updateStyle(cid, cid, { width: 320 });
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), true);
+  useDocumentStore.getState().undo();
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+
+  // discard, reopen: the reverted definition is the new baseline — clean
+  useDocumentStore.getState().updateStyle(cid, cid, { width: 320 });
+  useDocumentStore.getState().endComponentEdit(false);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+  useDocumentStore.getState().beginComponentEdit(cid);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+});
+
 test("a draft axis gaining its first value annotates existing combinations", () => {
   const store = useDocumentStore.getState();
   const root = createNode("View", { id: "frame", children: [

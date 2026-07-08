@@ -1,14 +1,20 @@
 import {
+  canHaveChildren,
   createNode,
   findNode,
   findRootContaining,
+  presetProp,
   useDocumentStore,
   type AnyProps,
   type DesignMeta,
+  type Node,
+  type RNPrimitive,
 } from "@rn-canvas/document";
+import { RN_PRIMITIVES } from "@rn-canvas/document";
 import type { RNStyle } from "@rn-canvas/styles";
 import { toPng } from "html-to-image";
 import type { BrowserCommandHandler } from "./mcp-bridge";
+import { useWorkspaceStore } from "./workspace-store";
 
 type CommandPayload = Record<string, unknown>;
 
@@ -62,6 +68,38 @@ async function waitForFrameSurface(rootId: string): Promise<HTMLElement> {
   }
   if (!surface) throw new Error(`Canvas frame is not mounted: ${rootId}`);
   return surface;
+}
+
+interface NodeSpec {
+  type: string;
+  props?: Record<string, unknown>;
+  style?: Record<string, unknown>;
+  design?: Record<string, unknown>;
+  children?: NodeSpec[];
+}
+
+/** Build a validated primitive subtree from a declarative spec (recursive). */
+function buildNodeFromSpec(spec: NodeSpec): Node {
+  if (!spec || typeof spec !== "object") throw new Error("node spec must be an object");
+  if (!(RN_PRIMITIVES as readonly string[]).includes(spec.type)) {
+    throw new Error(
+      `Unknown primitive "${spec.type}" — expected one of: ${RN_PRIMITIVES.join(", ")}`,
+    );
+  }
+  const type = spec.type as RNPrimitive;
+  const node = createNode(type, {
+    props: spec.props as Partial<AnyProps> | undefined,
+    style: spec.style as Partial<RNStyle> | undefined,
+    design: spec.design as Partial<DesignMeta> | undefined,
+  });
+  const childSpecs = spec.children ?? [];
+  if (childSpecs.length > 0) {
+    if (!canHaveChildren(type)) {
+      throw new Error(`${type} cannot have children`);
+    }
+    (node as Node & { children: Node[] }).children = childSpecs.map(buildNodeFromSpec);
+  }
+  return node;
 }
 
 /** Execute MCP commands only through the canonical, validated document store. */
@@ -133,6 +171,133 @@ export const handleMcpCommand: BrowserCommandHandler = async (command) => {
         .getState()
         .updateStyle(rootId, nodeId, payload.style as Partial<RNStyle>);
       return useDocumentStore.getState().roots[rootId];
+    }
+
+    case "insert_node": {
+      const rootId = requiredString(payload, "rootId");
+      const parentId = requiredString(payload, "parentId");
+      const root = useDocumentStore.getState().roots[rootId];
+      if (!root) throw new Error(`Root not found: ${rootId}`);
+      const parent = findNode(root, parentId);
+      if (!parent) throw new Error(`Parent not found: ${parentId}`);
+      if (!canHaveChildren(parent.type)) {
+        throw new Error(`${parent.type} cannot have children`);
+      }
+      const node = buildNodeFromSpec(payload.node as NodeSpec);
+      const index = payload.index === undefined ? undefined : Number(payload.index);
+      useDocumentStore.getState().insertChild(rootId, parentId, node, index);
+      // Return the inserted subtree — its generated ids are the agent's handles
+      // for follow-up set_style/update_node calls.
+      return node;
+    }
+
+    case "remove_node": {
+      const { rootId, nodeId } = rootAndNode(payload);
+      useDocumentStore.getState().removeNode(rootId, nodeId);
+      return { rootId, nodeId };
+    }
+
+    case "create_screen": {
+      const root = await useWorkspaceStore.getState().createRepoScreen();
+      if (!root) throw new Error("Screen creation is busy — retry after the current sync");
+      const workspace = useWorkspaceStore.getState();
+      const active = workspace.activeRepoScreen;
+      return {
+        rootId: root.id,
+        screenName: active?.screenName ?? workspace.screenName,
+        path: active?.path ?? workspace.targetPath,
+        sidecarPath: active?.sidecarPath ?? workspace.sidecarPath,
+      };
+    }
+
+    case "rename_screen": {
+      const rootId = requiredString(payload, "rootId");
+      const name = requiredString(payload, "name");
+      if (!useDocumentStore.getState().roots[rootId]) {
+        throw new Error(`Root not found: ${rootId}`);
+      }
+      useWorkspaceStore.getState().renameRepoScreen(rootId, name);
+      const workspace = useWorkspaceStore.getState();
+      const screen = Object.values(workspace.loadedRepoScreens).find(
+        (entry) => entry.rootId === rootId,
+      );
+      return { rootId, screenName: screen?.screenName ?? name, path: screen?.path };
+    }
+
+    case "create_component": {
+      const { rootId, nodeId } = rootAndNode(payload);
+      const name = requiredString(payload, "name");
+      useDocumentStore.getState().promoteToComponent(rootId, nodeId, name);
+      const state = useDocumentStore.getState();
+      const definition = Object.values(state.components).find(
+        (component) => component.name === name,
+      );
+      if (!definition) throw new Error(`Component not created: ${name}`);
+      // Optional prop exposure: [{ name, kind: text|color|visibility|slot, nodeId, styleKey? }].
+      // Template clones keep the source subtree's node ids, so the ids returned
+      // by insert_node remain valid targets here.
+      const propSpecs = payload.props as
+        | { name: string; kind: "text" | "color" | "visibility" | "slot"; nodeId: string; styleKey?: "color" | "backgroundColor" }[]
+        | undefined;
+      if (propSpecs && propSpecs.length > 0) {
+        const props = propSpecs.map((spec) =>
+          presetProp(spec.name, spec.kind, spec.nodeId, spec.styleKey ?? "color"),
+        );
+        useDocumentStore.getState().updateComponent(definition.id, {
+          props: [...definition.props, ...props],
+        });
+      }
+      const updated = useDocumentStore.getState().components[definition.id];
+      return {
+        componentId: definition.id,
+        instanceId: nodeId,
+        name: updated.name,
+        props: updated.props.map((prop) => ({ name: prop.name, valueType: prop.valueType })),
+      };
+    }
+
+    case "set_instance": {
+      const rootId = requiredString(payload, "rootId");
+      const instanceId = requiredString(payload, "instanceId");
+      const store = useDocumentStore.getState();
+      if (!store.roots[rootId]) throw new Error(`Root not found: ${rootId}`);
+      const overrides = payload.overrides as Record<string, unknown> | undefined;
+      const variant = payload.variant as Record<string, string> | undefined;
+      if (!overrides && !variant) {
+        throw new Error("set_instance requires overrides and/or variant");
+      }
+      return transact(() => {
+        for (const [name, value] of Object.entries(overrides ?? {})) {
+          useDocumentStore
+            .getState()
+            .setInstanceOverride(rootId, instanceId, name, value as never);
+        }
+        for (const [axis, value] of Object.entries(variant ?? {})) {
+          useDocumentStore.getState().setInstanceVariant(rootId, instanceId, axis, value);
+        }
+        const root = useDocumentStore.getState().roots[rootId];
+        return findNode(root, instanceId);
+      });
+    }
+
+    case "place_instance": {
+      const rootId = requiredString(payload, "rootId");
+      const parentId = requiredString(payload, "parentId");
+      const componentId = requiredString(payload, "componentId");
+      const state = useDocumentStore.getState();
+      if (!state.roots[rootId]) throw new Error(`Root not found: ${rootId}`);
+      if (!state.components[componentId]) {
+        throw new Error(`Component not found: ${componentId}`);
+      }
+      const index = payload.index === undefined ? undefined : Number(payload.index);
+      state.placeInstance(rootId, parentId, componentId, index);
+      const root = useDocumentStore.getState().roots[rootId];
+      const parent = findNode(root, parentId);
+      const children = parent && canHaveChildren(parent.type)
+        ? (parent as Node & { children: Node[] }).children
+        : [];
+      const placed = index === undefined ? children[children.length - 1] : children[index];
+      return { instanceId: placed?.id, componentId };
     }
 
     case "get_canvas_screenshot": {

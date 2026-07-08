@@ -453,6 +453,34 @@ export function pruneVariants(definition: ComponentDefinition): ComponentDefinit
 }
 
 /**
+ * Behavior-preserving migration for when an axis becomes matchable — added with
+ * seeded values, or a draft axis gaining its first value. Combinations are
+ * full-keyed (pruneVariants drops any that don't reference every axis), so without
+ * migration a new axis silently orphans every existing combination. Instead,
+ * each combination that doesn't yet reference the axis is replicated across the
+ * axis's values: overrides authored before the axis keep applying at every value,
+ * and the designer diverges individual cells from there.
+ */
+export function migrateCombinationsForAxis(
+  definition: ComponentDefinition,
+  axisName: string,
+): ComponentDefinition {
+  const axis = (definition.variants ?? []).find((a) => a.name === axisName);
+  const combinations = definition.combinations ?? [];
+  if (!axis || axis.values.length === 0 || combinations.length === 0) return definition;
+  let changed = false;
+  const next = combinations.flatMap((combo) => {
+    if (combo.values[axisName] !== undefined) return [combo];
+    changed = true;
+    return axis.values.map((value) => ({
+      values: { ...combo.values, [axisName]: value },
+      overrides: clone(combo.overrides),
+    }));
+  });
+  return changed ? { ...definition, combinations: next } : definition;
+}
+
+/**
  * Set or clear a node's per-combination style/visibility override (authoring).
  * `values` is a full cell (a value per axis). A style value of `undefined` clears
  * that key; `hidden: null` clears the flag. Empty overrides and empty combinations

@@ -34,6 +34,7 @@ import {
 import { validateTree } from "./validate";
 import {
   createInstance,
+  migrateCombinationsForAxis,
   promoteToComponent as promoteOp,
   pruneDefinitionProps,
   pruneVariants,
@@ -607,7 +608,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       // Seeded values (from a preset) make this a ready axis in one step; an
       // empty list is a draft — its first added value becomes the base/default.
       const variants = [...(def.variants ?? []), { name, values }];
-      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+      // Replicate existing combinations across the new axis before commitRegistry's
+      // pruneVariants runs, so prior overrides survive the full-key invariant.
+      const next = migrateCombinationsForAxis({ ...def, variants }, name);
+      commitRegistry({ ...components, [componentId]: next }, roots);
     },
     removeVariantAxis: (componentId, name) => {
       const { components, roots } = get();
@@ -621,10 +625,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       const { components, roots } = get();
       const def = components[componentId];
       if (!def) throw new Error(`Component not found: ${componentId}`);
+      const wasDraft =
+        (def.variants ?? []).find((axis) => axis.name === axisName)?.values.length === 0;
       const variants = (def.variants ?? []).map((axis) =>
         axis.name === axisName ? { ...axis, values: [...axis.values, value] } : axis,
       );
-      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+      // A draft axis gaining its first value starts counting toward the full-key
+      // invariant — annotate existing combinations so they aren't pruned.
+      const next = wasDraft
+        ? migrateCombinationsForAxis({ ...def, variants }, axisName)
+        : { ...def, variants };
+      commitRegistry({ ...components, [componentId]: next }, roots);
     },
     removeVariantValue: (componentId, axisName, value) => {
       const { components, roots } = get();

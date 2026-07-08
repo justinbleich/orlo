@@ -908,7 +908,7 @@ export function simScreenshotPlugin(): Plugin {
     { res: import("node:http").ServerResponse; timeout: ReturnType<typeof setTimeout> }
   >();
   let nextCommandId = 1;
-  let activeClient: { id: string; lastSeen: number } | null = null;
+  let activeClient: { id: string; lastSeen: number; bootTs: number } | null = null;
   // The active client's parked long-poll, when its queue was empty. Held open for
   // LONG_POLL_MS so an idle bridge costs ~2 requests a minute instead of 10/s.
   let commandWaiter: {
@@ -1436,6 +1436,9 @@ export function simScreenshotPlugin(): Plugin {
             repoPath: activeRepoRoot,
             browserBridgeActive: active,
             browserBridgeLastSeenMs: activeClient ? now - activeClient.lastSeen : null,
+            browserBridgeClient: activeClient
+              ? { id: activeClient.id, bootTs: activeClient.bootTs }
+              : null,
             queuedCommands: commandQueue.length,
             pendingCommands: pending.size,
             git: await readGitStatus(),
@@ -1466,10 +1469,20 @@ export function simScreenshotPlugin(): Plugin {
           return;
         }
         const now = Date.now();
-        // Never take over while the active client has a poll parked — a stale
-        // lastSeen during a long-poll doesn't mean the client went away.
-        if (!commandWaiter && (!activeClient || now - activeClient.lastSeen > 2_000)) {
-          activeClient = { id: clientId, lastSeen: now };
+        const bootTs = Number(
+          new URL(req.url ?? "", "http://localhost").searchParams.get("bootTs") ?? 0,
+        );
+        // Takeover rules: adopt the caller when there is no live active client
+        // (no parked poll and lastSeen stale), or when the caller booted more
+        // recently — the newest Studio page wins, so a stale/hidden tab can't
+        // hold the bridge and execute commands against a document nobody sees.
+        const activeIsLive = commandWaiter !== null || (activeClient && now - activeClient.lastSeen <= 2_000);
+        const callerIsNewer = !!activeClient && bootTs > activeClient.bootTs;
+        if (activeClient?.id !== clientId && (!activeIsLive || callerIsNewer)) {
+          // Release the superseded client's parked poll so it re-enters the
+          // loop and starts receiving its 204 back-off responses.
+          resolveCommandWaiter(null);
+          activeClient = { id: clientId, lastSeen: now, bootTs };
         }
         if (activeClient?.id !== clientId) {
           // A non-active client (e.g. a second tab): answer 204 after a beat so

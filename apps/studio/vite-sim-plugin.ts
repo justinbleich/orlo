@@ -1472,13 +1472,13 @@ export function simScreenshotPlugin(): Plugin {
         const bootTs = Number(
           new URL(req.url ?? "", "http://localhost").searchParams.get("bootTs") ?? 0,
         );
-        // Takeover rules: adopt the caller when there is no live active client
-        // (no parked poll and lastSeen stale), or when the caller booted more
-        // recently — the newest Studio page wins, so a stale/hidden tab can't
-        // hold the bridge and execute commands against a document nobody sees.
-        const activeIsLive = commandWaiter !== null || (activeClient && now - activeClient.lastSeen <= 2_000);
-        const callerIsNewer = !!activeClient && bootTs > activeClient.bootTs;
-        if (activeClient?.id !== clientId && (!activeIsLive || callerIsNewer)) {
+        // Takeover rule: the newest Studio page boot wins, full stop. Staleness
+        // must not flip ownership — a client stops polling while it executes a
+        // long command, and a staleness rule hands the bridge to another tab
+        // mid-batch. A dead newest page is displaced by the next page load
+        // (which is, by definition, newer).
+        const callerIsNewer = !activeClient || bootTs > activeClient.bootTs;
+        if (activeClient?.id !== clientId && callerIsNewer) {
           // Release the superseded client's parked poll so it re-enters the
           // loop and starts receiving its 204 back-off responses.
           resolveCommandWaiter(null);

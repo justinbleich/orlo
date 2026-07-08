@@ -148,11 +148,22 @@ export const handleMcpCommand: BrowserCommandHandler = async (command) => {
       const canvasColor = getComputedStyle(document.documentElement)
         .getPropertyValue("--canvas")
         .trim();
-      const dataUrl = await toPng(surface, {
-        backgroundColor: canvasColor,
-        cacheBust: true,
-        pixelRatio: 1,
-      });
+      // toPng can stall without rejecting (blocked font/resource fetches,
+      // throttled rasterization). Fail fast with a diagnosable error instead of
+      // holding the bridge until the transport timeout.
+      const dataUrl = await Promise.race([
+        toPng(surface, {
+          backgroundColor: canvasColor,
+          cacheBust: true,
+          pixelRatio: 1,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Canvas screenshot capture timed out for ${root.id}`)),
+            10_000,
+          ),
+        ),
+      ]);
       if (!dataUrl.startsWith("data:image/png;base64,")) {
         throw new Error(
           `Canvas screenshot capture returned unexpected data URL for ${root.id}`,

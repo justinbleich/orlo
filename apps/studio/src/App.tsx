@@ -1551,6 +1551,24 @@ export default function App() {
     syncShapes(editor);
     if (store.selection.length === 0) store.setSelection(Object.keys(store.roots).slice(0, 1));
 
+    // Workspace switches (Screen ↔ Component) remount Tldraw, so a focus queued
+    // by the enter/exit effects ran against the disposed editor. Consume it here,
+    // where the new editor and its shapes actually exist.
+    // Deferred a frame so StrictMode's probe mount (torn down before it paints)
+    // can't consume the focus — only the editor that survives gets to run it.
+    const pendingFocus = pendingFocusRootIdRef.current;
+    if (pendingFocus) {
+      requestAnimationFrame(() => {
+        if (editorRef.current !== editor) return;
+        if (
+          pendingFocusRootIdRef.current === pendingFocus &&
+          focusRootFrame(editor, pendingFocus, false)
+        ) {
+          pendingFocusRootIdRef.current = null;
+        }
+      });
+    }
+
     // Canvas → store: selecting a frame selects its root node (unless the current
     // selection already lives in that frame, e.g. a child node is selected).
     editor.store.listen(
@@ -1574,6 +1592,13 @@ export default function App() {
       { scope: "session" },
     );
 
+    // Workspace switches (Screen ↔ Component) unmount this Tldraw instance and
+    // mount a fresh one. Null the ref on teardown so effects in the switch
+    // commit can't run camera work (and consume pendingFocusRootIdRef) against
+    // the dying editor — the next instance's onMount picks the focus up instead.
+    return () => {
+      if (editorRef.current === editor) editorRef.current = null;
+    };
   }, []);
 
   // First-run bootstrap: scaffold a starter screen only when the *repo* has no
@@ -1620,6 +1645,28 @@ export default function App() {
     const editor = editorRef.current;
     if (editor) focusRootFrame(editor, editingComponentId);
   }, [editingComponentId, workspace]);
+
+  // Symmetric exit: entering focus mode pans to the component frame (above), so
+  // leaving it must pan back — otherwise the camera strands on the empty region
+  // where the transient template frame used to be.
+  const prevEditingComponentIdRef = useRef<NodeId | null>(null);
+  useEffect(() => {
+    const prev = prevEditingComponentIdRef.current;
+    prevEditingComponentIdRef.current = editingComponentId;
+    if (!prev || editingComponentId) return;
+    const store = useDocumentStore.getState();
+    const selected = store.selection[0];
+    const rootId = selected
+      ? store.roots[selected]
+        ? selected
+        : findRootContaining(Object.values(store.roots), selected)?.id
+      : undefined;
+    const target = rootId ?? Object.keys(store.roots)[0];
+    if (!target) return;
+    pendingFocusRootIdRef.current = target;
+    const editor = editorRef.current;
+    if (editor) focusRootFrame(editor, target);
+  }, [editingComponentId]);
 
   const createToken = useCallback((category: "color" | "spacing" | "fontSize") => {
     const state = useDocumentStore.getState();

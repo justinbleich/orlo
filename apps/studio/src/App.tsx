@@ -1255,6 +1255,12 @@ export default function App() {
     componentName: string;
     currentName: string;
   } | null>(null);
+  // Dirty component edit blocking a navigation out of focus mode (workspace
+  // change, screen open); `resume` continues the navigation after save/discard.
+  const [pendingComponentExit, setPendingComponentExit] = useState<{
+    componentName: string;
+    resume: () => void;
+  } | null>(null);
   const [createComponentDraft, setCreateComponentDraft] =
     useState<CreateComponentDraft | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
@@ -1653,16 +1659,21 @@ export default function App() {
     editorRef.current?.clearHistory();
   }, []);
 
+  // Enter focus mode only when an edit session starts — re-running on every
+  // workspace change would snap navigation (Flows, Design System) straight
+  // back to Component, trapping the user in edit mode.
+  const enteredEditingComponentIdRef = useRef<NodeId | null>(null);
   useEffect(() => {
-    if (!editingComponentId) return;
+    const prev = enteredEditingComponentIdRef.current;
+    enteredEditingComponentIdRef.current = editingComponentId;
+    if (!editingComponentId || editingComponentId === prev) return;
     setWorkspace("Component");
     setComponentWorkspaceTab("Canvas");
     setInspectorTab("Design");
-    if (workspace === "Flow" || workspace === "Design System") return;
     pendingFocusRootIdRef.current = editingComponentId;
     const editor = editorRef.current;
     if (editor) focusRootFrame(editor, editingComponentId);
-  }, [editingComponentId, workspace]);
+  }, [editingComponentId]);
 
   // Symmetric exit: entering focus mode pans to the component frame (above), so
   // leaving it must pan back — otherwise the camera strands on the empty region
@@ -2540,16 +2551,71 @@ export default function App() {
     setStatus("Repository settings");
   }, []);
 
-  const openRepoScreen = useCallback(
-    (screen: NonNullable<RepoContext>["screens"][number]) => {
-      setWorkspace("Screen");
-      if (screen.sidecarPath) {
-        void openSidecar(screen.sidecarPath, "merge");
+  /**
+   * Gate a navigation out of component focus mode behind the same contract as
+   * component switching: no session → proceed; clean session → save silently
+   * and proceed; dirty session → confirm (save/discard/cancel), then proceed.
+   */
+  const guardComponentEdit = useCallback(
+    (resume: () => void) => {
+      const store = useDocumentStore.getState();
+      const editingId = store.editingComponentId;
+      if (!editingId) {
+        resume();
         return;
       }
-      void importSource(screen.path, "merge");
+      if (!store.componentEditIsDirty()) {
+        store.endComponentEdit(true);
+        resume();
+        return;
+      }
+      const componentName = store.components[editingId]?.name ?? "component";
+      setPendingComponentExit({ componentName, resume });
+      setStatus(`Save or discard ${componentName} edits to continue`);
     },
-    [importSource, openSidecar],
+    [setStatus],
+  );
+
+  const resolveComponentExit = useCallback(
+    (commit: boolean) => {
+      const pending = pendingComponentExit;
+      if (!pending) return;
+      const store = useDocumentStore.getState();
+      try {
+        if (store.editingComponentId) store.endComponentEdit(commit);
+        setPendingComponentExit(null);
+        setStatus(`${commit ? "Saved" : "Discarded"} ${pending.componentName}`);
+        pending.resume();
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Component exit failed");
+      }
+    },
+    [pendingComponentExit, setStatus],
+  );
+
+  const changeWorkspace = useCallback(
+    (next: WorkspaceMode) => {
+      if (next === "Component" || next === workspace) {
+        setWorkspace(next);
+        return;
+      }
+      guardComponentEdit(() => setWorkspace(next));
+    },
+    [guardComponentEdit, workspace],
+  );
+
+  const openRepoScreen = useCallback(
+    (screen: NonNullable<RepoContext>["screens"][number]) => {
+      guardComponentEdit(() => {
+        setWorkspace("Screen");
+        if (screen.sidecarPath) {
+          void openSidecar(screen.sidecarPath, "merge");
+          return;
+        }
+        void importSource(screen.path, "merge");
+      });
+    },
+    [guardComponentEdit, importSource, openSidecar],
   );
 
   const loadedRepoScreenForPanelScreen = useCallback(
@@ -2664,7 +2730,7 @@ export default function App() {
             >
               <LeftPanel
                 workspace={workspace}
-                onWorkspaceChange={setWorkspace}
+                onWorkspaceChange={changeWorkspace}
                 onAddFrame={addFrame}
                 activeFlow={activeFlow}
                 onFlowChange={setActiveFlow}
@@ -3010,6 +3076,48 @@ export default function App() {
               </Button>
               <Button variant="primary" onClick={() => switchComponentForEdit(true)}>
                 Save and switch
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingComponentExit && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingComponentExit(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exit-component-title"
+            className="studio-chrome w-[min(440px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-accent-line bg-accent-soft text-accent">
+                <AlertTriangle size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="exit-component-title" className="break-words text-sm font-semibold text-ink">
+                  Leave {pendingComponentExit.componentName}?
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  Save or discard edits to {pendingComponentExit.componentName} before leaving
+                  component edit.
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setPendingComponentExit(null)}>
+                Cancel
+              </Button>
+              <Button variant="ghost" onClick={() => resolveComponentExit(false)}>
+                Discard and leave
+              </Button>
+              <Button variant="primary" onClick={() => resolveComponentExit(true)}>
+                Save and leave
               </Button>
             </div>
           </div>

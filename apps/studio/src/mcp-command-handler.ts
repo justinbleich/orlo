@@ -243,9 +243,23 @@ export const handleMcpCommand: BrowserCommandHandler = async (command) => {
         | { name: string; kind: "text" | "color" | "visibility" | "slot"; nodeId: string; styleKey?: "color" | "backgroundColor" }[]
         | undefined;
       if (propSpecs && propSpecs.length > 0) {
-        const props = propSpecs.map((spec) =>
-          presetProp(spec.name, spec.kind, spec.nodeId, spec.styleKey ?? "color"),
-        );
+        const props = propSpecs.map((spec) => {
+          const prop = presetProp(spec.name, spec.kind, spec.nodeId, spec.styleKey ?? "color");
+          // Capture the template's current value as the prop default so empty-
+          // override instances render the template content and codegen emits
+          // optional props with default parameter values.
+          const target = findNode(definition.template, spec.nodeId);
+          if (target && target.type !== "ComponentInstance" && prop.default === undefined) {
+            if (spec.kind === "text" && typeof (target.props as { text?: unknown }).text === "string") {
+              return { ...prop, default: (target.props as { text: string }).text };
+            }
+            if (spec.kind === "color") {
+              const value = target.style[spec.styleKey ?? "color"];
+              if (typeof value === "string") return { ...prop, default: value };
+            }
+          }
+          return prop;
+        });
         useDocumentStore.getState().updateComponent(definition.id, {
           props: [...definition.props, ...props],
         });

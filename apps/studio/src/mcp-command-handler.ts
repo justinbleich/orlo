@@ -13,6 +13,7 @@ import {
 import { RN_PRIMITIVES } from "@rn-canvas/document";
 import type { RNStyle } from "@rn-canvas/styles";
 import { toPng } from "html-to-image";
+import { toComponentDisplayPath } from "./component-name";
 import type { BrowserCommandHandler } from "./mcp-bridge";
 import { useWorkspaceStore } from "./workspace-store";
 
@@ -226,7 +227,9 @@ export const handleMcpCommand: BrowserCommandHandler = async (command) => {
 
     case "create_component": {
       const { rootId, nodeId } = rootAndNode(payload);
-      const name = requiredString(payload, "name");
+      // Accept designer-style slash paths (Row/Habit) like the create dialog does;
+      // the store validates the dotted form.
+      const name = toComponentDisplayPath(requiredString(payload, "name"));
       useDocumentStore.getState().promoteToComponent(rootId, nodeId, name);
       const state = useDocumentStore.getState();
       const definition = Object.values(state.components).find(

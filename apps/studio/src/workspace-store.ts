@@ -36,6 +36,7 @@ import {
   addFlowEdge,
   deriveLinearEdges,
   flowRouteScreens,
+  pruneFlowEdges,
   resolveFlowRouteIdMap,
   flowScreenKey,
   flowScreenName,
@@ -323,7 +324,19 @@ function flowDefinitionsToManifest(
             : "",
         ]),
       );
+      const routePaths = new Set(liveRoutes.map((route) => route.path).filter(Boolean));
       const preservedEdges = (flow.manifestEdges ?? []).filter((edge) => {
+        // Derived linear edges are owned by the live route order — stale copies
+        // from a previous ordering must not accumulate. Only authored edges
+        // (anchored or conditional) survive the merge.
+        if (edge.kind === "primary" && !edge.from.anchorNodeId) {
+          const fromInFlow =
+            (edge.from.rootId && routeSet.has(edge.from.rootId)) ||
+            (edge.from.path && routePaths.has(edge.from.path));
+          const toInFlow =
+            (edge.to && routeSet.has(edge.to)) || (edge.toPath && routePaths.has(edge.toPath));
+          if (fromInFlow && toInFlow) return false;
+        }
         const rootKey = `${edge.from.rootId ?? ""}->${edge.to ?? ""}:${edge.kind}:${edge.from.anchorNodeId ?? ""}`;
         const pathKey =
           edge.from.path && edge.toPath
@@ -540,18 +553,67 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     void get().refreshHeads(artifacts);
   };
 
+  /** expo-router href for an app/ screen file (mirrors the host's expoHrefForPath). */
+  const hrefForScreenPath = (path: string): string | null => {
+    const normalized = path.replace(/\\/g, "/");
+    const appIndex = normalized.indexOf("app/");
+    if (appIndex === -1) return null;
+    const parts = normalized.slice(appIndex + 4).split("/");
+    const last = parts[parts.length - 1];
+    if (!last) return "/";
+    const base = last.replace(/\.[^.]+$/, "");
+    if (base === "_layout" || base.startsWith("+")) return "/";
+    const segments = [...parts.slice(0, -1), base]
+      .filter((part) => !part.startsWith("("))
+      .filter((part) => part !== "index")
+      .map((part) => part.replace(/^\[(.+)\]$/, ":$1"));
+    return `/${segments.join("/")}`.replace(/\/+$/, "") || "/";
+  };
+
+  /**
+   * Anchored flow edges out of this screen → { documentNodeId: route href }.
+   * Computed on every sync so navigation written by flow wiring survives later
+   * regenerations instead of being silently dropped. Anchor ids recorded from
+   * expanded previews are `instanceId::templateNodeId`; the document node the
+   * emitter can match is the instance.
+   */
+  const navTargetsForRoot = (rootId: NodeId): Record<string, string> | undefined => {
+    const state = get();
+    const screensByRootId = new Map(
+      Object.values(state.loadedRepoScreens).map((screen) => [screen.rootId, screen]),
+    );
+    const targets: Record<string, string> = {};
+    for (const flow of flowsFromState(state)) {
+      for (const edge of flow.edges) {
+        if (edge.from.rootId !== rootId || !edge.from.anchorNodeId) continue;
+        const targetPath =
+          screensByRootId.get(edge.to)?.path ?? (edge as { toPath?: string }).toPath;
+        if (!targetPath) continue;
+        const href = hrefForScreenPath(targetPath);
+        if (!href) continue;
+        targets[edge.from.anchorNodeId.split("::")[0]] = href;
+      }
+    }
+    return Object.keys(targets).length > 0 ? targets : undefined;
+  };
+
+  // Only the components this screen actually uses (transitively). Writing the
+  // whole session registry into every sidecar spreads component sets into
+  // unrelated screens, and stale copies later collide by name on open.
+  const usedComponentsFor = (root: Node): ComponentRegistry => {
+    const components = useDocumentStore.getState().components;
+    const usedIds = collectUsedComponentIds(root, components);
+    return Object.fromEntries(
+      usedIds.filter((id) => components[id]).map((id) => [id, components[id]]),
+    );
+  };
+
   const postCodegen = async (
     mode: "preview" | "sync",
     payload: { root: Node; screenName: string; targetPath: string; ifAbsent?: boolean },
   ): Promise<CodegenResult> => {
     const state = useDocumentStore.getState();
-    // Embed only the components this screen actually uses (transitively). Writing
-    // the whole session registry into every sidecar spreads component sets into
-    // unrelated screens, and stale copies later collide by name on open.
-    const usedIds = collectUsedComponentIds(payload.root, state.components);
-    const usedComponents = Object.fromEntries(
-      usedIds.filter((id) => state.components[id]).map((id) => [id, state.components[id]]),
-    );
+    const usedComponents = usedComponentsFor(payload.root);
     const res = await fetch(`/api/codegen/${mode}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -559,6 +621,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ...payload,
         components: usedComponents,
         tokens: state.tokens,
+        navTargets: navTargetsForRoot(payload.root.id),
       }),
     });
     const body = await res.json();
@@ -1323,7 +1386,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         entryRootId: flow.entryRootId && routeSet.has(flow.entryRootId) ? flow.entryRootId : routes[0],
         successRootId:
           flow.successRootId && routeSet.has(flow.successRootId) ? flow.successRootId : undefined,
-        edges: deriveLinearEdges(routes),
+        // Re-derive the linear backbone, but keep authored edges (anchored or
+        // conditional) — reordering routes must not sever wired navigation.
+        edges: [
+          ...pruneFlowEdges(
+            flow.edges.filter((edge) => edge.kind !== "primary" || edge.from.anchorNodeId),
+            routes,
+          ),
+          ...deriveLinearEdges(routes),
+        ],
       };
       const nextFlows = flowsFromState(get()).map((item) =>
         item.id === flowId ? nextFlow : item,
@@ -1364,10 +1435,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           operation: "add-edge",
           sourcePath: source.path,
           targetPath: target.path,
-          anchorNodeId: edge.from.anchorNodeId,
+          // Preview anchors are instanceId::templateNodeId; the emitter matches
+          // document node ids, i.e. the instance.
+          anchorNodeId: edge.from.anchorNodeId.split("::")[0],
           root,
           screenName: source.screenName,
-          components: doc.components,
+          components: usedComponentsFor(root),
           tokens: doc.tokens,
         }),
       });
@@ -1827,3 +1900,4 @@ export function initWorkspaceSubscriptions(): () => void {
     }
   };
 }
+

@@ -362,12 +362,30 @@ function findFrameShapeForRoot(editor: Editor, rootId: NodeId): EditorShape | un
     .find((shape) => isFrame(shape) && asFrame(shape).props.rootId === rootId);
 }
 
-function focusRootFrame(editor: Editor, rootId: NodeId, animate = true) {
+function focusRootFrame(editor: Editor, rootId: NodeId, animate = true, attempt = 0) {
   const shape = findFrameShapeForRoot(editor, rootId);
   if (!shape) return false;
+  // Zooming against a mid-layout container (e.g. 330x1 on first paint) clamps
+  // the camera to minimum zoom and strands the viewport. Wait for the layout to
+  // settle (bounded), then re-measure tldraw's viewport and zoom.
+  const container = editor.getContainer();
+  const rect = container?.getBoundingClientRect();
+  if (rect && (rect.width < 100 || rect.height < 100)) {
+    if (attempt >= 60 || !container.isConnected) return false;
+    requestAnimationFrame(() => {
+      if (container.isConnected) focusRootFrame(editor, rootId, animate, attempt + 1);
+    });
+    return true; // claimed — the retry completes the focus once layout settles
+  }
   editor.select(shape.id);
   const bounds = editor.getShapePageBounds(shape);
   if (bounds) {
+    if (rect && rect.width > 0 && rect.height > 0) {
+      const viewport = editor.getViewportScreenBounds();
+      if (Math.abs(viewport.w - rect.width) > 1 || Math.abs(viewport.h - rect.height) > 1) {
+        editor.updateViewportScreenBounds(container);
+      }
+    }
     editor.zoomToBounds(bounds, {
       inset: 96,
       animation: animate ? { duration: 180 } : undefined,
@@ -1847,7 +1865,10 @@ export default function App() {
     if (!editor || !focusedRoot) return;
     const selectedId = selection[0] ?? "";
     if (pendingFocusRootIdRef.current === focusedRoot.id) {
-      if (focusRootFrame(editor, focusedRoot.id)) pendingFocusRootIdRef.current = null;
+      // Instant, not animated: shape churn in the same commit (frame size
+      // mirroring, content mount) cancels tldraw camera animations midway,
+      // stranding the viewport zoomed out.
+      if (focusRootFrame(editor, focusedRoot.id, false)) pendingFocusRootIdRef.current = null;
       return;
     }
     syncCanvasFrameSelection(editor, focusedRoot.id, selectedId === focusedRoot.id);
@@ -2235,7 +2256,9 @@ export default function App() {
           const selectedRoot = findRootContaining(Object.values(roots), selectedId);
           if (selectedRoot) {
             if (pendingFocusRootIdRef.current === selectedRoot.id) {
-              if (focusRootFrame(editor, selectedRoot.id)) pendingFocusRootIdRef.current = null;
+              // Instant (see the store→canvas focus effect): animated zooms get
+              // canceled by shape updates later in this same reconcile pass.
+              if (focusRootFrame(editor, selectedRoot.id, false)) pendingFocusRootIdRef.current = null;
             } else {
               syncCanvasFrameSelection(editor, selectedRoot.id, selectedId === selectedRoot.id);
             }

@@ -10,6 +10,8 @@
  */
 import { create } from "zustand";
 import {
+  childrenOf,
+  collectUsedComponentIds,
   useDocumentStore,
   type ComponentRegistry,
   type Node,
@@ -543,12 +545,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     payload: { root: Node; screenName: string; targetPath: string; ifAbsent?: boolean },
   ): Promise<CodegenResult> => {
     const state = useDocumentStore.getState();
+    // Embed only the components this screen actually uses (transitively). Writing
+    // the whole session registry into every sidecar spreads component sets into
+    // unrelated screens, and stale copies later collide by name on open.
+    const usedIds = collectUsedComponentIds(payload.root, state.components);
+    const usedComponents = Object.fromEntries(
+      usedIds.filter((id) => state.components[id]).map((id) => [id, state.components[id]]),
+    );
     const res = await fetch(`/api/codegen/${mode}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...payload,
-        components: state.components,
+        components: usedComponents,
         tokens: state.tokens,
       }),
     });
@@ -714,6 +723,65 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     return true;
   };
 
+  /** Rewrite ComponentInstance references per the id map (recursive, clone-on-write). */
+  const remapInstanceComponentIds = (node: Node, idMap: Map<string, string>): Node => {
+    if (node.type === "ComponentInstance") {
+      const mapped = idMap.get(node.componentId);
+      const slots = node.slots
+        ? Object.fromEntries(
+            Object.entries(node.slots).map(([name, kids]) => [
+              name,
+              kids.map((kid) => remapInstanceComponentIds(kid, idMap)),
+            ]),
+          )
+        : undefined;
+      if (!mapped && !slots) return node;
+      return { ...node, ...(mapped ? { componentId: mapped } : {}), ...(slots ? { slots } : {}) };
+    }
+    const kids = childrenOf(node);
+    if (kids.length === 0) return node;
+    const nextKids = kids.map((kid) => remapInstanceComponentIds(kid, idMap));
+    if (nextKids.every((kid, i) => kid === kids[i])) return node;
+    return { ...node, children: nextKids } as Node;
+  };
+
+  /**
+   * Reconcile an opened sidecar's components with the live registry by name:
+   * a definition whose name already exists in the session under a different id
+   * (id drift across sessions/tools) is dropped in favor of the session's, and
+   * the incoming tree's instances are remapped. Without this, merge-opening the
+   * drifted screen fails registry validation ("duplicate component name").
+   */
+  const reconcileIncomingComponents = (
+    existing: ComponentRegistry,
+    incoming: ComponentRegistry | undefined,
+    root: Node,
+  ): { components: ComponentRegistry | undefined; root: Node; remapped: number } => {
+    if (!incoming) return { components: incoming, root, remapped: 0 };
+    const existingByName = new Map(
+      Object.entries(existing).map(([id, def]) => [def.name, id]),
+    );
+    const idMap = new Map<string, string>();
+    for (const [id, def] of Object.entries(incoming)) {
+      const existingId = existingByName.get(def.name);
+      if (existingId && existingId !== id && !existing[id]) idMap.set(id, existingId);
+    }
+    if (idMap.size === 0) return { components: incoming, root, remapped: 0 };
+    const kept = Object.fromEntries(
+      Object.entries(incoming)
+        .filter(([id]) => !idMap.has(id))
+        .map(([id, def]) => [
+          id,
+          { ...def, template: remapInstanceComponentIds(def.template, idMap) },
+        ]),
+    );
+    return {
+      components: kept,
+      root: remapInstanceComponentIds(root, idMap),
+      remapped: idMap.size,
+    };
+  };
+
   const openLoadedDocument = (opts: {
     mode: "replace" | "merge";
     root: Node;
@@ -744,19 +812,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     ) {
       delete nextRoots[previousLoadedScreen.rootId];
     }
+    const reconciled =
+      opts.mode === "merge"
+        ? reconcileIncomingComponents(state.components, opts.components, opts.root)
+        : { components: opts.components, root: opts.root, remapped: 0 };
+    const openedRoot = reconciled.root;
+    if (reconciled.remapped > 0 && get().activeRepoScreen) {
+      // The file will be rewritten with the session ids on the next sync.
+      set({
+        status: `Reconciled ${reconciled.remapped} shared component${
+          reconciled.remapped === 1 ? "" : "s"
+        } by name`,
+      });
+    }
     const rawNextComponents =
       opts.mode === "merge"
-        ? { ...state.components, ...(opts.components ?? {}) }
-        : opts.components;
+        ? { ...state.components, ...(reconciled.components ?? {}) }
+        : reconciled.components;
     const tokenMerge =
       opts.mode === "merge"
         ? mergeLoadedTokens({
             existing: state.tokens,
             incoming: opts.tokens,
-            root: opts.root,
+            root: openedRoot,
             components: rawNextComponents,
           })
-        : { tokens: opts.tokens, root: opts.root, components: rawNextComponents };
+        : { tokens: opts.tokens, root: openedRoot, components: rawNextComponents };
     nextRoots[opts.root.id] = tokenMerge.root;
     const nextComponents = tokenMerge.components;
     const nextTokens = tokenMerge.tokens;
@@ -1480,11 +1561,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         workspaceFlags.skipTokenWrite = true;
         workspaceFlags.skipCodeSync = true;
         const state = useDocumentStore.getState();
-        const rawNextComponents = { ...state.components, ...(opened.components ?? {}) };
+        const reconciled = reconcileIncomingComponents(
+          state.components,
+          opened.components,
+          opened.root,
+        );
+        const rawNextComponents = { ...state.components, ...(reconciled.components ?? {}) };
         const tokenMerge = mergeLoadedTokens({
           existing: state.tokens,
           incoming: opened.tokens,
-          root: opened.root,
+          root: reconciled.root,
           components: rawNextComponents,
         });
         state.loadRoots(

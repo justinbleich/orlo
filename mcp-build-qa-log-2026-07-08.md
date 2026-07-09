@@ -49,6 +49,10 @@ The browser bridge (`/api/mcp/next` long-poll) let the first Studio page claim t
 - **Autosync throughput was flawless**: 56 rapid mutations across 3 screens produced consistent multi-root syncs; every screen + component file and sidecar landed correctly with no missed writes. `create_screen`'s `ifAbsent` sync plus `dirtyRoots` tracking held up.
 - **Validation quality is excellent** and agent-friendly: `boxShadow: not an RN style property — use shadowColor/shadowOffset/shadowOpacity/shadowRadius (+ elevation) instead`, `flexDirection: expected one of: row, column, row-reverse, column-reverse`. Every malformed input tried during wall-mapping produced a precise, corrective message.
 
+## Finding 6 — screen switching broke in repos with drifted component ids (fixed, post-log)
+
+User-reported after the build: with Screen 1 and Today loaded, switching to the other screen silently failed, or Today never opened at all until a refresh. Root causes (fixed in `f60ab45`): every sync embedded the *entire* session component registry into each sidecar, so sidecars written in different sessions carried the same component names under different ids — merge-opening the second screen then failed registry validation ("duplicate component name") with only a toast. Sidecars now embed only used components, and opens reconcile incoming definitions against the session registry by name (remapping instance ids). Separately, the frame-focus camera could run against a mid-layout tldraw container (measured 330×1), clamping zoom to minimum and stranding the viewport — focus now waits for layout to settle before zooming.
+
 ## Environment caveats (not product bugs)
 
 - The sandboxed preview browser cannot rasterize via `html-to-image` at all (hangs on a bare div), so `get_canvas_screenshot` could not be exercised to success here.

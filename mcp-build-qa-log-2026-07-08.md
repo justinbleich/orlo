@@ -53,6 +53,19 @@ The browser bridge (`/api/mcp/next` long-poll) let the first Studio page claim t
 
 User-reported after the build: with Screen 1 and Today loaded, switching to the other screen silently failed, or Today never opened at all until a refresh. Root causes (fixed in `f60ab45`): every sync embedded the *entire* session component registry into each sidecar, so sidecars written in different sessions carried the same component names under different ids — merge-opening the second screen then failed registry validation ("duplicate component name") with only a toast. Sidecars now embed only used components, and opens reconcile incoming definitions against the session registry by name (remapping instance ids). Separately, the frame-focus camera could run against a mid-layout tldraw container (measured 330×1), clamping zoom to minimum and stranding the viewport — focus now waits for layout to settle before zooming.
 
+## Finding 7 — flow wiring produced no working navigation (fixed, 2026-07-09)
+
+Tested creating "Main App Flow" over the four screens and wiring press affordances. The Flow workspace itself is solid: route add/reorder, entry selection, live screen previews with connect handles on Pressables, drag-to-wire (anchored edges persisted to `.rncanvas/flows.json` with `anchorNodeId`). But the wiring never reached the generated code, for stacked reasons, all fixed in `8f774bb`:
+
+1. Preview anchors record `instanceId::templateNodeId` composite ids that match no document node — `/api/flows/apply` regenerated the screen with zero navigation, silently, exactly when the pressed element was a component instance (i.e. any real button). Ids are now normalized to the instance.
+2. Component instances never received `navTargets` (the emitter's instance path returned early). Pressable-rooted components now expose a forwarded `onPress?: () => void`, instances emit `onPress={() => router.push(...)}`, non-pressable instances get a Pressable wrapper.
+3. Only the flow-apply endpoint passed `navTargets`, so the next routine autosync silently dropped wired navigation. Every sync now derives `navTargets` from anchored flow edges (verified: nav survives an MCP edit + autosync round-trip).
+4. Route reordering wiped anchored edges from live state while the manifest merge preserved every stale derived linear edge from prior orderings (QA hit 8 accumulated edges). Reorders now keep authored edges and re-derive only the linear backbone.
+
+Also guarded (previous commit `1eb24e1`, reported by the user): navigating to a Design System page or screen while in component edit mode trapped you in Component mode with no dialog — all exits now get the save/discard/cancel contract.
+
+End state in the demo app: `Today → "New habit" button → NewHabit screen`, `NewHabit → "Save habit" → Today`, generated as real expo-router `router.push` handlers in `screen-2.tsx`/`screen-1.tsx` with `ButtonPrimary` forwarding `onPress`. Automation caveat: Base UI Select and canvas anchor-drags need trusted pointer events — flow-UI drag wiring verified once via synthetic events plus model-level testing; worth one manual drag pass.
+
 ## Environment caveats (not product bugs)
 
 - The sandboxed preview browser cannot rasterize via `html-to-image` at all (hangs on a bare div), so `get_canvas_screenshot` could not be exercised to success here.

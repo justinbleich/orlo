@@ -3,13 +3,15 @@ interface AddTaskProps {
   label?: string;
   disabled?: boolean;
   state?: "default" | "hover" | "pressed" | "disabled";
+  onPress?: () => void;
 }
 export function AddTask({
   label = "Add task",
   disabled = false,
-  state = "default"
+  state = "default",
+  onPress
 }: AddTaskProps) {
-  return <Pressable style={[styles.pressable, styles[`pressable_state_${state}`]]}><Text style={styles.text}>{label}</Text></Pressable>;
+  return <Pressable onPress={onPress} style={[styles.pressable, styles[`pressable_state_${state}`]]}><Text style={styles.text}>{label}</Text></Pressable>;
 }
 const styles = StyleSheet.create({
   pressable: {

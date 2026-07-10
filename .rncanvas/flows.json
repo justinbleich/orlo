@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updatedAt": "2026-07-06T23:04:41.850Z",
+  "updatedAt": "2026-07-10T16:43:03.755Z",
   "flows": [
     {
       "id": "onboarding",
@@ -31,6 +31,15 @@
         }
       ],
       "edges": [
+        {
+          "from": {
+            "rootId": "e926d431-39ca-4e2b-8460-a7674d0c61ea",
+            "path": "generated/screen-1-2.tsx"
+          },
+          "to": "27cd245c-5c62-40fc-aace-4fffddc0a0e7",
+          "toPath": "generated/screen-1.tsx",
+          "kind": "primary"
+        },
         {
           "from": {
             "rootId": "c1b1d45c-b115-4330-ac39-963831a9fcae",

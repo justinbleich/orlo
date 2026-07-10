@@ -66,6 +66,15 @@ Also guarded (previous commit `1eb24e1`, reported by the user): navigating to a 
 
 End state in the demo app: `Today → "New habit" button → NewHabit screen`, `NewHabit → "Save habit" → Today`, generated as real expo-router `router.push` handlers in `screen-2.tsx`/`screen-1.tsx` with `ButtonPrimary` forwarding `onPress`. Automation caveat: Base UI Select and canvas anchor-drags need trusted pointer events — flow-UI drag wiring verified once via synthetic events plus model-level testing; worth one manual drag pass.
 
+## Finding 7 — flow wiring: no delete, Pressable-only anchors, unstable route order (fixed)
+
+Testing flows over the built app surfaced three gaps (fixed in `7b8204e`, `0aba1ca`):
+- **Wires couldn't be deleted** (SVG edges were `pointerEvents: none`; flow state also isn't in the undo history). Now: click a wire → amber highlight + midpoint ✕ (or Delete key), plus a Wires list in the Flow Inspector with per-wire remove. Removing an anchored wire re-syncs the source screen so the generated `router.push` disappears; the matching manifest edge is dropped so the merge can't resurrect it. Flow edits remain outside undo — the affordance is delete + re-wire.
+- **Only Pressables were wireable.** Now two-stage, classified the way the code reads: *primary* handles (Pressables — primitive or Pressable-rooted components; things that already take `onPress`) are always visible in wire mode; *latent* affordances (Text links, tappable Images, row/card instances that codegen wraps in a Pressable) reveal on hover and stay visible once wired. Structural Views stay unwireable. On the demo: 3 visible handles instead of 46.
+- **Flow route order was load-order dependent.** Screens hydrate one at a time and each manifest round-trip put resolved routes ahead of unresolved ones — whichever screen loaded first became route 1, and the entry default clobbered the authored entry. The manifest's authored order is now the merge sort key, the authored entry survives partial hydration, and UI reorders rewrite the manifest order. Verified against a deliberately scrambled load order and reorder→reload round-trips.
+
+Also fixed en route (`8f774bb`): wires generated real navigation — anchored edges emit `onPress={() => router.push(...)}` on the wired element (Text directly, Pressable-wrapped otherwise, forwarded into Pressable-rooted component instances) — and `f60ab45`-adjacent stale-manifest edges no longer accumulate.
+
 ## Environment caveats (not product bugs)
 
 - The sandboxed preview browser cannot rasterize via `html-to-image` at all (hangs on a bare div), so `get_canvas_screenshot` could not be exercised to success here.

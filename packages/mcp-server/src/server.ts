@@ -111,6 +111,118 @@ export function createMcpServer(bridge: StudioCommandBridge = new StudioBridge()
       result(await bridge.command({ type: "set_style", payload })),
   );
 
+  const nodeSpec: z.ZodType<unknown> = z.lazy(() =>
+    z.object({
+      type: z.string().min(1),
+      props: z.record(z.unknown()).optional(),
+      style: z.record(z.unknown()).optional(),
+      design: z.record(z.unknown()).optional(),
+      children: z.array(nodeSpec).optional(),
+    }),
+  );
+
+  server.registerTool(
+    "insert_node",
+    {
+      description:
+        "Insert a validated primitive subtree under a parent node. The node spec is recursive: { type, props?, style?, design?, children? }. Returns the inserted subtree with its generated node ids.",
+      inputSchema: {
+        rootId: z.string().min(1),
+        parentId: z.string().min(1),
+        node: nodeSpec,
+        index: z.number().int().min(0).optional(),
+      },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "insert_node", payload })),
+  );
+
+  server.registerTool(
+    "remove_node",
+    {
+      description: "Remove a node (and its subtree) from a document root.",
+      inputSchema: { rootId: z.string().min(1), nodeId: z.string().min(1) },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "remove_node", payload })),
+  );
+
+  server.registerTool(
+    "create_screen",
+    {
+      description:
+        "Create a repo-backed screen: a new screen file plus sidecar in the connected repository, loaded onto the canvas. Returns rootId, screenName, and file paths.",
+      inputSchema: {},
+    },
+    async () => result(await bridge.command({ type: "create_screen", payload: {} })),
+  );
+
+  server.registerTool(
+    "rename_screen",
+    {
+      description: "Rename a repo-backed screen (updates the generated file and sidecar).",
+      inputSchema: { rootId: z.string().min(1), name: z.string().min(1) },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "rename_screen", payload })),
+  );
+
+  server.registerTool(
+    "create_component",
+    {
+      description:
+        "Promote an existing node subtree into a reusable component definition; the node becomes the first placed instance. Use display paths like Card/Stat for grouping. Expose instance props by targeting node ids from the promoted subtree.",
+      inputSchema: {
+        rootId: z.string().min(1),
+        nodeId: z.string().min(1),
+        name: z.string().min(1),
+        props: z
+          .array(
+            z.object({
+              name: z.string().min(1),
+              kind: z.enum(["text", "color", "visibility", "slot"]),
+              nodeId: z.string().min(1),
+              styleKey: z.enum(["color", "backgroundColor"]).optional(),
+            }),
+          )
+          .optional(),
+      },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "create_component", payload })),
+  );
+
+  server.registerTool(
+    "set_instance",
+    {
+      description:
+        "Configure a placed component instance: set exposed prop overrides and/or variant axis values.",
+      inputSchema: {
+        rootId: z.string().min(1),
+        instanceId: z.string().min(1),
+        overrides: z.record(z.unknown()).optional(),
+        variant: z.record(z.string()).optional(),
+      },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "set_instance", payload })),
+  );
+
+  server.registerTool(
+    "place_instance",
+    {
+      description: "Place an instance of an existing component under a parent node.",
+      inputSchema: {
+        rootId: z.string().min(1),
+        parentId: z.string().min(1),
+        componentId: z.string().min(1),
+        index: z.number().int().min(0).optional(),
+      },
+    },
+    async (payload) =>
+      result(await bridge.command({ type: "place_instance", payload })),
+  );
+
   server.registerTool(
     "get_code",
     {

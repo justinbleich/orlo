@@ -2,12 +2,14 @@ import { Pressable, StyleSheet, Text } from "react-native";
 interface ButtonSecondaryProps {
   label?: string;
   state?: "default" | "hover" | "pressed" | "disabled";
+  onPress?: () => void;
 }
 export function ButtonSecondary({
   label = "Pressable",
-  state = "default"
+  state = "default",
+  onPress
 }: ButtonSecondaryProps) {
-  return <Pressable style={styles.pressable}><Text style={styles.text}>{label}</Text></Pressable>;
+  return <Pressable onPress={onPress} style={styles.pressable}><Text style={styles.text}>{label}</Text></Pressable>;
 }
 const styles = StyleSheet.create({
   pressable: {

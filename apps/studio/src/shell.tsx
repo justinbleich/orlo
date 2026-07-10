@@ -4,6 +4,7 @@
  * everything here is theme-token-styled and never touches RN artboard content.
  */
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -43,7 +44,7 @@ import { Menu } from "@base-ui/react/menu";
 import { toComponentFileName } from "./component-name";
 import { color, radius, space, text } from "./studio-theme";
 import { type CanvasTool, useStudioStore } from "./studio-store";
-import { cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
+import { Button, cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
 import { useWorkspaceStore } from "./workspace-store";
 import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
@@ -269,7 +270,12 @@ export function ToolRail({
   const armedTool = useStudioStore((s) => s.armedTool);
   const armedComponentId = useStudioStore((s) => s.armedComponentId);
   const setArmedTool = useStudioStore((s) => s.setArmedTool);
-  const arm = (type: RNPrimitive) => setArmedTool(armedTool === type ? null : type);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
+  const arm = (type: RNPrimitive) => {
+    const next = armedTool === type ? null : type;
+    setArmedTool(next);
+    setStatus(next ? `${next} — drag to draw · Esc to cancel` : `${type} placement canceled`);
+  };
   const idle = armedTool === null && armedComponentId === null;
 
   const tools: (RailTool & { active?: boolean })[] = [
@@ -373,6 +379,7 @@ function InsertMenu({
   const components = useDocumentStore((s) => s.components);
   const armedComponentId = useStudioStore((s) => s.armedComponentId);
   const setArmedComponent = useStudioStore((s) => s.setArmedComponent);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
   const componentList = Object.values(components);
   const armedInMenu =
     INSERT_ITEMS.some((i) => i.type === armedTool) || armedComponentId !== null;
@@ -418,9 +425,15 @@ function InsertMenu({
                 {componentList.map((comp) => (
                   <Menu.Item
                     key={comp.id}
-                    onClick={() =>
-                      setArmedComponent(comp.id === armedComponentId ? null : comp.id)
-                    }
+                    onClick={() => {
+                      const next = comp.id === armedComponentId ? null : comp.id;
+                      setArmedComponent(next);
+                      setStatus(
+                        next
+                          ? `${comp.name} ready to place. Click or drag on a screen · Esc to cancel`
+                          : `${comp.name} placement canceled`,
+                      );
+                    }}
                     className={cn(
                       "flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
                       comp.id === armedComponentId
@@ -527,6 +540,11 @@ export function LeftPanel({
   );
   const [editingScreenPath, setEditingScreenPath] = useState<string | null>(null);
   const [screenNameDraft, setScreenNameDraft] = useState("");
+  const [confirmDeleteComponent, setConfirmDeleteComponent] = useState<{
+    id: NodeId;
+    name: string;
+    usageCount: number;
+  } | null>(null);
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -983,7 +1001,7 @@ export function LeftPanel({
                               setArmedComponent(nextArmed);
                               setStatus(
                                 nextArmed
-                                  ? `${comp.name} ready to place. Click or drag on a screen.`
+                                  ? `${comp.name} ready to place. Click or drag on a screen · Esc to cancel`
                                   : `${comp.name} placement canceled`,
                               );
                               if (nextArmed) onWorkspaceChange("Screen");
@@ -995,12 +1013,10 @@ export function LeftPanel({
                           </PanelAction>
                           <PanelAction
                             onClick={() => {
-                              try {
-                                removeComponent(comp.id);
-                                setStatus(`Deleted ${comp.name}`);
-                              } catch (error) {
-                                setStatus(error instanceof Error ? error.message : "Component delete failed");
-                              }
+                              const usageCount = useDocumentStore
+                                .getState()
+                                .getComponentUsage(comp.id).length;
+                              setConfirmDeleteComponent({ id: comp.id, name: comp.name, usageCount });
                             }}
                             title="Delete component"
                             className={rowAction}
@@ -1081,6 +1097,61 @@ export function LeftPanel({
           </section>
         )}
       </div>
+      {confirmDeleteComponent && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setConfirmDeleteComponent(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-component-title"
+            className="studio-chrome w-[min(420px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-amber/50 bg-amber/10 text-amber">
+                <AlertTriangle size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="delete-component-title" className="break-words text-sm font-semibold text-ink">
+                  Delete {confirmDeleteComponent.name}?
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  {confirmDeleteComponent.usageCount > 0
+                    ? `Used by ${confirmDeleteComponent.usageCount} placed instance${
+                        confirmDeleteComponent.usageCount === 1 ? "" : "s"
+                      } — deleting removes the definition they reference.`
+                    : "No placed instances on open screens."}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setConfirmDeleteComponent(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                className="border-amber bg-amber text-chrome hover:bg-amber"
+                onClick={() => {
+                  const target = confirmDeleteComponent;
+                  setConfirmDeleteComponent(null);
+                  try {
+                    removeComponent(target.id);
+                    setStatus(`Deleted ${target.name}`);
+                  } catch (error) {
+                    setStatus(error instanceof Error ? error.message : "Component delete failed");
+                  }
+                }}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

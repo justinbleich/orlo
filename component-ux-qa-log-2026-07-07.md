@@ -24,6 +24,15 @@ Zero console errors or warnings across the whole session.
 
 ---
 
+> **Fix status (2026-07-08):** all seven bugs fixed on `ux/component-qa-fixes`
+> (7 commits, `ce5391e`…`212f4e9`), each verified in the running app.
+> B1 → `migrateCombinationsForAxis` replicates combinations across a new axis.
+> B2/B6 → diff-based `componentEditIsDirty()` against a post-seed baseline; NumberField remounts on external value changes while idle.
+> B3 → delete confirm dialog with placed-instance count.
+> B4 → editor ref nulled on Tldraw teardown + deferred onMount focus (StrictMode-safe).
+> B5 → all arming paths announce in the status bar with an Esc hint (Esc-to-disarm already existed; the original finding overstated the gap — keyboard shortcuts and the panel Place action already announced).
+> B7 → slash display paths map to stored dot names; the panel already grouped dot names (the "missing grouping" was this one input bug).
+
 ## Bugs (ordered by severity)
 
 ### B1 — Adding a variant axis silently deletes all existing variant overrides

@@ -34,6 +34,7 @@ import {
 import { validateTree } from "./validate";
 import {
   createInstance,
+  migrateCombinationsForAxis,
   promoteToComponent as promoteOp,
   pruneDefinitionProps,
   pruneVariants,
@@ -92,6 +93,8 @@ export interface Snapshot {
   editingComponentId: NodeId | null;
   /** Definition captured at edit-start, so Cancel can discard the session. */
   editingOriginalDefinition: ComponentDefinition | null;
+  /** Definition as first hosted for editing (post-seed/remap) — the dirty baseline. */
+  editingBaselineDefinition: ComponentDefinition | null;
   selection: NodeId[];
 }
 
@@ -107,6 +110,10 @@ export interface DocumentState {
   editingComponentId: NodeId | null;
   /** Definition captured when focus mode opened, for Cancel. */
   editingOriginalDefinition: ComponentDefinition | null;
+  /** Definition as first hosted for editing (post-seed/remap). Dirty means the live
+   *  definition differs from this — not from the pre-seed original, so a legacy
+   *  empty template that gets auto-seeded on open still reads clean. */
+  editingBaselineDefinition: ComponentDefinition | null;
   selection: NodeId[];
   past: Snapshot[];
   future: Snapshot[];
@@ -149,6 +156,9 @@ export interface DocumentState {
   beginComponentEdit(componentId: NodeId): void;
   /** Close focus mode; `commit` writes the edited template back to the definition. */
   endComponentEdit(commit?: boolean): void;
+  /** Whether the open edit session differs from the definition captured at edit
+   *  start. Diff-based (not a timestamp): an edit-then-undo session reads clean. */
+  componentEditIsDirty(): boolean;
 
   // --- Variants (Phase 2D-3) ---
   addVariantAxis(componentId: NodeId, name: string, values?: string[]): void;
@@ -234,6 +244,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     framePositions: state.framePositions,
     editingComponentId: state.editingComponentId,
     editingOriginalDefinition: state.editingOriginalDefinition,
+    editingBaselineDefinition: state.editingBaselineDefinition,
     selection: state.selection,
   });
 
@@ -332,6 +343,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     framePositions: {},
     editingComponentId: null,
     editingOriginalDefinition: null,
+    editingBaselineDefinition: null,
     selection: [],
     past: [],
     future: [],
@@ -369,6 +381,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         framePositions: state.interaction.framePositions,
         editingComponentId: state.interaction.editingComponentId,
         editingOriginalDefinition: state.interaction.editingOriginalDefinition,
+        editingBaselineDefinition: state.interaction.editingBaselineDefinition,
         selection: state.interaction.selection,
         interaction: null,
       });
@@ -406,6 +419,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         tokens: tokenRegistry,
         editingComponentId: null,
         editingOriginalDefinition: null,
+        editingBaselineDefinition: null,
         selection: nextSelection,
         past: [],
         future: [],
@@ -572,6 +586,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       set({
         editingComponentId: componentId,
         editingOriginalDefinition: definition,
+        editingBaselineDefinition: editingDefinition,
         selection: [componentId],
       });
     },
@@ -595,8 +610,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       set({
         editingComponentId: null,
         editingOriginalDefinition: null,
+        editingBaselineDefinition: null,
         selection: fallback ? [fallback] : [],
       });
+    },
+
+    componentEditIsDirty: () => {
+      const { editingComponentId, components, editingBaselineDefinition } = get();
+      if (!editingComponentId || !editingBaselineDefinition) return false;
+      const current = components[editingComponentId];
+      if (!current) return false;
+      // The baseline is the definition exactly as begin hosted it (post-seed,
+      // post-remap), so no normalization is needed and an edit-then-undo session
+      // reads clean again.
+      if (current === editingBaselineDefinition) return false;
+      return JSON.stringify(current) !== JSON.stringify(editingBaselineDefinition);
     },
 
     // --- Variants (Phase 2D-3) ---
@@ -607,7 +635,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       // Seeded values (from a preset) make this a ready axis in one step; an
       // empty list is a draft — its first added value becomes the base/default.
       const variants = [...(def.variants ?? []), { name, values }];
-      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+      // Replicate existing combinations across the new axis before commitRegistry's
+      // pruneVariants runs, so prior overrides survive the full-key invariant.
+      const next = migrateCombinationsForAxis({ ...def, variants }, name);
+      commitRegistry({ ...components, [componentId]: next }, roots);
     },
     removeVariantAxis: (componentId, name) => {
       const { components, roots } = get();
@@ -621,10 +652,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       const { components, roots } = get();
       const def = components[componentId];
       if (!def) throw new Error(`Component not found: ${componentId}`);
+      const wasDraft =
+        (def.variants ?? []).find((axis) => axis.name === axisName)?.values.length === 0;
       const variants = (def.variants ?? []).map((axis) =>
         axis.name === axisName ? { ...axis, values: [...axis.values, value] } : axis,
       );
-      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+      // A draft axis gaining its first value starts counting toward the full-key
+      // invariant — annotate existing combinations so they aren't pruned.
+      const next = wasDraft
+        ? migrateCombinationsForAxis({ ...def, variants }, axisName)
+        : { ...def, variants };
+      commitRegistry({ ...components, [componentId]: next }, roots);
     },
     removeVariantValue: (componentId, axisName, value) => {
       const { components, roots } = get();
@@ -928,6 +966,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
           framePositions: previous.framePositions,
           editingComponentId: previous.editingComponentId,
           editingOriginalDefinition: previous.editingOriginalDefinition,
+          editingBaselineDefinition: previous.editingBaselineDefinition,
           selection: previous.selection,
           past: state.past.slice(0, -1),
           future: [snapshotOf(state), ...state.future].slice(0, HISTORY_LIMIT),
@@ -945,6 +984,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
           framePositions: next.framePositions,
           editingComponentId: next.editingComponentId,
           editingOriginalDefinition: next.editingOriginalDefinition,
+          editingBaselineDefinition: next.editingBaselineDefinition,
           selection: next.selection,
           past: [...state.past, snapshotOf(state)].slice(-HISTORY_LIMIT),
           future: state.future.slice(1),

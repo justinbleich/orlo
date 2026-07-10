@@ -30,6 +30,7 @@ function editedAgoLabel(editedAt: number): string {
 
 export function ComponentWorkspace({
   definition,
+  dirty,
   roots,
   components,
   usage,
@@ -43,6 +44,8 @@ export function ComponentWorkspace({
   children,
 }: {
   definition: ComponentDefinition;
+  /** Diff-based: the open session differs from the definition captured at edit start. */
+  dirty: boolean;
   roots: Record<NodeId, Node>;
   components: ComponentRegistry;
   usage: { rootId: NodeId; nodeId: NodeId }[];
@@ -190,9 +193,9 @@ export function ComponentWorkspace({
               className="h-7 max-w-72 border-transparent bg-transparent px-2xs text-sm font-semibold text-ink shadow-none hover:border-line hover:bg-raised focus-visible:border-accent-line focus-visible:bg-chrome-2"
             />
           </div>
-          {editedAt !== undefined && (
+          {dirty && (
             <div className="rounded-pill bg-raised px-sm py-1 text-xs text-ink-dim">
-              {editedAgoLabel(editedAt)}
+              {editedAt !== undefined ? editedAgoLabel(editedAt) : "unsaved edits"}
             </div>
           )}
           <div className="ml-auto flex items-center gap-xs">

@@ -362,12 +362,30 @@ function findFrameShapeForRoot(editor: Editor, rootId: NodeId): EditorShape | un
     .find((shape) => isFrame(shape) && asFrame(shape).props.rootId === rootId);
 }
 
-function focusRootFrame(editor: Editor, rootId: NodeId, animate = true) {
+function focusRootFrame(editor: Editor, rootId: NodeId, animate = true, attempt = 0) {
   const shape = findFrameShapeForRoot(editor, rootId);
   if (!shape) return false;
+  // Zooming against a mid-layout container (e.g. 330x1 on first paint) clamps
+  // the camera to minimum zoom and strands the viewport. Wait for the layout to
+  // settle (bounded), then re-measure tldraw's viewport and zoom.
+  const container = editor.getContainer();
+  const rect = container?.getBoundingClientRect();
+  if (rect && (rect.width < 100 || rect.height < 100)) {
+    if (attempt >= 60 || !container.isConnected) return false;
+    requestAnimationFrame(() => {
+      if (container.isConnected) focusRootFrame(editor, rootId, animate, attempt + 1);
+    });
+    return true; // claimed — the retry completes the focus once layout settles
+  }
   editor.select(shape.id);
   const bounds = editor.getShapePageBounds(shape);
   if (bounds) {
+    if (rect && rect.width > 0 && rect.height > 0) {
+      const viewport = editor.getViewportScreenBounds();
+      if (Math.abs(viewport.w - rect.width) > 1 || Math.abs(viewport.h - rect.height) > 1) {
+        editor.updateViewportScreenBounds(container);
+      }
+    }
     editor.zoomToBounds(bounds, {
       inset: 96,
       animation: animate ? { duration: 180 } : undefined,
@@ -1224,7 +1242,6 @@ export default function App() {
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
   const repoComponentHydratedRef = useRef<Set<string>>(new Set());
   const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
-  const componentEditOpenedAtRef = useRef<{ id: NodeId; at: number } | null>(null);
 
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
@@ -1237,6 +1254,12 @@ export default function App() {
     componentId: NodeId;
     componentName: string;
     currentName: string;
+  } | null>(null);
+  // Dirty component edit blocking a navigation out of focus mode (workspace
+  // change, screen open); `resume` continues the navigation after save/discard.
+  const [pendingComponentExit, setPendingComponentExit] = useState<{
+    componentName: string;
+    resume: () => void;
   } | null>(null);
   const [createComponentDraft, setCreateComponentDraft] =
     useState<CreateComponentDraft | null>(null);
@@ -1284,7 +1307,9 @@ export default function App() {
   const componentRegistry = useDocumentStore((s) => s.components);
   const updateComponent = useDocumentStore((s) => s.updateComponent);
   const getComponentUsage = useDocumentStore((s) => s.getComponentUsage);
-  const componentEditedAt = useStudioStore((s) => s.componentEditedAt);
+  const componentEditDirty = useDocumentStore((s) =>
+    s.editingComponentId ? s.componentEditIsDirty() : false,
+  );
   const tokens = useDocumentStore((s) => s.tokens);
   const editingComponentDefinition = editingComponentId
     ? componentRegistry[editingComponentId]
@@ -1550,6 +1575,24 @@ export default function App() {
     syncShapes(editor);
     if (store.selection.length === 0) store.setSelection(Object.keys(store.roots).slice(0, 1));
 
+    // Workspace switches (Screen ↔ Component) remount Tldraw, so a focus queued
+    // by the enter/exit effects ran against the disposed editor. Consume it here,
+    // where the new editor and its shapes actually exist.
+    // Deferred a frame so StrictMode's probe mount (torn down before it paints)
+    // can't consume the focus — only the editor that survives gets to run it.
+    const pendingFocus = pendingFocusRootIdRef.current;
+    if (pendingFocus) {
+      requestAnimationFrame(() => {
+        if (editorRef.current !== editor) return;
+        if (
+          pendingFocusRootIdRef.current === pendingFocus &&
+          focusRootFrame(editor, pendingFocus, false)
+        ) {
+          pendingFocusRootIdRef.current = null;
+        }
+      });
+    }
+
     // Canvas → store: selecting a frame selects its root node (unless the current
     // selection already lives in that frame, e.g. a child node is selected).
     editor.store.listen(
@@ -1573,6 +1616,13 @@ export default function App() {
       { scope: "session" },
     );
 
+    // Workspace switches (Screen ↔ Component) unmount this Tldraw instance and
+    // mount a fresh one. Null the ref on teardown so effects in the switch
+    // commit can't run camera work (and consume pendingFocusRootIdRef) against
+    // the dying editor — the next instance's onMount picks the focus up instead.
+    return () => {
+      if (editorRef.current === editor) editorRef.current = null;
+    };
   }, []);
 
   // First-run bootstrap: scaffold a starter screen only when the *repo* has no
@@ -1609,22 +1659,43 @@ export default function App() {
     editorRef.current?.clearHistory();
   }, []);
 
+  // Enter focus mode only when an edit session starts — re-running on every
+  // workspace change would snap navigation (Flows, Design System) straight
+  // back to Component, trapping the user in edit mode.
+  const enteredEditingComponentIdRef = useRef<NodeId | null>(null);
   useEffect(() => {
-    if (!editingComponentId) {
-      componentEditOpenedAtRef.current = null;
-      return;
-    }
-    if (componentEditOpenedAtRef.current?.id !== editingComponentId) {
-      componentEditOpenedAtRef.current = { id: editingComponentId, at: Date.now() };
-    }
+    const prev = enteredEditingComponentIdRef.current;
+    enteredEditingComponentIdRef.current = editingComponentId;
+    if (!editingComponentId || editingComponentId === prev) return;
     setWorkspace("Component");
     setComponentWorkspaceTab("Canvas");
     setInspectorTab("Design");
-    if (workspace === "Flow" || workspace === "Design System") return;
     pendingFocusRootIdRef.current = editingComponentId;
     const editor = editorRef.current;
     if (editor) focusRootFrame(editor, editingComponentId);
-  }, [editingComponentId, workspace]);
+  }, [editingComponentId]);
+
+  // Symmetric exit: entering focus mode pans to the component frame (above), so
+  // leaving it must pan back — otherwise the camera strands on the empty region
+  // where the transient template frame used to be.
+  const prevEditingComponentIdRef = useRef<NodeId | null>(null);
+  useEffect(() => {
+    const prev = prevEditingComponentIdRef.current;
+    prevEditingComponentIdRef.current = editingComponentId;
+    if (!prev || editingComponentId) return;
+    const store = useDocumentStore.getState();
+    const selected = store.selection[0];
+    const rootId = selected
+      ? store.roots[selected]
+        ? selected
+        : findRootContaining(Object.values(store.roots), selected)?.id
+      : undefined;
+    const target = rootId ?? Object.keys(store.roots)[0];
+    if (!target) return;
+    pendingFocusRootIdRef.current = target;
+    const editor = editorRef.current;
+    if (editor) focusRootFrame(editor, target);
+  }, [editingComponentId]);
 
   const createToken = useCallback((category: "color" | "spacing" | "fontSize") => {
     const state = useDocumentStore.getState();
@@ -1805,7 +1876,10 @@ export default function App() {
     if (!editor || !focusedRoot) return;
     const selectedId = selection[0] ?? "";
     if (pendingFocusRootIdRef.current === focusedRoot.id) {
-      if (focusRootFrame(editor, focusedRoot.id)) pendingFocusRootIdRef.current = null;
+      // Instant, not animated: shape churn in the same commit (frame size
+      // mirroring, content mount) cancels tldraw camera animations midway,
+      // stranding the viewport zoomed out.
+      if (focusRootFrame(editor, focusedRoot.id, false)) pendingFocusRootIdRef.current = null;
       return;
     }
     syncCanvasFrameSelection(editor, focusedRoot.id, selectedId === focusedRoot.id);
@@ -2193,7 +2267,9 @@ export default function App() {
           const selectedRoot = findRootContaining(Object.values(roots), selectedId);
           if (selectedRoot) {
             if (pendingFocusRootIdRef.current === selectedRoot.id) {
-              if (focusRootFrame(editor, selectedRoot.id)) pendingFocusRootIdRef.current = null;
+              // Instant (see the store→canvas focus effect): animated zooms get
+              // canceled by shape updates later in this same reconcile pass.
+              if (focusRootFrame(editor, selectedRoot.id, false)) pendingFocusRootIdRef.current = null;
             } else {
               syncCanvasFrameSelection(editor, selectedRoot.id, selectedId === selectedRoot.id);
             }
@@ -2339,9 +2415,7 @@ export default function App() {
       }
       if (currentId) {
         const currentName = store.components[currentId]?.name ?? "current component";
-        const opened = componentEditOpenedAtRef.current;
-        const editedAt = componentEditedAt[currentId] ?? 0;
-        const hasUserEdits = !!opened && opened.id === currentId && editedAt > opened.at;
+        const hasUserEdits = store.componentEditIsDirty();
         if (!hasUserEdits) {
           try {
             store.endComponentEdit(true);
@@ -2373,7 +2447,7 @@ export default function App() {
         setStatus(error instanceof Error ? error.message : "Component edit failed");
       }
     },
-    [componentEditedAt, setStatus],
+    [setStatus],
   );
 
   const switchComponentForEdit = useCallback(
@@ -2477,16 +2551,71 @@ export default function App() {
     setStatus("Repository settings");
   }, []);
 
-  const openRepoScreen = useCallback(
-    (screen: NonNullable<RepoContext>["screens"][number]) => {
-      setWorkspace("Screen");
-      if (screen.sidecarPath) {
-        void openSidecar(screen.sidecarPath, "merge");
+  /**
+   * Gate a navigation out of component focus mode behind the same contract as
+   * component switching: no session → proceed; clean session → save silently
+   * and proceed; dirty session → confirm (save/discard/cancel), then proceed.
+   */
+  const guardComponentEdit = useCallback(
+    (resume: () => void) => {
+      const store = useDocumentStore.getState();
+      const editingId = store.editingComponentId;
+      if (!editingId) {
+        resume();
         return;
       }
-      void importSource(screen.path, "merge");
+      if (!store.componentEditIsDirty()) {
+        store.endComponentEdit(true);
+        resume();
+        return;
+      }
+      const componentName = store.components[editingId]?.name ?? "component";
+      setPendingComponentExit({ componentName, resume });
+      setStatus(`Save or discard ${componentName} edits to continue`);
     },
-    [importSource, openSidecar],
+    [setStatus],
+  );
+
+  const resolveComponentExit = useCallback(
+    (commit: boolean) => {
+      const pending = pendingComponentExit;
+      if (!pending) return;
+      const store = useDocumentStore.getState();
+      try {
+        if (store.editingComponentId) store.endComponentEdit(commit);
+        setPendingComponentExit(null);
+        setStatus(`${commit ? "Saved" : "Discarded"} ${pending.componentName}`);
+        pending.resume();
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Component exit failed");
+      }
+    },
+    [pendingComponentExit, setStatus],
+  );
+
+  const changeWorkspace = useCallback(
+    (next: WorkspaceMode) => {
+      if (next === "Component" || next === workspace) {
+        setWorkspace(next);
+        return;
+      }
+      guardComponentEdit(() => setWorkspace(next));
+    },
+    [guardComponentEdit, workspace],
+  );
+
+  const openRepoScreen = useCallback(
+    (screen: NonNullable<RepoContext>["screens"][number]) => {
+      guardComponentEdit(() => {
+        setWorkspace("Screen");
+        if (screen.sidecarPath) {
+          void openSidecar(screen.sidecarPath, "merge");
+          return;
+        }
+        void importSource(screen.path, "merge");
+      });
+    },
+    [guardComponentEdit, importSource, openSidecar],
   );
 
   const loadedRepoScreenForPanelScreen = useCallback(
@@ -2601,7 +2730,7 @@ export default function App() {
             >
               <LeftPanel
                 workspace={workspace}
-                onWorkspaceChange={setWorkspace}
+                onWorkspaceChange={changeWorkspace}
                 onAddFrame={addFrame}
                 activeFlow={activeFlow}
                 onFlowChange={setActiveFlow}
@@ -2675,6 +2804,7 @@ export default function App() {
           ) : isComponentWorkspace ? (
             <ComponentWorkspace
               definition={editingComponentDefinition}
+              dirty={componentEditDirty}
               roots={roots}
               components={componentRegistry}
               usage={componentUsage}
@@ -2946,6 +3076,48 @@ export default function App() {
               </Button>
               <Button variant="primary" onClick={() => switchComponentForEdit(true)}>
                 Save and switch
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingComponentExit && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingComponentExit(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exit-component-title"
+            className="studio-chrome w-[min(440px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-accent-line bg-accent-soft text-accent">
+                <AlertTriangle size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="exit-component-title" className="break-words text-sm font-semibold text-ink">
+                  Leave {pendingComponentExit.componentName}?
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  Save or discard edits to {pendingComponentExit.componentName} before leaving
+                  component edit.
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setPendingComponentExit(null)}>
+                Cancel
+              </Button>
+              <Button variant="ghost" onClick={() => resolveComponentExit(false)}>
+                Discard and leave
+              </Button>
+              <Button variant="primary" onClick={() => resolveComponentExit(true)}>
+                Save and leave
               </Button>
             </div>
           </div>

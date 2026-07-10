@@ -6,6 +6,7 @@ import {
   createNode,
   expandComponents,
   findNode,
+  migrateCombinationsForAxis,
   ownerInstanceId,
   promoteToComponent,
   pruneVariants,
@@ -728,6 +729,104 @@ test("pruneVariants drops combinations orphaned by an axis/value edit", () => {
   trimmed.template = createNode("Pressable", { id: "root", style: { padding: 8 }, children: [] });
   const t = pruneVariants(trimmed);
   assert.ok(t.combinations!.every((c) => c.overrides.every((o) => o.nodeId === "root")));
+});
+
+test("migrateCombinationsForAxis replicates combinations across a new axis", () => {
+  const def = buttonDef();
+  // simulate an axis added after the combinations were authored
+  def.variants = [...def.variants!, { name: "tone", values: ["solid", "outline"] }];
+  const migrated = migrateCombinationsForAxis(def, "tone");
+  // every original combination is replicated once per tone value
+  assert.equal(migrated.combinations!.length, 6);
+  const lgDefault = migrated.combinations!.filter(
+    (c) => c.values.size === "lg" && c.values.state === "default",
+  );
+  assert.deepEqual(
+    lgDefault.map((c) => c.values.tone).sort(),
+    ["outline", "solid"],
+  );
+  // overrides survive intact and are deep-cloned per replica
+  assert.deepEqual(lgDefault[0].overrides, lgDefault[1].overrides);
+  lgDefault[0].overrides[0].style!.padding = 99;
+  assert.equal(lgDefault[1].overrides[0].style!.padding, 16);
+  // combinations already referencing the axis pass through untouched
+  const already = migrateCombinationsForAxis(migrated, "tone");
+  assert.equal(already, migrated);
+  // migrated definitions satisfy the full-key invariant — nothing gets pruned
+  assert.equal(pruneVariants(migrated).combinations!.length, 6);
+});
+
+test("addVariantAxis preserves existing overrides by replicating combinations", () => {
+  const store = useDocumentStore.getState();
+  const root = createNode("View", { id: "frame", children: [
+    createNode("Pressable", { id: "btn", style: { backgroundColor: "#111827" } }),
+  ] });
+  store.loadRoots({ frame: root }, ["btn"]);
+  store.promoteToComponent("frame", "btn", "AddTask");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+  const tmplRoot = useDocumentStore.getState().components[cid].template.id;
+
+  store.addVariantAxis(cid, "state", ["default", "hover"]);
+  store.setVariantOverride(cid, { state: "hover" }, tmplRoot, { style: { backgroundColor: "#0f1623" } });
+  assert.equal(useDocumentStore.getState().components[cid].combinations!.length, 1);
+
+  // the QA repro: adding a second seeded axis must not orphan the hover override
+  store.addVariantAxis(cid, "size", ["Small", "Medium", "Large"]);
+  const def = useDocumentStore.getState().components[cid];
+  assert.equal(def.combinations!.length, 3); // hover × each size
+  for (const combo of def.combinations!) {
+    assert.equal(combo.values.state, "hover");
+    assert.deepEqual(combo.overrides[0].style, { backgroundColor: "#0f1623" });
+  }
+});
+
+test("componentEditIsDirty is diff-based against the post-seed baseline", () => {
+  const store = useDocumentStore.getState();
+  // an empty Pressable gets seeded content on open — still clean vs baseline
+  const root = createNode("View", { id: "frame", children: [
+    createNode("Pressable", { id: "btn", style: { width: 100, height: 40 } }),
+  ] });
+  store.loadRoots({ frame: root }, ["btn"]);
+  store.promoteToComponent("frame", "btn", "SeededButton");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+
+  store.beginComponentEdit(cid);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+
+  // a real edit reads dirty; undoing back to the baseline reads clean again
+  useDocumentStore.getState().updateStyle(cid, cid, { width: 320 });
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), true);
+  useDocumentStore.getState().undo();
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+
+  // discard, reopen: the reverted definition is the new baseline — clean
+  useDocumentStore.getState().updateStyle(cid, cid, { width: 320 });
+  useDocumentStore.getState().endComponentEdit(false);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+  useDocumentStore.getState().beginComponentEdit(cid);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+});
+
+test("a draft axis gaining its first value annotates existing combinations", () => {
+  const store = useDocumentStore.getState();
+  const root = createNode("View", { id: "frame", children: [
+    createNode("Pressable", { id: "btn", style: { backgroundColor: "#111827" } }),
+  ] });
+  store.loadRoots({ frame: root }, ["btn"]);
+  store.promoteToComponent("frame", "btn", "AddTask");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+  const tmplRoot = useDocumentStore.getState().components[cid].template.id;
+
+  store.addVariantAxis(cid, "state", ["default", "pressed"]);
+  store.setVariantOverride(cid, { state: "pressed" }, tmplRoot, { style: { opacity: 0.8 } });
+
+  store.addVariantAxis(cid, "tone"); // draft — doesn't count toward the full key yet
+  assert.equal(useDocumentStore.getState().components[cid].combinations!.length, 1);
+  store.addVariantValue(cid, "tone", "solid"); // axis becomes matchable here
+  const def = useDocumentStore.getState().components[cid];
+  assert.equal(def.combinations!.length, 1);
+  assert.deepEqual(def.combinations![0].values, { state: "pressed", tone: "solid" });
+  assert.deepEqual(def.combinations![0].overrides[0].style, { opacity: 0.8 });
 });
 
 test("reconcileInstance clamps variant selections to valid axes/values", () => {

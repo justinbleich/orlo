@@ -14,12 +14,16 @@ export type BrowserCommandHandler = (command: BrowserCommand) => Promise<unknown
 export function startMcpBridge(handler: BrowserCommandHandler): () => void {
   const controller = new AbortController();
   const clientId = crypto.randomUUID();
+  // Newest page boot wins the bridge: a freshly loaded Studio page takes over
+  // from a stale/hidden tab, which would otherwise keep the bridge parked
+  // forever and silently execute MCP commands against a document nobody sees.
+  const bootTs = Date.now();
 
   const loop = async () => {
     while (!controller.signal.aborted) {
       try {
         const response = await fetch(
-          `/api/mcp/next?clientId=${encodeURIComponent(clientId)}`,
+          `/api/mcp/next?clientId=${encodeURIComponent(clientId)}&bootTs=${bootTs}`,
           { signal: controller.signal },
         );
         // 204 = the server's long-poll window elapsed with no command (or this

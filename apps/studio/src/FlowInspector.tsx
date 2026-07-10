@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { findNode, type Node, type NodeId } from "@rn-canvas/document";
+import { findNode, useDocumentStore, type Node, type NodeId } from "@rn-canvas/document";
 import { Field, IconButton, Section, Select, TextField, cn } from "./studio-ui";
 import { controlClass } from "./studio-ui/controls";
 import { flowScreenName, removeFlowEdgeAtIndex, updateFlowEdge } from "./flow-model";
@@ -43,6 +43,7 @@ export function FlowInspector({
     availableScreens[0]?.id,
   );
   const removeStoredFlowEdge = useWorkspaceStore((s) => s.removeFlowEdge);
+  const componentRegistry = useDocumentStore((s) => s.components);
   const screenOptions = useMemo<ScreenOption[]>(
     () => routeScreens.map((root) => ({ value: root.id, label: screenLabel(root, screens) })),
     [routeScreens, screens],
@@ -81,7 +82,12 @@ export function FlowInspector({
       const target = routeScreens.find((screen) => screen.id === edge.to);
       const anchorDocId = (edge.from.anchorNodeId ?? "").split("::")[0];
       const anchorNode = source ? findNode(source, anchorDocId) : undefined;
-      const anchorLabel = anchorNode?.design?.name ?? anchorNode?.type ?? "element";
+      const anchorLabel =
+        anchorNode?.design?.name ??
+        (anchorNode?.type === "ComponentInstance"
+          ? componentRegistry[anchorNode.componentId]?.name
+          : anchorNode?.type) ??
+        "element";
       const label = `${source ? screenLabel(source, screens) : "?"} · ${anchorLabel} → ${
         target ? screenLabel(target, screens) : "?"
       }`;

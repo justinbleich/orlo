@@ -272,10 +272,18 @@ function flowDefinitionsToManifest(
       const routeScreens = flowRouteScreens(screenRoots, flow.id, flow.routes);
       const routeIds = routeScreens.map((root) => root.id);
       const routeSet = new Set(routeIds);
-      const entry =
+      // Entry: an explicit selection wins; otherwise the manifest's entry path is
+      // authoritative even while its screen hasn't hydrated yet (serializing the
+      // "first loaded screen" default would clobber the authored entry).
+      const explicitEntry =
         (flow.entryRootId
           ? routeScreens.find((root) => root.id === flow.entryRootId)
-          : undefined) ?? routeScreens[0];
+          : undefined) ??
+        (flow.manifestEntryPath
+          ? routeScreens.find((root) => byRoot.get(root.id)?.path === flow.manifestEntryPath)
+          : undefined);
+      const entry =
+        explicitEntry ?? (flow.manifestEntryPath ? undefined : routeScreens[0]);
       const success = flow.successRootId
         ? routeScreens.find((root) => root.id === flow.successRootId)
         : undefined;
@@ -300,7 +308,25 @@ function flowDefinitionsToManifest(
         if (route.path && liveRouteKeys.has(`path:${route.path}`)) return false;
         return true;
       });
-      const routes = [...liveRoutes, ...preservedRoutes];
+      // Screens hydrate one at a time, and each round-trip would otherwise put
+      // resolved routes ahead of still-unresolved manifest routes — whichever
+      // screen loads first ratchets to position 1. The manifest's authored order
+      // is the sort key; genuinely new routes append in their live order.
+      const manifestIndex = new Map<string, number>();
+      (flow.manifestRoutes ?? []).forEach((route, index) => {
+        if (route.path) manifestIndex.set(`path:${route.path}`, index);
+        if (route.rootId) manifestIndex.set(`root:${route.rootId}`, index);
+      });
+      const manifestOrderOf = (route: { rootId?: string; path?: string }) =>
+        (route.path ? manifestIndex.get(`path:${route.path}`) : undefined) ??
+        (route.rootId ? manifestIndex.get(`root:${route.rootId}`) : undefined);
+      const combinedRoutes = [...liveRoutes, ...preservedRoutes];
+      const routes = [
+        ...combinedRoutes
+          .filter((route) => manifestOrderOf(route) !== undefined)
+          .sort((a, b) => manifestOrderOf(a)! - manifestOrderOf(b)!),
+        ...combinedRoutes.filter((route) => manifestOrderOf(route) === undefined),
+      ];
       const pathForRoot = (rootId?: NodeId) => (rootId ? byRoot.get(rootId)?.path : undefined);
       const liveEdges =
         flow.edges.length > 0
@@ -1383,9 +1409,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       if (!flow) return;
       const routes = routeIds.filter((rootId, index) => routeIds.indexOf(rootId) === index);
       const routeSet = new Set(routes);
+      // The manifest route order is the authoritative sort key across hydration
+      // round-trips, so an authored reorder must rewrite it too.
+      const { byRoot } = screenPathMap(get().loadedRepoScreens);
+      const previousManifestRoutes = flow.manifestRoutes ?? [];
+      const manifestByRoot = new Map(
+        previousManifestRoutes.filter((route) => route.rootId).map((route) => [route.rootId!, route]),
+      );
+      const manifestByPath = new Map(
+        previousManifestRoutes.filter((route) => route.path).map((route) => [route.path!, route]),
+      );
+      const manifestRoutes = routes.map((rootId) => {
+        const path = byRoot.get(rootId)?.path;
+        return (
+          manifestByRoot.get(rootId) ??
+          (path ? manifestByPath.get(path) : undefined) ?? { rootId, path, name: "" }
+        );
+      });
       const nextFlow = {
         ...flow,
         routes,
+        manifestRoutes,
         entryRootId: flow.entryRootId && routeSet.has(flow.entryRootId) ? flow.entryRootId : routes[0],
         successRootId:
           flow.successRootId && routeSet.has(flow.successRootId) ? flow.successRootId : undefined,

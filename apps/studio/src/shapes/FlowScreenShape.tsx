@@ -59,15 +59,37 @@ export function registerFlowAnchorDragHandler(
   };
 }
 
-function flattenLayout(box: LayoutBox, out: LayoutBox[] = []) {
+type FlatLayoutBox = { box: LayoutBox; parent: LayoutBox | null };
+
+function flattenLayout(
+  box: LayoutBox,
+  parent: LayoutBox | null = null,
+  out: FlatLayoutBox[] = [],
+) {
   if (box.node.design?.hidden) return out;
-  out.push(box);
-  for (const child of box.children) flattenLayout(child, out);
+  out.push({ box, parent });
+  for (const child of box.children) flattenLayout(child, box, out);
   return out;
 }
 
-function isRoutableElement(box: LayoutBox) {
-  return box.node.type === "Pressable";
+/**
+ * Which layout boxes get a flow connect handle. Wiring works for anything the
+ * emitter can attach navigation to, so:
+ * - inside an expanded component instance (`instanceId::…` ids), only the
+ *   instance root is wireable — a wire from any of its internals would resolve
+ *   to the whole instance anyway, so one handle per placed component;
+ * - otherwise Pressables, Texts (native onPress), and Images (Pressable-wrapped
+ *   at codegen) are wireable. Plain Views stay structural.
+ */
+function isRoutableElement({ box, parent }: FlatLayoutBox) {
+  const id = box.node.id;
+  const separator = id.indexOf("::");
+  if (separator !== -1) {
+    const instancePrefix = `${id.slice(0, separator)}::`;
+    return !parent || !parent.node.id.startsWith(instancePrefix);
+  }
+  const type = box.node.type;
+  return type === "Pressable" || type === "Text" || type === "Image";
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -265,10 +287,10 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
           live &&
           layoutResult &&
           flattenLayout(layoutResult.layout)
-            .filter((box) => box.node.id !== root.id)
-            .filter((box) => isRoutableElement(box))
-            .filter((box) => wiredAnchorIds.has(box.node.id) || showUnusedAnchors)
-            .map((box) => {
+            .filter(({ box }) => box.node.id !== root.id)
+            .filter((entry) => isRoutableElement(entry))
+            .filter(({ box }) => wiredAnchorIds.has(box.node.id) || showUnusedAnchors)
+            .map(({ box }) => {
               const wired = wiredAnchorIds.has(box.node.id);
               const label = box.node.design?.name ?? box.node.type;
               const hovered = hoveredAnchorId === box.node.id;

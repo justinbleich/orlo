@@ -517,6 +517,9 @@ interface WorkspaceState {
   setFlowEntryRoot(flowId: string, rootId: NodeId): Promise<void>;
   updateFlowRoutes(flowId: string, routeIds: NodeId[], screenRoots?: Node[]): Promise<void>;
   addFlowEdge(flowId: string, edge: FlowEdge): Promise<void>;
+  /** Remove one edge (wire) from a flow. Removing an anchored wire re-syncs the
+   *  source screen so its generated navigation handler is dropped too. */
+  removeFlowEdge(flowId: string, edge: FlowEdge): Promise<void>;
   hydrateRepoFlows(flows: FlowDefinition[]): void;
   upsertFlow(flow: FlowDefinition): Promise<void>;
   removeFlow(flowId: string): Promise<void>;
@@ -1451,6 +1454,52 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       void get().loadRepoContext();
     },
 
+    removeFlowEdge: async (flowId, edge) => {
+      const flow = get().flowsById[flowId];
+      if (!flow) return;
+      const liveKey = (candidate: FlowEdge) =>
+        [
+          candidate.from.rootId,
+          candidate.from.anchorNodeId ?? "",
+          candidate.to,
+          candidate.kind,
+          candidate.condition ?? "",
+        ].join("|");
+      const removedKey = liveKey(edge);
+      const nextEdges = flow.edges.filter((candidate) => liveKey(candidate) !== removedKey);
+      // Also drop the matching manifest copy — the manifest merge preserves
+      // authored edges it can't derive, which would resurrect the removed wire.
+      const nextManifestEdges = (flow.manifestEdges ?? []).filter(
+        (candidate) =>
+          !(
+            (candidate.from.rootId ?? "") === edge.from.rootId &&
+            (candidate.from.anchorNodeId ?? "") === (edge.from.anchorNodeId ?? "") &&
+            (candidate.to ?? "") === edge.to &&
+            candidate.kind === edge.kind
+          ),
+      );
+      if (
+        nextEdges.length === flow.edges.length &&
+        nextManifestEdges.length === (flow.manifestEdges ?? []).length
+      ) {
+        return;
+      }
+      const nextFlow = { ...flow, edges: nextEdges, manifestEdges: nextManifestEdges };
+      const nextFlows = flowsFromState(get()).map((item) =>
+        item.id === flowId ? nextFlow : item,
+      );
+      set((state) => ({ flowsById: { ...state.flowsById, [flowId]: nextFlow } }));
+      await get().persistFlowManifest(nextFlows);
+      if (edge.from.anchorNodeId && useDocumentStore.getState().roots[edge.from.rootId]) {
+        // Re-sync the source screen so the generated onPress handler disappears.
+        dirtyRoots.add(edge.from.rootId);
+        get().scheduleAutoSync();
+        set({ status: "Removed wire; source screen re-syncing" });
+      } else {
+        set({ status: "Removed flow edge" });
+      }
+    },
+
     hydrateRepoFlows: (flows) => {
       if (flows.length === 0) return;
       set((state) => {
@@ -1900,4 +1949,5 @@ export function initWorkspaceSubscriptions(): () => void {
     }
   };
 }
+
 

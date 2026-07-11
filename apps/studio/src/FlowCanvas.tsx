@@ -300,6 +300,17 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
         return;
       }
       if (event.key === "Delete" || event.key === "Backspace") {
+        // Never eat the keystroke while the user is typing — the capture-phase
+        // listener fires before the field would, so Backspace in a rename or
+        // condition input must not delete the selected wire.
+        const target = event.target;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLElement && target.isContentEditable)
+        ) {
+          return;
+        }
         const edge = flow.edges.find((candidate) => flowEdgeKey(candidate) === selectedEdgeKey);
         if (edge) {
           event.preventDefault();

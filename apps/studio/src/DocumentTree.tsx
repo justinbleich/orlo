@@ -65,11 +65,13 @@ export function DocumentTree({
   node,
   rootId,
   selectedIds,
+  rootKind = "screen",
   depth = 0,
 }: {
   node: Node;
   rootId: NodeId;
   selectedIds: readonly NodeId[];
+  rootKind?: "screen" | "component";
   depth?: number;
 }) {
   const setSelection = useDocumentStore((state) => state.setSelection);
@@ -88,7 +90,7 @@ export function DocumentTree({
   const componentName =
     node.type === "ComponentInstance" ? components[node.componentId]?.name : undefined;
   const label = node.design?.name ?? componentName ?? node.type;
-  const typeHint = isRoot ? "screen root" : isInstance ? "instance" : node.type;
+  const typeHint = isRoot ? `${rootKind} root` : isInstance ? "instance" : node.type;
   const children = childrenOf(node);
   const container = isContainer(node);
   const expanded = !collapsed;
@@ -312,6 +314,7 @@ export function DocumentTree({
           node={child}
           rootId={rootId}
           selectedIds={selectedIds}
+          rootKind={rootKind}
           depth={depth + 1}
         />
       ))}

@@ -5,6 +5,7 @@ import {
   T,
   useEditor,
   useValue,
+  type Editor,
   type Geometry2d,
   type RecordProps,
   type TLBaseShape,
@@ -123,6 +124,7 @@ export type FrameShape = TLBaseShape<
   "rnframe",
   { w: number; h: number; rootId: string }
 >;
+type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
 // tldraw 5.1.1 types ShapeUtil's constraint as the closed builtin TLShape union,
 // so a custom shape type isn't assignable here — custom shapes are nonetheless a
@@ -246,7 +248,28 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
     const onLayoutReady = useCallback((result: LayoutReadyResult) => {
       setLayoutResult(result);
       setStudioLayout(shape.props.rootId, result);
-    }, [setStudioLayout, shape.props.rootId]);
+
+      // Screen roots own an explicit device frame, but component templates are
+      // often intentionally unconstrained (for example a promoted node that was
+      // positioned with left/right on its screen). In component focus mode the
+      // generic frame fallback must not masquerade as part of the component.
+      // Fit the tldraw host to Yoga's resolved template bounds instead.
+      const editing = useDocumentStore.getState().editingComponentId === shape.props.rootId;
+      if (!editing) return;
+      const w = Number.isFinite(result.width) && result.width > 0 ? result.width : shape.props.w;
+      const h = Number.isFinite(result.height) && result.height > 0 ? result.height : shape.props.h;
+      if (Math.abs(w - shape.props.w) <= 0.01 && Math.abs(h - shape.props.h) <= 0.01) return;
+      editor.run(
+        () => {
+          editor.updateShape({
+            id: shape.id,
+            type: shape.type,
+            props: { ...shape.props, w, h },
+          } as unknown as UpdatePartial);
+        },
+        { history: "ignore", ignoreShapeLock: true },
+      );
+    }, [editor, setStudioLayout, shape.id, shape.props, shape.props.rootId]);
     // Subscribe to just this frame's root; re-renders on any edit to its tree.
     const root = useDocumentStore((s) => s.roots[shape.props.rootId]);
     const editingComponentId = useDocumentStore((s) => s.editingComponentId);
@@ -300,10 +323,15 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
           width: shape.props.w,
           height: shape.props.h,
           overflow: editingDefinition ? "visible" : "hidden",
-          backgroundColor: "#ffffff",
-          border: `1px solid ${hasInnerSelection ? "transparent" : color.artLine}`,
-          borderRadius: DEVICE_FRAME_RADIUS,
-          boxShadow: hasInnerSelection ? "none" : "0 8px 24px rgba(17, 24, 39, 0.08)",
+          backgroundColor: editingDefinition ? "transparent" : "#ffffff",
+          border: `1px solid ${
+            editingDefinition || hasInnerSelection ? "transparent" : color.artLine
+          }`,
+          borderRadius: editingDefinition ? 0 : DEVICE_FRAME_RADIUS,
+          boxShadow:
+            editingDefinition || hasInnerSelection
+              ? "none"
+              : "0 8px 24px rgba(17, 24, 39, 0.08)",
           opacity: outOfFocus ? 0 : 1,
           // Let tldraw handle selection/drag; inner RN content is preview-only.
           pointerEvents: interactive ? "auto" : "none",

@@ -25,7 +25,10 @@ import {
   findNode,
   findRootContaining,
   getParent,
+  RN_PRIMITIVES,
+  resolveVariant,
   useDocumentStore,
+  type ComponentDefinition,
   type DesignToken,
   type Node,
   type NodeId,
@@ -33,6 +36,8 @@ import {
   type TokenCategory,
 } from "@rn-canvas/document";
 import { FrameShapeUtil, type FrameShape } from "./shapes/FrameShape";
+import { VariantPreviewShapeUtil, type VariantPreviewShape } from "./shapes/VariantPreviewShape";
+import { ComponentWorkspace, type ComponentWorkspaceTab } from "./ComponentWorkspace";
 import { FlowCanvas } from "./FlowCanvas";
 import { FlowInspector } from "./FlowInspector";
 import { CodePanel } from "./CodePanel";
@@ -45,7 +50,7 @@ import {
   type ActiveRepoScreen,
   type FlowDefinition,
 } from "./workspace-store";
-import { Inspector } from "./Inspector";
+import { ComponentEditPanel, Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { color, layout, radius, space, text } from "./studio-theme";
@@ -82,10 +87,16 @@ import {
   TooltipProvider,
   cn,
 } from "./studio-ui";
+import { toComponentDisplayPath, toComponentFileName } from "./component-name";
 import { nextFreeFramePosition } from "./canvas-arrange";
 import { absoluteConstraintMode, absoluteMovePatch } from "@rn-canvas/styles";
 import { deleteNodes, duplicateNodes, reorderNode } from "./document-actions";
 import { startMcpBridge } from "./mcp-bridge";
+import {
+  applyCreationPreset,
+  supportedCreationPresets,
+  type CreationPreset,
+} from "./component-creation-presets";
 import { handleMcpCommand } from "./mcp-command-handler";
 import {
   addFlowRoute,
@@ -103,9 +114,16 @@ import {
   parentLayerSelection,
 } from "./selection";
 import { type CanvasTool, useStudioStore } from "./studio-store";
+import {
+  MAX_VARIANT_PREVIEWS,
+  variantFrameLayout,
+  variantPreviewCombinations,
+  variantPreviewKey,
+} from "./variant-workspace";
 
-const shapeUtils = [FrameShapeUtil];
+const shapeUtils = [FrameShapeUtil, VariantPreviewShapeUtil];
 const FRAME_TYPE = FrameShapeUtil.type;
+const VARIANT_PREVIEW_TYPE = VariantPreviewShapeUtil.type;
 
 // Lockdown: tldraw is a frame host, not a whiteboard. Hide its default chrome so
 // users can't reach tldraw-native shapes/styles (which aren't RN nodes and can't
@@ -143,17 +161,54 @@ const overrides: TLUiOverrides = {
 type EditorShape = ReturnType<Editor["getCurrentPageShapes"]>[number];
 const isFrame = (s: EditorShape) => (s.type as string) === FRAME_TYPE;
 const asFrame = (s: EditorShape) => s as unknown as FrameShape;
+const isVariantPreview = (s: EditorShape) => (s.type as string) === VARIANT_PREVIEW_TYPE;
+const asVariantPreview = (s: EditorShape) => s as unknown as VariantPreviewShape;
 type CreatePartial = Parameters<Editor["createShape"]>[0];
 type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
 type RepoContext = RepoPanelContext;
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
+type CreateComponentDraft = {
+  rootId: NodeId;
+  nodeId: NodeId;
+  nodeLabel: string;
+  nodeType: string;
+  childCount: number;
+  displayPath: string;
+  preset: CreationPreset;
+};
 
 function rootSize(root: Node): { w: number; h: number } {
   const w = typeof root.style.width === "number" ? root.style.width : 320;
   const h = typeof root.style.height === "number" ? root.style.height : 200;
   return { w, h };
+}
+
+function componentDisplayPathFromInput(displayPath: string, fallback: string): string {
+  const base = toComponentDisplayPath(displayPath || fallback, fallback);
+  return (RN_PRIMITIVES as readonly string[]).includes(base) ? `${base}Component` : base;
+}
+
+function uniqueComponentDisplayPath(
+  base: string,
+  components: Record<string, ComponentDefinition>,
+): string {
+  const taken = new Set(Object.values(components).map((component) => component.name));
+  const takenFiles = new Set(
+    Object.values(components).map((component) => toComponentFileName(component.name)),
+  );
+  const segments = base.split(".");
+  const last = segments.at(-1) || "Component";
+  let name = base;
+  for (let i = 2; taken.has(name) || takenFiles.has(toComponentFileName(name)); i += 1) {
+    name = [...segments.slice(0, -1), `${last}${i}`].join(".");
+  }
+  return name;
+}
+
+function childCountFor(node: Node): number {
+  return "children" in node && Array.isArray(node.children) ? node.children.length : 0;
 }
 
 /** Create a tldraw shape for any document root that doesn't have one yet. */
@@ -197,11 +252,106 @@ function createMissingShapes(editor: Editor, roots: Record<NodeId, Node>) {
   store.seedFramePositions(seeded);
 }
 
+function syncVariantPreviewShapes(editor: Editor) {
+  const store = useDocumentStore.getState();
+  const { editingComponentId, components, roots } = store;
+  const existingPreviewShapes = editor.getCurrentPageShapes().filter(isVariantPreview);
+  const removeAllPreviews = () => {
+    if (existingPreviewShapes.length > 0) {
+      editor.deleteShapes(existingPreviewShapes.map((shape) => shape.id));
+    }
+  };
+
+  if (!editingComponentId) {
+    removeAllPreviews();
+    return;
+  }
+  const definition = components[editingComponentId];
+  const editingRoot = roots[editingComponentId];
+  const axes = definition?.variants?.filter((axis) => axis.values.length > 0) ?? [];
+  const baseShape = findFrameShapeForRoot(editor, editingComponentId);
+  if (!definition || !editingRoot || axes.length === 0 || !baseShape) {
+    removeAllPreviews();
+    return;
+  }
+
+  const baseFrame = asFrame(baseShape);
+  const defaultKey = variantPreviewKey(definition, resolveVariant(definition, {}));
+  const combos = variantPreviewCombinations(definition)
+    .filter((values) => variantPreviewKey(definition, values) !== defaultKey)
+    .slice(0, MAX_VARIANT_PREVIEWS);
+  const boxes = variantFrameLayout(
+    { x: baseFrame.x, y: baseFrame.y, w: baseFrame.props.w, h: baseFrame.props.h },
+    combos,
+  );
+  const desired = new Map(
+    combos.map((values, index) => [
+      variantPreviewKey(definition, values),
+      { values, box: boxes[index] },
+    ]),
+  );
+  const existing = new Map<string, VariantPreviewShape>();
+
+  for (const shape of existingPreviewShapes) {
+    const preview = asVariantPreview(shape);
+    const key = variantPreviewKey(definition, preview.props.variantValues);
+    if (preview.props.componentId !== editingComponentId || !desired.has(key) || existing.has(key)) {
+      editor.deleteShapes([shape.id]);
+      continue;
+    }
+    existing.set(key, preview);
+  }
+
+  for (const [key, item] of desired) {
+    const current = existing.get(key);
+    if (current) {
+      const needsUpdate =
+        Math.abs(current.x - item.box.x) > 0.01 ||
+        Math.abs(current.y - item.box.y) > 0.01 ||
+        current.props.w !== item.box.w ||
+        current.props.h !== item.box.h ||
+        current.props.componentId !== editingComponentId;
+      if (needsUpdate) {
+        editor.updateShape({
+          id: current.id,
+          type: VARIANT_PREVIEW_TYPE,
+          x: item.box.x,
+          y: item.box.y,
+          props: {
+            componentId: editingComponentId,
+            variantValues: item.values,
+            w: item.box.w,
+            h: item.box.h,
+          },
+          isLocked: true,
+        } as unknown as UpdatePartial);
+      }
+      continue;
+    }
+    editor.createShape({
+      id: createShapeId(),
+      type: VARIANT_PREVIEW_TYPE,
+      x: item.box.x,
+      y: item.box.y,
+      props: {
+        componentId: editingComponentId,
+        variantValues: item.values,
+        w: item.box.w,
+        h: item.box.h,
+      },
+      isLocked: true,
+    } as unknown as CreatePartial);
+  }
+}
+
 /** Frame records derive from document roots, so reconciliation must never
  *  become an independent tldraw undo entry. */
 function syncShapes(editor: Editor) {
   editor.run(
-    () => createMissingShapes(editor, useDocumentStore.getState().roots),
+    () => {
+      createMissingShapes(editor, useDocumentStore.getState().roots);
+      syncVariantPreviewShapes(editor);
+    },
     { history: "ignore", ignoreShapeLock: true },
   );
 }
@@ -212,8 +362,56 @@ function findFrameShapeForRoot(editor: Editor, rootId: NodeId): EditorShape | un
     .find((shape) => isFrame(shape) && asFrame(shape).props.rootId === rootId);
 }
 
-function focusRootFrame(editor: Editor, rootId: NodeId, animate = true) {
+function focusRootFrame(editor: Editor, rootId: NodeId, animate = true, attempt = 0) {
   const shape = findFrameShapeForRoot(editor, rootId);
+  if (!shape) return false;
+  // Zooming against a mid-layout container (e.g. 330x1 on first paint) clamps
+  // the camera to minimum zoom and strands the viewport. Wait for the layout to
+  // settle (bounded), then re-measure tldraw's viewport and zoom.
+  const container = editor.getContainer();
+  const rect = container?.getBoundingClientRect();
+  if (rect && (rect.width < 100 || rect.height < 100)) {
+    if (attempt >= 60 || !container.isConnected) return false;
+    requestAnimationFrame(() => {
+      if (container.isConnected) focusRootFrame(editor, rootId, animate, attempt + 1);
+    });
+    return true; // claimed — the retry completes the focus once layout settles
+  }
+  editor.select(shape.id);
+  const bounds = editor.getShapePageBounds(shape);
+  if (bounds) {
+    if (rect && rect.width > 0 && rect.height > 0) {
+      const viewport = editor.getViewportScreenBounds();
+      if (Math.abs(viewport.w - rect.width) > 1 || Math.abs(viewport.h - rect.height) > 1) {
+        editor.updateViewportScreenBounds(container);
+      }
+    }
+    editor.zoomToBounds(bounds, {
+      inset: 96,
+      animation: animate ? { duration: 180 } : undefined,
+    });
+  }
+  return true;
+}
+
+function focusVariantPreviewFrame(
+  editor: Editor,
+  componentId: NodeId,
+  definition: ComponentDefinition,
+  values: Record<string, string>,
+  animate = true,
+) {
+  const key = variantPreviewKey(definition, values);
+  const defaultKey = variantPreviewKey(definition, resolveVariant(definition, {}));
+  if (key === defaultKey) return focusRootFrame(editor, componentId, animate);
+  const shape = editor
+    .getCurrentPageShapes()
+    .find(
+      (candidate) =>
+        isVariantPreview(candidate) &&
+        asVariantPreview(candidate).props.componentId === componentId &&
+        variantPreviewKey(definition, asVariantPreview(candidate).props.variantValues) === key,
+    );
   if (!shape) return false;
   editor.select(shape.id);
   const bounds = editor.getShapePageBounds(shape);
@@ -270,7 +468,7 @@ function FlowWorkspace({
   entryRootId,
   routeIds,
   onSelectScreen,
-  onAddFrame,
+  onAddRoute,
   onRenameFlow,
 }: {
   roots: Node[];
@@ -279,7 +477,7 @@ function FlowWorkspace({
   entryRootId?: NodeId;
   routeIds?: NodeId[];
   onSelectScreen: (rootId: NodeId) => void;
-  onAddFrame: () => void;
+  onAddRoute: (rootId: NodeId) => void;
   onRenameFlow: (flowId: FlowId, label: string) => boolean;
 }) {
   const screens = roots.filter(
@@ -288,6 +486,7 @@ function FlowWorkspace({
       root.id !== useDocumentStore.getState().editingComponentId,
   );
   const routeScreens = flowRouteScreens(screens, activeFlow, routeIds);
+  const availableScreens = flowAvailableScreens(screens, activeFlow, routeIds);
   const entryScreen =
     (entryRootId ? routeScreens.find((root) => root.id === entryRootId) : undefined) ??
     routeScreens[0];
@@ -358,7 +557,14 @@ function FlowWorkspace({
           Routes <span className="font-medium tabular-nums text-ink">{routeScreens.length}</span>
         </div>
         <div className="ml-auto flex items-center gap-xs">
-          <IconButton title="Add screen" onClick={onAddFrame}>
+          <IconButton
+            title="Add route to flow"
+            onClick={() => {
+              const next = availableScreens[0];
+              if (next) onAddRoute(next.id);
+            }}
+            disabled={availableScreens.length === 0}
+          >
             <PlusIcon />
           </IconButton>
         </div>
@@ -1034,13 +1240,29 @@ export default function App() {
   const reconcilingShapesRef = useRef(false);
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
+  const repoComponentHydratedRef = useRef<Set<string>>(new Set());
   const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
 
   const [inspectorTab, setInspectorTab] = useState("Design");
   const [workspace, setWorkspace] = useState<WorkspaceMode>("Screen");
+  const [componentWorkspaceTab, setComponentWorkspaceTab] =
+    useState<ComponentWorkspaceTab>("Canvas");
   const [activeFlow, setActiveFlow] = useState<FlowId>("onboarding");
   const [pendingRemoveFlowId, setPendingRemoveFlowId] = useState<FlowId | null>(null);
   const [confirmDeleteScreen, setConfirmDeleteScreen] = useState<RepoPanelScreen | null>(null);
+  const [pendingComponentSwitch, setPendingComponentSwitch] = useState<{
+    componentId: NodeId;
+    componentName: string;
+    currentName: string;
+  } | null>(null);
+  // Dirty component edit blocking a navigation out of focus mode (workspace
+  // change, screen open); `resume` continues the navigation after save/discard.
+  const [pendingComponentExit, setPendingComponentExit] = useState<{
+    componentName: string;
+    resume: () => void;
+  } | null>(null);
+  const [createComponentDraft, setCreateComponentDraft] =
+    useState<CreateComponentDraft | null>(null);
   const [activeDesignSystemView, setActiveDesignSystemView] =
     useState<DesignSystemView>("Tokens");
   const [leftColumnWidth, setLeftColumnWidth] = useState(readStoredLeftColumnWidth);
@@ -1074,6 +1296,7 @@ export default function App() {
   const importSource = useWorkspaceStore((s) => s.importSource);
   const requestCodegen = useWorkspaceStore((s) => s.requestCodegen);
   const createRepoScreen = useWorkspaceStore((s) => s.createRepoScreen);
+  const hydrateSidecarComponents = useWorkspaceStore((s) => s.hydrateSidecarComponents);
 
   // The document store's selection is the single source of truth. The focused
   // frame is *derived* from it (the root whose subtree holds the selection), and
@@ -1082,10 +1305,22 @@ export default function App() {
   const selection = useDocumentStore((s) => s.selection);
   const editingComponentId = useDocumentStore((s) => s.editingComponentId);
   const componentRegistry = useDocumentStore((s) => s.components);
+  const updateComponent = useDocumentStore((s) => s.updateComponent);
+  const getComponentUsage = useDocumentStore((s) => s.getComponentUsage);
+  const componentEditDirty = useDocumentStore((s) =>
+    s.editingComponentId ? s.componentEditIsDirty() : false,
+  );
   const tokens = useDocumentStore((s) => s.tokens);
+  const editingComponentDefinition = editingComponentId
+    ? componentRegistry[editingComponentId]
+    : undefined;
   const editingComponentName = editingComponentId
-    ? componentRegistry[editingComponentId]?.name ?? "Component"
+    ? editingComponentDefinition?.name ?? "Component"
     : null;
+  const componentUsage = useMemo(
+    () => (editingComponentId ? getComponentUsage(editingComponentId) : []),
+    [componentRegistry, editingComponentId, getComponentUsage, roots],
+  );
   const focusedRoot = useMemo(
     () => findRootContaining(Object.values(roots), selection[0] ?? ""),
     [roots, selection],
@@ -1153,6 +1388,41 @@ export default function App() {
       }
     }
   }, [openSidecar, repoFlowItems]);
+
+  useEffect(() => {
+    if (!repoContext?.screens.length) return;
+    const sidecarPaths = repoContext.screens
+      .filter((screen) => screen.rnCanvas && screen.sidecarPath)
+      .map((screen) => screen.sidecarPath as string)
+      .filter((path) => {
+        if (repoComponentHydratedRef.current.has(path)) return false;
+        repoComponentHydratedRef.current.add(path);
+        return true;
+      });
+    if (sidecarPaths.length === 0) return;
+    void (async () => {
+      for (const path of sidecarPaths) {
+        await hydrateSidecarComponents(path);
+      }
+    })();
+  }, [hydrateSidecarComponents, repoContext]);
+
+  useEffect(() => {
+    const manifestRoutes = flowsById[activeFlow]?.manifestRoutes;
+    if (workspace !== "Flow" || !manifestRoutes?.length) return;
+    const screenByPath = new Map<string, RepoPanelScreen>();
+    for (const screen of repoContext?.screens ?? []) {
+      screenByPath.set(screen.path, screen);
+      if (screen.sidecarPath) screenByPath.set(screen.sidecarPath, screen);
+    }
+    for (const route of manifestRoutes) {
+      if (!route.path) continue;
+      const screen = screenByPath.get(route.path);
+      if (!screen?.sidecarPath || repoFlowAutoloadedRef.current.has(screen.sidecarPath)) continue;
+      repoFlowAutoloadedRef.current.add(screen.sidecarPath);
+      void openSidecar(screen.sidecarPath, "merge");
+    }
+  }, [activeFlow, flowsById, openSidecar, repoContext, workspace]);
 
   useEffect(() => {
     const rootForPath = new Map<string, NodeId>();
@@ -1243,10 +1513,6 @@ export default function App() {
   useEffect(() => startMcpBridge(handleMcpCommand), []);
 
   useEffect(() => {
-    if (inspectorTab === "Props") setInspectorTab("Design");
-  }, [inspectorTab]);
-
-  useEffect(() => {
     if (flows.length === 0) return;
     const hasManualFlow = flows.some((flow) => flow.id === activeFlow);
     const hasRepoFlow = repoFlowItems.some((flow) => flow.id === activeFlow);
@@ -1309,6 +1575,24 @@ export default function App() {
     syncShapes(editor);
     if (store.selection.length === 0) store.setSelection(Object.keys(store.roots).slice(0, 1));
 
+    // Workspace switches (Screen ↔ Component) remount Tldraw, so a focus queued
+    // by the enter/exit effects ran against the disposed editor. Consume it here,
+    // where the new editor and its shapes actually exist.
+    // Deferred a frame so StrictMode's probe mount (torn down before it paints)
+    // can't consume the focus — only the editor that survives gets to run it.
+    const pendingFocus = pendingFocusRootIdRef.current;
+    if (pendingFocus) {
+      requestAnimationFrame(() => {
+        if (editorRef.current !== editor) return;
+        if (
+          pendingFocusRootIdRef.current === pendingFocus &&
+          focusRootFrame(editor, pendingFocus, false)
+        ) {
+          pendingFocusRootIdRef.current = null;
+        }
+      });
+    }
+
     // Canvas → store: selecting a frame selects its root node (unless the current
     // selection already lives in that frame, e.g. a child node is selected).
     editor.store.listen(
@@ -1332,6 +1616,13 @@ export default function App() {
       { scope: "session" },
     );
 
+    // Workspace switches (Screen ↔ Component) unmount this Tldraw instance and
+    // mount a fresh one. Null the ref on teardown so effects in the switch
+    // commit can't run camera work (and consume pendingFocusRootIdRef) against
+    // the dying editor — the next instance's onMount picks the focus up instead.
+    return () => {
+      if (editorRef.current === editor) editorRef.current = null;
+    };
   }, []);
 
   // First-run bootstrap: scaffold a starter screen only when the *repo* has no
@@ -1368,13 +1659,43 @@ export default function App() {
     editorRef.current?.clearHistory();
   }, []);
 
+  // Enter focus mode only when an edit session starts — re-running on every
+  // workspace change would snap navigation (Flows, Design System) straight
+  // back to Component, trapping the user in edit mode.
+  const enteredEditingComponentIdRef = useRef<NodeId | null>(null);
   useEffect(() => {
-    if (!editingComponentId) return;
-    if (workspace === "Flow" || workspace === "Design System") return;
+    const prev = enteredEditingComponentIdRef.current;
+    enteredEditingComponentIdRef.current = editingComponentId;
+    if (!editingComponentId || editingComponentId === prev) return;
+    setWorkspace("Component");
+    setComponentWorkspaceTab("Canvas");
+    setInspectorTab("Design");
     pendingFocusRootIdRef.current = editingComponentId;
     const editor = editorRef.current;
     if (editor) focusRootFrame(editor, editingComponentId);
-  }, [editingComponentId, workspace]);
+  }, [editingComponentId]);
+
+  // Symmetric exit: entering focus mode pans to the component frame (above), so
+  // leaving it must pan back — otherwise the camera strands on the empty region
+  // where the transient template frame used to be.
+  const prevEditingComponentIdRef = useRef<NodeId | null>(null);
+  useEffect(() => {
+    const prev = prevEditingComponentIdRef.current;
+    prevEditingComponentIdRef.current = editingComponentId;
+    if (!prev || editingComponentId) return;
+    const store = useDocumentStore.getState();
+    const selected = store.selection[0];
+    const rootId = selected
+      ? store.roots[selected]
+        ? selected
+        : findRootContaining(Object.values(store.roots), selected)?.id
+      : undefined;
+    const target = rootId ?? Object.keys(store.roots)[0];
+    if (!target) return;
+    pendingFocusRootIdRef.current = target;
+    const editor = editorRef.current;
+    if (editor) focusRootFrame(editor, target);
+  }, [editingComponentId]);
 
   const createToken = useCallback((category: "color" | "spacing" | "fontSize") => {
     const state = useDocumentStore.getState();
@@ -1555,7 +1876,10 @@ export default function App() {
     if (!editor || !focusedRoot) return;
     const selectedId = selection[0] ?? "";
     if (pendingFocusRootIdRef.current === focusedRoot.id) {
-      if (focusRootFrame(editor, focusedRoot.id)) pendingFocusRootIdRef.current = null;
+      // Instant, not animated: shape churn in the same commit (frame size
+      // mirroring, content mount) cancels tldraw camera animations midway,
+      // stranding the viewport zoomed out.
+      if (focusRootFrame(editor, focusedRoot.id, false)) pendingFocusRootIdRef.current = null;
       return;
     }
     syncCanvasFrameSelection(editor, focusedRoot.id, selectedId === focusedRoot.id);
@@ -1909,10 +2233,10 @@ export default function App() {
     reconcilingShapesRef.current = true;
     try {
       editor.run(
-        () => {
-          createMissingShapes(editor, roots);
-          for (const shape of editor.getCurrentPageShapes()) {
-            if (!isFrame(shape)) continue;
+          () => {
+            createMissingShapes(editor, roots);
+            for (const shape of editor.getCurrentPageShapes()) {
+              if (!isFrame(shape)) continue;
             const root = roots[asFrame(shape).props.rootId];
             if (!root) {
               editor.deleteShapes([shape.id]);
@@ -1943,18 +2267,21 @@ export default function App() {
           const selectedRoot = findRootContaining(Object.values(roots), selectedId);
           if (selectedRoot) {
             if (pendingFocusRootIdRef.current === selectedRoot.id) {
-              if (focusRootFrame(editor, selectedRoot.id)) pendingFocusRootIdRef.current = null;
+              // Instant (see the store→canvas focus effect): animated zooms get
+              // canceled by shape updates later in this same reconcile pass.
+              if (focusRootFrame(editor, selectedRoot.id, false)) pendingFocusRootIdRef.current = null;
             } else {
               syncCanvasFrameSelection(editor, selectedRoot.id, selectedId === selectedRoot.id);
             }
           }
+          syncVariantPreviewShapes(editor);
         },
         { history: "ignore", ignoreShapeLock: true },
       );
     } finally {
       reconcilingShapesRef.current = false;
     }
-  }, [roots]);
+  }, [componentRegistry, editingComponentId, roots]);
 
   // Mirror store-owned frame positions → shapes (undo/redo, canvas.json load).
   // An imperative subscription, not an effect on framePositions: live drags
@@ -1988,6 +2315,7 @@ export default function App() {
                 } as unknown as UpdatePartial);
               }
             }
+            syncVariantPreviewShapes(editor);
           },
           { history: "ignore", ignoreShapeLock: true },
         );
@@ -2005,22 +2333,6 @@ export default function App() {
     return root;
   }, [createRepoScreen]);
 
-  const addFrameToActiveFlow = useCallback(() => {
-    void addFrame().then((root) => {
-      if (!root) return;
-      const screenName = root.design?.name ?? "Screen";
-      const screenRoots = Object.values(useDocumentStore.getState().roots).filter(
-        (item) => item.id !== useDocumentStore.getState().editingComponentId,
-      );
-      const current = flowsById[activeFlow]?.routes;
-      const nextRoutes = addFlowRoute(screenRoots, activeFlow, current, root.id);
-      void updateStoredFlowRoutes(activeFlow, nextRoutes, screenRoots).then(
-        () => setStatus(`Created ${screenName} and added it to the flow`),
-        (error) => setStatus(error instanceof Error ? error.message : "Flow manifest save failed"),
-      );
-    });
-  }, [activeFlow, addFrame, flowsById, updateStoredFlowRoutes]);
-
   const setCanvasTool = useCallback((tool: CanvasTool) => {
     useStudioStore.getState().setCanvasTool(tool);
     editorRef.current?.setCurrentTool(tool);
@@ -2028,22 +2340,282 @@ export default function App() {
     setStatus(`${label} tool active`);
   }, []);
 
+  const renameEditingComponent = useCallback((name: string) => {
+    if (!editingComponentId) return false;
+    try {
+      updateComponent(editingComponentId, { name });
+      setStatus(`Renamed component to ${name}`);
+      return true;
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Component rename failed");
+      return false;
+    }
+  }, [editingComponentId, setStatus, updateComponent]);
+
+  const selectComponentVariant = useCallback(
+    (values: Record<string, string>) => {
+      useStudioStore.getState().setActiveVariantAll(values);
+      const editor = editorRef.current;
+      const definition = editingComponentId ? componentRegistry[editingComponentId] : undefined;
+      if (!editor || !editingComponentId || !definition) return;
+      if (!focusVariantPreviewFrame(editor, editingComponentId, definition, values)) {
+        focusRootFrame(editor, editingComponentId);
+      }
+    },
+    [componentRegistry, editingComponentId],
+  );
+
+  const selectComponentUsage = useCallback(
+    (rootId: NodeId, nodeId: NodeId) => {
+      const store = useDocumentStore.getState();
+      try {
+        if (store.editingComponentId) store.endComponentEdit(true);
+        if (store.roots[rootId]) {
+          store.setSelection([nodeId]);
+          setWorkspace("Screen");
+          setComponentWorkspaceTab("Canvas");
+          const editor = editorRef.current;
+          if (editor) focusRootFrame(editor, rootId);
+          setStatus("Selected placed component instance");
+          return;
+        }
+        const definition = store.components[rootId];
+        if (definition) {
+          store.beginComponentEdit(rootId);
+          store.setSelection([nodeId]);
+          setWorkspace("Component");
+          setComponentWorkspaceTab("Canvas");
+          setInspectorTab("Design");
+          setStatus(`Editing ${definition.name} usage`);
+          return;
+        }
+        setStatus("Usage target not found");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Could not open usage");
+      }
+    },
+    [setStatus],
+  );
+
+  const openComponentForEdit = useCallback(
+    (componentId: NodeId) => {
+      const store = useDocumentStore.getState();
+      const definition = store.components[componentId];
+      if (!definition) {
+        setStatus("Component not found");
+        return;
+      }
+      const currentId = store.editingComponentId;
+      if (currentId === componentId) {
+        setWorkspace("Component");
+        setComponentWorkspaceTab("Canvas");
+        setInspectorTab("Design");
+        setStatus(`Editing ${definition.name}`);
+        return;
+      }
+      if (currentId) {
+        const currentName = store.components[currentId]?.name ?? "current component";
+        const hasUserEdits = store.componentEditIsDirty();
+        if (!hasUserEdits) {
+          try {
+            store.endComponentEdit(true);
+            store.beginComponentEdit(componentId);
+            setWorkspace("Component");
+            setComponentWorkspaceTab("Canvas");
+            setInspectorTab("Design");
+            setStatus(`Editing ${definition.name}`);
+          } catch (error) {
+            setStatus(error instanceof Error ? error.message : "Component switch failed");
+          }
+          return;
+        }
+        setPendingComponentSwitch({
+          componentId,
+          componentName: definition.name,
+          currentName,
+        });
+        setStatus(`Save or discard ${currentName} edits to switch`);
+        return;
+      }
+      try {
+        store.beginComponentEdit(componentId);
+        setWorkspace("Component");
+        setComponentWorkspaceTab("Canvas");
+        setInspectorTab("Design");
+        setStatus(`Editing ${definition.name}`);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Component edit failed");
+      }
+    },
+    [setStatus],
+  );
+
+  const switchComponentForEdit = useCallback(
+    (commitCurrent: boolean) => {
+      const pending = pendingComponentSwitch;
+      if (!pending) return;
+      const store = useDocumentStore.getState();
+      try {
+        if (store.editingComponentId) store.endComponentEdit(commitCurrent);
+        store.beginComponentEdit(pending.componentId);
+        setPendingComponentSwitch(null);
+        setWorkspace("Component");
+        setComponentWorkspaceTab("Canvas");
+        setInspectorTab("Design");
+        setStatus(
+          `${commitCurrent ? "Saved" : "Discarded"} ${pending.currentName}; editing ${pending.componentName}`,
+        );
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Component switch failed");
+      }
+    },
+    [pendingComponentSwitch, setStatus],
+  );
+
+  const requestCreateComponentFromLayer = useCallback(
+    (rootId: NodeId, nodeId: NodeId) => {
+      const store = useDocumentStore.getState();
+      if (store.editingComponentId) {
+        setStatus("Finish component edit before creating a nested component");
+        return;
+      }
+      const root = store.roots[rootId];
+      const node = root ? findNode(root, nodeId) : undefined;
+      if (!root || !node) {
+        setStatus("Select a layer to create a component");
+        return;
+      }
+      if (node.id === root.id) {
+        setStatus("Select a layer inside the screen to create a component");
+        return;
+      }
+      if (node.type === "ComponentInstance") {
+        setStatus("Instances cannot be promoted into new components");
+        return;
+      }
+      if (node.design?.locked) {
+        setStatus("Unlock the layer before creating a component");
+        return;
+      }
+      const fallback = node.design?.name?.trim() || node.type;
+      const base = componentDisplayPathFromInput(fallback, node.type);
+      setCreateComponentDraft({
+        rootId,
+        nodeId,
+        nodeLabel: fallback,
+        nodeType: node.type,
+        childCount: childCountFor(node),
+        displayPath: uniqueComponentDisplayPath(base, store.components),
+        preset: node.type === "Pressable" ? "button" : node.type === "View" ? "card" : "none",
+      });
+    },
+    [setStatus],
+  );
+
+  const confirmCreateComponent = useCallback(() => {
+    const draft = createComponentDraft;
+    if (!draft) return;
+    if (!draft.displayPath.trim()) return;
+    const store = useDocumentStore.getState();
+    const base = componentDisplayPathFromInput(draft.displayPath, draft.nodeType);
+    const name = uniqueComponentDisplayPath(base, store.components);
+    try {
+      store.promoteToComponent(draft.rootId, draft.nodeId, name);
+      const nextStore = useDocumentStore.getState();
+      const root = nextStore.roots[draft.rootId];
+      const placed = root ? findNode(root, draft.nodeId) : undefined;
+      if (placed?.type === "ComponentInstance") {
+        const definition = nextStore.components[placed.componentId];
+        if (definition) {
+          const enhanced = applyCreationPreset(definition, draft.preset);
+          if (enhanced !== definition) {
+            useDocumentStore.getState().updateComponent(placed.componentId, enhanced);
+          }
+        }
+      }
+      setCreateComponentDraft(null);
+      if (placed?.type === "ComponentInstance") {
+        openComponentForEdit(placed.componentId);
+        setStatus(`Created ${name}; editing definition`);
+      } else {
+        setWorkspace("Screen");
+        setStatus(`Created ${name}`);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Component creation failed");
+    }
+  }, [createComponentDraft, openComponentForEdit, setStatus]);
 
   const openRepoSettings = useCallback(() => {
     setInspectorTab("Code");
     setStatus("Repository settings");
   }, []);
 
-  const openRepoScreen = useCallback(
-    (screen: NonNullable<RepoContext>["screens"][number]) => {
-      setWorkspace("Screen");
-      if (screen.sidecarPath) {
-        void openSidecar(screen.sidecarPath, "merge");
+  /**
+   * Gate a navigation out of component focus mode behind the same contract as
+   * component switching: no session → proceed; clean session → save silently
+   * and proceed; dirty session → confirm (save/discard/cancel), then proceed.
+   */
+  const guardComponentEdit = useCallback(
+    (resume: () => void) => {
+      const store = useDocumentStore.getState();
+      const editingId = store.editingComponentId;
+      if (!editingId) {
+        resume();
         return;
       }
-      void importSource(screen.path, "merge");
+      if (!store.componentEditIsDirty()) {
+        store.endComponentEdit(true);
+        resume();
+        return;
+      }
+      const componentName = store.components[editingId]?.name ?? "component";
+      setPendingComponentExit({ componentName, resume });
+      setStatus(`Save or discard ${componentName} edits to continue`);
     },
-    [importSource, openSidecar],
+    [setStatus],
+  );
+
+  const resolveComponentExit = useCallback(
+    (commit: boolean) => {
+      const pending = pendingComponentExit;
+      if (!pending) return;
+      const store = useDocumentStore.getState();
+      try {
+        if (store.editingComponentId) store.endComponentEdit(commit);
+        setPendingComponentExit(null);
+        setStatus(`${commit ? "Saved" : "Discarded"} ${pending.componentName}`);
+        pending.resume();
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Component exit failed");
+      }
+    },
+    [pendingComponentExit, setStatus],
+  );
+
+  const changeWorkspace = useCallback(
+    (next: WorkspaceMode) => {
+      if (next === "Component" || next === workspace) {
+        setWorkspace(next);
+        return;
+      }
+      guardComponentEdit(() => setWorkspace(next));
+    },
+    [guardComponentEdit, workspace],
+  );
+
+  const openRepoScreen = useCallback(
+    (screen: NonNullable<RepoContext>["screens"][number]) => {
+      guardComponentEdit(() => {
+        setWorkspace("Screen");
+        if (screen.sidecarPath) {
+          void openSidecar(screen.sidecarPath, "merge");
+          return;
+        }
+        void importSource(screen.path, "merge");
+      });
+    },
+    [guardComponentEdit, importSource, openSidecar],
   );
 
   const loadedRepoScreenForPanelScreen = useCallback(
@@ -2102,14 +2674,26 @@ export default function App() {
   const flowInspectorAvailableScreens = activeFlowDefinition
     ? flowAvailableScreens(flowInspectorScreens, activeFlow, activeFlowDefinition.routes)
     : [];
+  const isComponentWorkspace = workspace === "Component" && !!editingComponentDefinition;
   const workspaceContext =
-    workspace === "Component"
-      ? `Component · ${editingComponentName ?? "Untitled"}`
+    isComponentWorkspace
+      ? `Component · ${editingComponentName}`
       : workspace === "Flow"
         ? `Flow · ${flowPanelItems.find((flow) => flow.id === activeFlow)?.label ?? "Untitled"}`
         : workspace === "Design System"
           ? "Design System"
           : "Screen";
+  const createComponentCodeName = createComponentDraft
+    ? toComponentFileName(
+        uniqueComponentDisplayPath(
+          componentDisplayPathFromInput(createComponentDraft.displayPath, createComponentDraft.nodeType),
+          componentRegistry,
+        ),
+      )
+    : null;
+  const createComponentPresets = createComponentDraft
+    ? supportedCreationPresets(createComponentDraft.nodeType)
+    : [];
 
   return (
     <TooltipProvider>
@@ -2146,7 +2730,7 @@ export default function App() {
             >
               <LeftPanel
                 workspace={workspace}
-                onWorkspaceChange={setWorkspace}
+                onWorkspaceChange={changeWorkspace}
                 onAddFrame={addFrame}
                 activeFlow={activeFlow}
                 onFlowChange={setActiveFlow}
@@ -2160,6 +2744,8 @@ export default function App() {
                 onOpenChanges={openChangesPanel}
                 onOpenRepoScreen={openRepoScreen}
                 onRenameRepoScreen={renameRepoScreen}
+                onOpenComponent={openComponentForEdit}
+                onCreateComponentFromSelection={requestCreateComponentFromLayer}
                 screenFlowBadges={screenFlowBadges}
                 gitStatus={gitStatus}
                 sidecarPath={sidecarPath}
@@ -2205,7 +2791,7 @@ export default function App() {
               entryRootId={activeFlowDefinition?.entryRootId}
               routeIds={activeFlowDefinition?.routes}
               onSelectScreen={selectScreenFromWorkspace}
-              onAddFrame={addFrameToActiveFlow}
+              onAddRoute={addScreenToFlow}
               onRenameFlow={renameFlow}
             />
           ) : workspace === "Design System" ? (
@@ -2215,6 +2801,51 @@ export default function App() {
               onViewChange={setActiveDesignSystemView}
               onCreateToken={createToken}
             />
+          ) : isComponentWorkspace ? (
+            <ComponentWorkspace
+              definition={editingComponentDefinition}
+              dirty={componentEditDirty}
+              roots={roots}
+              components={componentRegistry}
+              usage={componentUsage}
+              activeTab={componentWorkspaceTab}
+              onTabChange={setComponentWorkspaceTab}
+              onRename={renameEditingComponent}
+              onSelectVariant={selectComponentVariant}
+              onSelectUsage={selectComponentUsage}
+              onCancel={() => {
+                useDocumentStore.getState().endComponentEdit(false);
+                setWorkspace("Screen");
+                setStatus(`Canceled ${editingComponentName ?? "component"} edits`);
+              }}
+              onDone={() => {
+                useDocumentStore.getState().endComponentEdit(true);
+                setWorkspace("Screen");
+                setStatus(`Saved ${editingComponentName ?? "component"}`);
+              }}
+            >
+              <div
+                data-testid="rn-canvas-surface"
+                className="relative min-h-0 h-full"
+                onPointerDownCapture={(event) => {
+                  if (event.button !== 0) return;
+                  const target = event.target;
+                  if (!(target instanceof Element)) return;
+                  if (target.closest("[data-rn-root-id]")) return;
+                  if (target.closest("[data-rn-variant-component-id]")) return;
+                  if (target.closest(".tl-selection__handle")) return;
+                  const store = useDocumentStore.getState();
+                  if (store.selection.length > 0) store.setSelection([]);
+                }}
+              >
+                <Tldraw
+                  onMount={onMount}
+                  shapeUtils={shapeUtils}
+                  components={components}
+                  overrides={overrides}
+                />
+              </div>
+            </ComponentWorkspace>
           ) : (
             <>
               {!panelUiHidden && (
@@ -2226,29 +2857,6 @@ export default function App() {
                   canAddPrimitive={Object.keys(roots).length > 0}
                 />
               )}
-              {!panelUiHidden && editingComponentName && (
-                <div
-                  data-testid="component-edit-banner"
-                  className="studio-chrome absolute left-1/2 top-md z-10 flex -translate-x-1/2 items-center gap-md rounded-pill border border-accent-line bg-chrome px-md py-xs text-sm text-ink shadow-popover"
-                >
-                  <span>
-                    Component / <strong>{editingComponentName}</strong>
-                  </span>
-                  <span className="text-ink-faint">Focused definition</span>
-                  <Button
-                    variant="ghost"
-                    onClick={() => useDocumentStore.getState().endComponentEdit(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={() => useDocumentStore.getState().endComponentEdit(true)}
-                  >
-                    Done
-                  </Button>
-                </div>
-              )}
               <div
                 data-testid="rn-canvas-surface"
                 className="relative min-h-0 flex-1"
@@ -2257,6 +2865,7 @@ export default function App() {
                   const target = event.target;
                   if (!(target instanceof Element)) return;
                   if (target.closest("[data-rn-root-id]")) return;
+                  if (target.closest("[data-rn-variant-component-id]")) return;
                   if (target.closest(".tl-selection__handle")) return;
                   const store = useDocumentStore.getState();
                   if (store.selection.length > 0) store.setSelection([]);
@@ -2348,7 +2957,11 @@ export default function App() {
                     </div>
                     {/* Interact (interactions/navigation) is phase 3 — not shown in v1. */}
                     <Tabs
-                      tabs={["Design", "Code", "History"]}
+                      tabs={
+                        workspace === "Component"
+                          ? ["Design", "Code", "History"]
+                          : ["Design", "Code", "History"]
+                      }
                       active={inspectorTab}
                       onSelect={setInspectorTab}
                       variant="underline"
@@ -2357,7 +2970,11 @@ export default function App() {
                   <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
                     {inspectorTab === "Design" ? (
                       <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
-                        <Inspector rootId={focusedRootId} />
+                        {isComponentWorkspace && editingComponentId ? (
+                          <ComponentEditPanel componentId={editingComponentId} />
+                        ) : (
+                          <Inspector rootId={focusedRootId} />
+                        )}
                       </ErrorBoundary>
                     ) : inspectorTab === "Code" ? (
                       <CodePanel />
@@ -2423,7 +3040,209 @@ export default function App() {
           </div>
         </div>
       )}
-      <LayerContextMenu />
+      {pendingComponentSwitch && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingComponentSwitch(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="switch-component-title"
+            className="studio-chrome w-[min(440px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-accent-line bg-accent-soft text-accent">
+                <AlertTriangle size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="switch-component-title" className="break-words text-sm font-semibold text-ink">
+                  Switch to {pendingComponentSwitch.componentName}?
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  Save or discard edits to {pendingComponentSwitch.currentName} before opening the next component.
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setPendingComponentSwitch(null)}>
+                Cancel
+              </Button>
+              <Button variant="ghost" onClick={() => switchComponentForEdit(false)}>
+                Discard and switch
+              </Button>
+              <Button variant="primary" onClick={() => switchComponentForEdit(true)}>
+                Save and switch
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingComponentExit && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingComponentExit(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exit-component-title"
+            className="studio-chrome w-[min(440px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-accent-line bg-accent-soft text-accent">
+                <AlertTriangle size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="exit-component-title" className="break-words text-sm font-semibold text-ink">
+                  Leave {pendingComponentExit.componentName}?
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  Save or discard edits to {pendingComponentExit.componentName} before leaving
+                  component edit.
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setPendingComponentExit(null)}>
+                Cancel
+              </Button>
+              <Button variant="ghost" onClick={() => resolveComponentExit(false)}>
+                Discard and leave
+              </Button>
+              <Button variant="primary" onClick={() => resolveComponentExit(true)}>
+                Save and leave
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {createComponentDraft && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setCreateComponentDraft(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-component-title"
+            className="studio-chrome w-[min(460px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-accent-line bg-accent-soft text-accent">
+                <FileJson2 size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="create-component-title" className="break-words text-sm font-semibold text-ink">
+                  Create component from selection
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  The selected layer becomes a reusable definition and this screen keeps an instance.
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-md p-lg">
+              <label className="flex flex-col gap-xs">
+                <span className="text-xs font-semibold text-ink-faint">Display path</span>
+                <input
+                  autoFocus
+                  value={createComponentDraft.displayPath}
+                  onChange={(event) =>
+                    setCreateComponentDraft((current) =>
+                      current ? { ...current, displayPath: event.target.value } : current,
+                    )
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setCreateComponentDraft(null);
+                    if (event.key === "Enter") confirmCreateComponent();
+                  }}
+                  className="h-8 rounded-sm border border-line bg-chrome-2 px-sm text-sm text-ink transition-colors hover:border-line focus-visible:border-accent-line focus-visible:outline-none"
+                />
+              </label>
+              {createComponentPresets.length > 1 && (
+                <div className="flex flex-col gap-xs">
+                  <span className="text-xs font-semibold text-ink-faint">Preset</span>
+                  <div className="grid grid-cols-3 gap-xs">
+                    {createComponentPresets.map((preset) => {
+                      const selected = createComponentDraft.preset === preset;
+                      const label =
+                        preset === "button" ? "Button"
+                        : preset === "card" ? "Card"
+                        : "None";
+                      return (
+                        <button
+                          key={preset}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() =>
+                            setCreateComponentDraft((current) =>
+                              current ? { ...current, preset } : current,
+                            )
+                          }
+                          className={cn(
+                            "h-8 rounded-sm border px-sm text-sm font-medium transition-colors",
+                            selected
+                              ? "border-accent bg-accent-soft text-accent"
+                              : "border-line bg-chrome-2 text-ink-dim hover:bg-raised hover:text-ink",
+                          )}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <div className="rounded-sm border border-line-soft bg-chrome-2 p-sm">
+                <div className="text-xs font-semibold text-ink-faint">Included</div>
+                <div className="mt-xs flex min-w-0 items-center gap-xs text-sm text-ink">
+                  <span className="truncate font-medium">{createComponentDraft.nodeLabel}</span>
+                  <span className="text-ink-faint">{createComponentDraft.nodeType}</span>
+                  {createComponentDraft.childCount > 0 && (
+                    <span className="ml-auto shrink-0 text-xs text-ink-faint">
+                      {createComponentDraft.childCount} child{createComponentDraft.childCount === 1 ? "" : "ren"}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="grid gap-xs text-xs text-ink-faint">
+                <div>
+                  Emits as <span className="font-mono text-ink">{createComponentCodeName}</span>
+                </div>
+                {createComponentDraft.preset === "button" && (
+                  <div>Adds label and disabled props plus default, hover, pressed, and disabled states.</div>
+                )}
+                {createComponentDraft.preset === "card" && (
+                  <div>Adds title, subtitle, and background instance controls when matching layers exist.</div>
+                )}
+                <div>Opens the new definition after creation.</div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setCreateComponentDraft(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!createComponentDraft.displayPath.trim()}
+                onClick={confirmCreateComponent}
+              >
+                Create and edit
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      <LayerContextMenu onCreateComponentFromLayer={requestCreateComponentFromLayer} />
       <Toasts />
     </div>
     </TooltipProvider>

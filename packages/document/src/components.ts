@@ -22,10 +22,11 @@ import type {
   VariantNodeOverride,
 } from "./types";
 import { childrenOf, isContainer } from "./types";
+import { createNode } from "./tree";
 import { validateTree, type NodeError } from "./validate";
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
-const PASCAL_CASE = /^[A-Z][A-Za-z0-9_$]*$/;
+const COMPONENT_DISPLAY_NAME = /^[A-Z][A-Za-z0-9_$]*(?:\.[A-Z][A-Za-z0-9_$]*)*$/;
 const VALUE_TYPES = new Set(["string", "number", "boolean", "color", "enum", "node"]);
 
 function newId(): NodeId {
@@ -37,6 +38,34 @@ function newId(): NodeId {
 /** Structural deep clone — nodes are JSON by construction (sidecar relies on it). */
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function splitPlacementStyle(style: RNStyle): { templateStyle: RNStyle; instanceStyle: RNStyle } {
+  const {
+    position,
+    top,
+    right,
+    bottom,
+    left,
+    ...templateStyle
+  } = style;
+  const instanceStyle: RNStyle = {};
+  if (position !== undefined) instanceStyle.position = position;
+  if (top !== undefined) instanceStyle.top = top;
+  if (right !== undefined) instanceStyle.right = right;
+  if (bottom !== undefined) instanceStyle.bottom = bottom;
+  if (left !== undefined) instanceStyle.left = left;
+  return { templateStyle, instanceStyle };
+}
+
+function emittedComponentName(name: string): string {
+  const pascal = name
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+  return IDENTIFIER.test(pascal) ? pascal : "";
 }
 
 /** Index every node in a tree by id, including slot children. */
@@ -57,6 +86,42 @@ function collectIds(tree: Node, ids = new Set<NodeId>()): Set<NodeId> {
   return ids;
 }
 
+export function seedComponentTemplateContent(
+  template: Node,
+  _name: string,
+  components?: ComponentRegistry,
+  componentId?: NodeId,
+): Node {
+  let root = template;
+  if (root.type === "ComponentInstance") {
+    const referenced = root.componentId !== componentId ? components?.[root.componentId] : undefined;
+    root = referenced
+      ? clone(referenced.template)
+      : createNode("View", {
+          style: root.style,
+          design: root.design,
+        });
+  }
+  if (!isContainer(root) || childrenOf(root).length > 0) return root;
+  if (root.type === "Pressable") {
+    return {
+      ...root,
+      style: {
+        ...root.style,
+        alignItems: root.style.alignItems ?? "center",
+        justifyContent: root.style.justifyContent ?? "center",
+      },
+      children: [
+        createNode("Text", {
+          props: { text: "Pressable" },
+          style: { color: "#111827", textAlign: "center" },
+        }),
+      ],
+    };
+  }
+  return root;
+}
+
 // --- Authoring ---------------------------------------------------------------
 
 /**
@@ -68,13 +133,17 @@ export function promoteToComponent(
   node: Node,
   name: string,
 ): { definition: ComponentDefinition; instance: ComponentInstanceNode } {
+  const template = clone(node);
+  const { templateStyle, instanceStyle } = splitPlacementStyle(template.style);
+  template.style = templateStyle;
+  const seededTemplate = seedComponentTemplateContent(template, name);
   const definition: ComponentDefinition = {
     id: newId(),
     name,
-    template: clone(node),
+    template: seededTemplate,
     props: [],
   };
-  return { definition, instance: createInstance(definition.id) };
+  return { definition, instance: createInstance(definition.id, { style: instanceStyle }) };
 }
 
 /** The four authoring presets over the general prop model (Phase 2C). */
@@ -384,6 +453,34 @@ export function pruneVariants(definition: ComponentDefinition): ComponentDefinit
 }
 
 /**
+ * Behavior-preserving migration for when an axis becomes matchable — added with
+ * seeded values, or a draft axis gaining its first value. Combinations are
+ * full-keyed (pruneVariants drops any that don't reference every axis), so without
+ * migration a new axis silently orphans every existing combination. Instead,
+ * each combination that doesn't yet reference the axis is replicated across the
+ * axis's values: overrides authored before the axis keep applying at every value,
+ * and the designer diverges individual cells from there.
+ */
+export function migrateCombinationsForAxis(
+  definition: ComponentDefinition,
+  axisName: string,
+): ComponentDefinition {
+  const axis = (definition.variants ?? []).find((a) => a.name === axisName);
+  const combinations = definition.combinations ?? [];
+  if (!axis || axis.values.length === 0 || combinations.length === 0) return definition;
+  let changed = false;
+  const next = combinations.flatMap((combo) => {
+    if (combo.values[axisName] !== undefined) return [combo];
+    changed = true;
+    return axis.values.map((value) => ({
+      values: { ...combo.values, [axisName]: value },
+      overrides: clone(combo.overrides),
+    }));
+  });
+  return changed ? { ...definition, combinations: next } : definition;
+}
+
+/**
  * Set or clear a node's per-combination style/visibility override (authoring).
  * `values` is a full cell (a value per axis). A style value of `undefined` clears
  * that key; `hidden: null` clears the flag. Empty overrides and empty combinations
@@ -512,12 +609,27 @@ function defaultMatches(prop: ComponentProp): boolean {
 /** Validate the whole registry: definition names, templates, and prop bindings. */
 export function validateComponentRegistry(registry: ComponentRegistry): NodeError[] {
   const errors: NodeError[] = [];
+  const componentNames = new Map<string, string>();
+  const emittedNames = new Map<string, string>();
   for (const [id, definition] of Object.entries(registry)) {
     if (definition.id !== id) {
       errors.push({ nodeId: id, key: "id", reason: "registry key must equal definition id" });
     }
-    if (!PASCAL_CASE.test(definition.name)) {
-      errors.push({ nodeId: id, key: "name", reason: "expected a PascalCase component name" });
+    if (!COMPONENT_DISPLAY_NAME.test(definition.name)) {
+      errors.push({ nodeId: id, key: "name", reason: "expected a PascalCase component name or dotted path" });
+    }
+    const existingId = componentNames.get(definition.name);
+    if (existingId && existingId !== id) {
+      errors.push({ nodeId: id, key: "name", reason: "duplicate component name" });
+    } else {
+      componentNames.set(definition.name, id);
+    }
+    const emittedName = emittedComponentName(definition.name);
+    const existingEmittedId = emittedNames.get(emittedName);
+    if (emittedName && existingEmittedId && existingEmittedId !== id) {
+      errors.push({ nodeId: id, key: "name", reason: "component name collides after codegen sanitization" });
+    } else if (emittedName) {
+      emittedNames.set(emittedName, id);
     }
     for (const e of validateTree(definition.template)) {
       errors.push({ nodeId: id, key: `template.${e.key}`, reason: e.reason });

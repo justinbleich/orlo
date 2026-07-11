@@ -323,7 +323,7 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
   /** A ComponentInstance → `<Name prop={…} slot={…} />` usage. */
   function buildInstance(node: Node & { type: "ComponentInstance" }): t.Expression {
     const definition = components?.[node.componentId];
-    const name = definition ? definition.name : "View";
+    const name = definition ? toComponentName(definition.name) : "View";
     if (definition) componentImports.add(name);
     else used.add("View");
     const attrs: t.JSXAttribute[] = [];
@@ -358,7 +358,29 @@ export function createEmitter(options: EmitterOptions = {}): Emitter {
         attrs.push(t.jsxAttribute(t.jsxIdentifier(axis.name), t.stringLiteral(value)));
       }
     }
-    return t.jsxElement(t.jsxOpeningElement(t.jsxIdentifier(name), attrs, true), null, [], true);
+    // Navigation on an instance: a Pressable-rooted component forwards onPress
+    // (emitComponent adds the prop), so pass the handler straight through —
+    // wrapping in another Pressable would let the inner one swallow the touch.
+    const navTarget = navTargets?.[node.id];
+    if (navTarget && definition?.template.type === "Pressable") {
+      attrs.push(navPressAttr(navTarget));
+    }
+    const element = t.jsxElement(
+      t.jsxOpeningElement(t.jsxIdentifier(name), attrs, true),
+      null,
+      [],
+      true,
+    );
+    if (navTarget && definition && definition.template.type !== "Pressable") {
+      used.add("Pressable");
+      return t.jsxElement(
+        t.jsxOpeningElement(t.jsxIdentifier("Pressable"), [navPressAttr(navTarget)], false),
+        t.jsxClosingElement(t.jsxIdentifier("Pressable")),
+        [element],
+        false,
+      );
+    }
+    return element;
   }
 
   function build(node: Node): t.Expression {

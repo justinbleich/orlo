@@ -61,18 +61,25 @@ async function withClient(run: (client: Client, bridge: FakeBridge) => Promise<v
   }
 }
 
-test("registers the complete Phase 5 tool surface", async () => {
+test("registers the complete tool surface", async () => {
   await withClient(async (client) => {
     const tools = await client.listTools();
     assert.deepEqual(
       tools.tools.map((tool) => tool.name).sort(),
       [
+        "create_component",
         "create_frame",
+        "create_screen",
         "delete_frame",
         "get_canvas_screenshot",
         "get_code",
         "get_status",
         "get_tree",
+        "insert_node",
+        "place_instance",
+        "remove_node",
+        "rename_screen",
+        "set_instance",
         "set_style",
         "update_node",
       ],

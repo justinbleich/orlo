@@ -4,6 +4,7 @@
  * everything here is theme-token-styled and never touches RN artboard content.
  */
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -19,7 +20,6 @@ import {
   MousePointer2,
   MousePointerClick,
   MoveVertical,
-  Pencil,
   Plus,
   Route,
   Square,
@@ -36,15 +36,16 @@ import {
   findNode,
   findRootContaining,
   getParent,
-  RN_PRIMITIVES,
   useDocumentStore,
   type NodeId,
   type RNPrimitive,
 } from "@rn-canvas/document";
 import { Menu } from "@base-ui/react/menu";
+import { toComponentFileName } from "./component-name";
 import { color, radius, space, text } from "./studio-theme";
 import { type CanvasTool, useStudioStore } from "./studio-store";
-import { cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
+import { Button, cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Tooltip } from "./studio-ui";
+import { useWorkspaceStore } from "./workspace-store";
 import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
 import { TokensPanel } from "./TokensPanel";
@@ -94,19 +95,6 @@ function writeLeftPanelCollapseState(state: LeftPanelCollapseState) {
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <div className="eyebrow">{children}</div>;
-}
-
-/** A PascalCase identifier for a component name (falls back to "Component"). */
-function pascalCase(input: string): string {
-  const pascal = input
-    .replace(/[^A-Za-z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join("");
-  if (!pascal) return "Component";
-  return /^[A-Z]/.test(pascal) ? pascal : `C${pascal}`;
 }
 
 function gitStatusCode(file: GitFileStatus): string {
@@ -282,7 +270,12 @@ export function ToolRail({
   const armedTool = useStudioStore((s) => s.armedTool);
   const armedComponentId = useStudioStore((s) => s.armedComponentId);
   const setArmedTool = useStudioStore((s) => s.setArmedTool);
-  const arm = (type: RNPrimitive) => setArmedTool(armedTool === type ? null : type);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
+  const arm = (type: RNPrimitive) => {
+    const next = armedTool === type ? null : type;
+    setArmedTool(next);
+    setStatus(next ? `${next} — drag to draw · Esc to cancel` : `${type} placement canceled`);
+  };
   const idle = armedTool === null && armedComponentId === null;
 
   const tools: (RailTool & { active?: boolean })[] = [
@@ -386,6 +379,7 @@ function InsertMenu({
   const components = useDocumentStore((s) => s.components);
   const armedComponentId = useStudioStore((s) => s.armedComponentId);
   const setArmedComponent = useStudioStore((s) => s.setArmedComponent);
+  const setStatus = useWorkspaceStore((s) => s.setStatus);
   const componentList = Object.values(components);
   const armedInMenu =
     INSERT_ITEMS.some((i) => i.type === armedTool) || armedComponentId !== null;
@@ -431,9 +425,15 @@ function InsertMenu({
                 {componentList.map((comp) => (
                   <Menu.Item
                     key={comp.id}
-                    onClick={() =>
-                      setArmedComponent(comp.id === armedComponentId ? null : comp.id)
-                    }
+                    onClick={() => {
+                      const next = comp.id === armedComponentId ? null : comp.id;
+                      setArmedComponent(next);
+                      setStatus(
+                        next
+                          ? `${comp.name} ready to place. Click or drag on a screen · Esc to cancel`
+                          : `${comp.name} placement canceled`,
+                      );
+                    }}
                     className={cn(
                       "flex cursor-default items-center gap-sm rounded-sm px-sm py-menu-y text-sm outline-none data-[highlighted]:bg-raised data-[highlighted]:text-ink",
                       comp.id === armedComponentId
@@ -491,6 +491,8 @@ export function LeftPanel({
   onOpenChanges,
   onOpenRepoScreen = () => {},
   onRenameRepoScreen = () => {},
+  onOpenComponent = () => {},
+  onCreateComponentFromSelection = () => {},
   screenFlowBadges = {},
   gitStatus,
   sidecarPath,
@@ -513,6 +515,8 @@ export function LeftPanel({
   onOpenChanges: () => void;
   onOpenRepoScreen: (screen: RepoPanelScreen) => void;
   onRenameRepoScreen: (screen: RepoPanelScreen, name: string) => void;
+  onOpenComponent?: (componentId: NodeId) => void;
+  onCreateComponentFromSelection?: (rootId: NodeId, nodeId: NodeId) => void;
   screenFlowBadges?: ScreenFlowBadges;
   gitStatus: PanelGitStatus;
   sidecarPath: string;
@@ -524,10 +528,9 @@ export function LeftPanel({
   const selection = useDocumentStore((state) => state.selection);
   const setSelection = useDocumentStore((state) => state.setSelection);
   const components = useDocumentStore((state) => state.components);
-  const promoteToComponent = useDocumentStore((state) => state.promoteToComponent);
   const removeComponent = useDocumentStore((state) => state.removeComponent);
   const editingComponentId = useDocumentStore((state) => state.editingComponentId);
-  const beginComponentEdit = useDocumentStore((state) => state.beginComponentEdit);
+  const setStatus = useWorkspaceStore((state) => state.setStatus);
   const tokens = useDocumentStore((state) => state.tokens);
   const addToken = useDocumentStore((state) => state.addToken);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
@@ -537,6 +540,11 @@ export function LeftPanel({
   );
   const [editingScreenPath, setEditingScreenPath] = useState<string | null>(null);
   const [screenNameDraft, setScreenNameDraft] = useState("");
+  const [confirmDeleteComponent, setConfirmDeleteComponent] = useState<{
+    id: NodeId;
+    name: string;
+    usageCount: number;
+  } | null>(null);
   const selectedId = selection[0] ?? null;
   const rootList = Object.values(roots);
   const focusedRoot = findRootContaining(rootList, selectedId ?? "");
@@ -566,6 +574,21 @@ export function LeftPanel({
     canDeleteLayer &&
     selectedNode?.type !== "ComponentInstance";
   const componentList = Object.values(components);
+  const componentGroups = componentList.reduce(
+    (groups, comp) => {
+      const parts = comp.name.split(".");
+      const group = parts.length > 1 ? parts.slice(0, -1).join(".") : "";
+      const label = parts.at(-1) || comp.name;
+      let current = groups.find((item) => item.group === group);
+      if (!current) {
+        current = { group, items: [] };
+        groups.push(current);
+      }
+      current.items.push({ comp, label });
+      return groups;
+    },
+    [] as { group: string; items: { comp: (typeof componentList)[number]; label: string }[] }[],
+  );
 
   useEffect(() => {
     writeLeftPanelCollapseState({
@@ -574,19 +597,21 @@ export function LeftPanel({
     });
   }, [collapsedLayerRoots]);
 
-  function createComponent() {
-    if (!focusedRoot || !selectedId || !selectedNode) return;
-    const pascal = pascalCase(selectedNode.design?.name ?? selectedNode.type);
-    // Avoid auto-naming a component exactly like an RN primitive (e.g. "Text",
-    // "View"), which would shadow the imported primitive in generated screens.
-    const base = (RN_PRIMITIVES as readonly string[]).includes(pascal)
-      ? `${pascal}Component`
-      : pascal;
-    const taken = new Set(componentList.map((comp) => comp.name));
-    let name = base;
-    for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
-    promoteToComponent(focusedRoot.id, selectedId, name);
-  }
+  useEffect(() => {
+    if (!editingComponentId) return;
+    setCollapsedLayerRoots((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const root of Object.values(roots)) {
+        const key = layerCollapseKey(root);
+        if (next[key] !== true) {
+          next[key] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [editingComponentId, roots]);
 
   const tokenList = Object.values(tokens);
   function createToken(category: "color" | "spacing" | "fontSize") {
@@ -654,7 +679,10 @@ export function LeftPanel({
                 {horizontal ? <ArrowRight size={16} aria-hidden="true" /> : <ArrowDown size={16} aria-hidden="true" />}
               </PanelAction>
               <PanelAction
-                onClick={createComponent}
+                onClick={() => {
+                  if (!focusedRoot || !selectedId) return;
+                  onCreateComponentFromSelection(focusedRoot.id, selectedId);
+                }}
                 disabled={!canMakeComponent}
                 title="Create component"
               >
@@ -940,46 +968,76 @@ export function LeftPanel({
           {componentList.length === 0 ? (
             <p className="m-0 px-sm text-xs text-ink-faint">No components yet.</p>
           ) : (
-            componentList.map((comp) => {
-              const armed = armedComponentId === comp.id;
-              const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${comp.name}.tsx`);
-              return (
-                <PanelRow
-                  key={comp.id}
-                  icon={Component}
-                  onClick={() => {
-                    setArmedComponent(armed ? null : comp.id);
-                    onWorkspaceChange("Component");
-                  }}
-                  title={armed ? "Click a screen to place, or click to disarm" : "Arm to place an instance"}
-                  active={workspace === "Component" || armed}
-                  action={(
-                    <>
-                      <PanelAction
-                        onClick={() => {
-                          beginComponentEdit(comp.id);
-                          onWorkspaceChange("Component");
-                        }}
-                        title="Edit component"
-                        className={rowAction}
-                      >
-                        <Pencil size={14} aria-hidden="true" />
-                      </PanelAction>
-                      <PanelAction
-                        onClick={() => removeComponent(comp.id)}
-                        title="Delete component"
-                        className={rowAction}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </PanelAction>
-                    </>
-                  )}
-                >
-                  <span className="min-w-0 flex-1 truncate">{comp.name}</span>
-                  <GitBadge code={componentGitCode} title={`generated/components/${comp.name}.tsx`} />
-                </PanelRow>
-              );
-            })
+            componentGroups.map(({ group, items }) => (
+              <div key={group || "__flat"} className="flex flex-col gap-xs">
+                {group && (
+                  <div className="px-sm pt-xs text-2xs font-semibold uppercase tracking-[0.12em] text-ink-faint">
+                    {group}
+                  </div>
+                )}
+                {items.map(({ comp, label }) => {
+                  const armed = armedComponentId === comp.id;
+                  const componentFileName = toComponentFileName(comp.name);
+                  const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${componentFileName}.tsx`);
+                  return (
+                    <PanelRow
+                      key={comp.id}
+                      icon={Component}
+                      onClick={() => {
+                        setArmedComponent(null);
+                        onOpenComponent(comp.id);
+                      }}
+                      title={`Edit ${comp.name}`}
+                      active={editingComponentId === comp.id || armed}
+                      action={(
+                        <>
+                          <PanelAction
+                            onClick={() => {
+                              if (editingComponentId) {
+                                setStatus("Finish component edit before placing components");
+                                return;
+                              }
+                              const nextArmed = armed ? null : comp.id;
+                              setArmedComponent(nextArmed);
+                              setStatus(
+                                nextArmed
+                                  ? `${comp.name} ready to place. Click or drag on a screen · Esc to cancel`
+                                  : `${comp.name} placement canceled`,
+                              );
+                              if (nextArmed) onWorkspaceChange("Screen");
+                            }}
+                            title={armed ? "Cancel placing component" : "Place component"}
+                            className={rowAction}
+                          >
+                            <MousePointerClick size={14} aria-hidden="true" />
+                          </PanelAction>
+                          <PanelAction
+                            onClick={() => {
+                              const usageCount = useDocumentStore
+                                .getState()
+                                .getComponentUsage(comp.id).length;
+                              setConfirmDeleteComponent({ id: comp.id, name: comp.name, usageCount });
+                            }}
+                            title="Delete component"
+                            className={rowAction}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                          </PanelAction>
+                        </>
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{label}</span>
+                      {group && (
+                        <span className="max-w-20 truncate text-2xs text-ink-faint">
+                          {componentFileName}
+                        </span>
+                      )}
+                      <GitBadge code={componentGitCode} title={`generated/components/${componentFileName}.tsx`} />
+                    </PanelRow>
+                  );
+                })}
+              </div>
+            ))
           )}
         </PanelSection>
 
@@ -1039,6 +1097,61 @@ export function LeftPanel({
           </section>
         )}
       </div>
+      {confirmDeleteComponent && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-md"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setConfirmDeleteComponent(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-component-title"
+            className="studio-chrome w-[min(420px,100%)] rounded-sm border border-line bg-chrome shadow-popover"
+          >
+            <div className="flex items-start gap-sm border-b border-line-soft p-lg">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-amber/50 bg-amber/10 text-amber">
+                <AlertTriangle size={16} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div id="delete-component-title" className="break-words text-sm font-semibold text-ink">
+                  Delete {confirmDeleteComponent.name}?
+                </div>
+                <div className="mt-2xs text-xs text-ink-faint">
+                  {confirmDeleteComponent.usageCount > 0
+                    ? `Used by ${confirmDeleteComponent.usageCount} placed instance${
+                        confirmDeleteComponent.usageCount === 1 ? "" : "s"
+                      } — deleting removes the definition they reference.`
+                    : "No placed instances on open screens."}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-xs border-t border-line-soft p-md">
+              <Button variant="ghost" onClick={() => setConfirmDeleteComponent(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                className="border-amber bg-amber text-chrome hover:bg-amber"
+                onClick={() => {
+                  const target = confirmDeleteComponent;
+                  setConfirmDeleteComponent(null);
+                  try {
+                    removeComponent(target.id);
+                    setStatus(`Deleted ${target.name}`);
+                  } catch (error) {
+                    setStatus(error instanceof Error ? error.message : "Component delete failed");
+                  }
+                }}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

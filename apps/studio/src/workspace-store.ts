@@ -10,6 +10,8 @@
  */
 import { create } from "zustand";
 import {
+  childrenOf,
+  collectUsedComponentIds,
   useDocumentStore,
   type ComponentRegistry,
   type Node,
@@ -28,11 +30,13 @@ import {
   displayScreenName,
   type RepoPanelContext,
 } from "./repo-project-model";
+import { mergeLoadedTokens } from "./token-merge";
 import { createScreenFrame, nextScreenName } from "./document-actions";
 import {
   addFlowEdge,
   deriveLinearEdges,
   flowRouteScreens,
+  pruneFlowEdges,
   resolveFlowRouteIdMap,
   flowScreenKey,
   flowScreenName,
@@ -268,10 +272,18 @@ function flowDefinitionsToManifest(
       const routeScreens = flowRouteScreens(screenRoots, flow.id, flow.routes);
       const routeIds = routeScreens.map((root) => root.id);
       const routeSet = new Set(routeIds);
-      const entry =
+      // Entry: an explicit selection wins; otherwise the manifest's entry path is
+      // authoritative even while its screen hasn't hydrated yet (serializing the
+      // "first loaded screen" default would clobber the authored entry).
+      const explicitEntry =
         (flow.entryRootId
           ? routeScreens.find((root) => root.id === flow.entryRootId)
-          : undefined) ?? routeScreens[0];
+          : undefined) ??
+        (flow.manifestEntryPath
+          ? routeScreens.find((root) => byRoot.get(root.id)?.path === flow.manifestEntryPath)
+          : undefined);
+      const entry =
+        explicitEntry ?? (flow.manifestEntryPath ? undefined : routeScreens[0]);
       const success = flow.successRootId
         ? routeScreens.find((root) => root.id === flow.successRootId)
         : undefined;
@@ -296,7 +308,25 @@ function flowDefinitionsToManifest(
         if (route.path && liveRouteKeys.has(`path:${route.path}`)) return false;
         return true;
       });
-      const routes = [...liveRoutes, ...preservedRoutes];
+      // Screens hydrate one at a time, and each round-trip would otherwise put
+      // resolved routes ahead of still-unresolved manifest routes — whichever
+      // screen loads first ratchets to position 1. The manifest's authored order
+      // is the sort key; genuinely new routes append in their live order.
+      const manifestIndex = new Map<string, number>();
+      (flow.manifestRoutes ?? []).forEach((route, index) => {
+        if (route.path) manifestIndex.set(`path:${route.path}`, index);
+        if (route.rootId) manifestIndex.set(`root:${route.rootId}`, index);
+      });
+      const manifestOrderOf = (route: { rootId?: string; path?: string }) =>
+        (route.path ? manifestIndex.get(`path:${route.path}`) : undefined) ??
+        (route.rootId ? manifestIndex.get(`root:${route.rootId}`) : undefined);
+      const combinedRoutes = [...liveRoutes, ...preservedRoutes];
+      const routes = [
+        ...combinedRoutes
+          .filter((route) => manifestOrderOf(route) !== undefined)
+          .sort((a, b) => manifestOrderOf(a)! - manifestOrderOf(b)!),
+        ...combinedRoutes.filter((route) => manifestOrderOf(route) === undefined),
+      ];
       const pathForRoot = (rootId?: NodeId) => (rootId ? byRoot.get(rootId)?.path : undefined);
       const liveEdges =
         flow.edges.length > 0
@@ -320,7 +350,19 @@ function flowDefinitionsToManifest(
             : "",
         ]),
       );
+      const routePaths = new Set(liveRoutes.map((route) => route.path).filter(Boolean));
       const preservedEdges = (flow.manifestEdges ?? []).filter((edge) => {
+        // Derived linear edges are owned by the live route order — stale copies
+        // from a previous ordering must not accumulate. Only authored edges
+        // (anchored or conditional) survive the merge.
+        if (edge.kind === "primary" && !edge.from.anchorNodeId) {
+          const fromInFlow =
+            (edge.from.rootId && routeSet.has(edge.from.rootId)) ||
+            (edge.from.path && routePaths.has(edge.from.path));
+          const toInFlow =
+            (edge.to && routeSet.has(edge.to)) || (edge.toPath && routePaths.has(edge.toPath));
+          if (fromInFlow && toInFlow) return false;
+        }
         const rootKey = `${edge.from.rootId ?? ""}->${edge.to ?? ""}:${edge.kind}:${edge.from.anchorNodeId ?? ""}`;
         const pathKey =
           edge.from.path && edge.toPath
@@ -501,6 +543,9 @@ interface WorkspaceState {
   setFlowEntryRoot(flowId: string, rootId: NodeId): Promise<void>;
   updateFlowRoutes(flowId: string, routeIds: NodeId[], screenRoots?: Node[]): Promise<void>;
   addFlowEdge(flowId: string, edge: FlowEdge): Promise<void>;
+  /** Remove one edge (wire) from a flow. Removing an anchored wire re-syncs the
+   *  source screen so its generated navigation handler is dropped too. */
+  removeFlowEdge(flowId: string, edge: FlowEdge): Promise<void>;
   hydrateRepoFlows(flows: FlowDefinition[]): void;
   upsertFlow(flow: FlowDefinition): Promise<void>;
   removeFlow(flowId: string): Promise<void>;
@@ -513,6 +558,7 @@ interface WorkspaceState {
   ): Promise<CodegenResult | null>;
   scheduleAutoSync(): void;
   openSidecar(path?: string, mode?: "replace" | "merge"): Promise<void>;
+  hydrateSidecarComponents(path: string): Promise<void>;
   importSource(path?: string, mode?: "replace" | "merge"): Promise<void>;
   connectRepo(): Promise<void>;
   selectRepoFolder(): Promise<void>;
@@ -536,18 +582,75 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     void get().refreshHeads(artifacts);
   };
 
+  /** expo-router href for an app/ screen file (mirrors the host's expoHrefForPath). */
+  const hrefForScreenPath = (path: string): string | null => {
+    const normalized = path.replace(/\\/g, "/");
+    const appIndex = normalized.indexOf("app/");
+    if (appIndex === -1) return null;
+    const parts = normalized.slice(appIndex + 4).split("/");
+    const last = parts[parts.length - 1];
+    if (!last) return "/";
+    const base = last.replace(/\.[^.]+$/, "");
+    if (base === "_layout" || base.startsWith("+")) return "/";
+    const segments = [...parts.slice(0, -1), base]
+      .filter((part) => !part.startsWith("("))
+      .filter((part) => part !== "index")
+      .map((part) => part.replace(/^\[(.+)\]$/, ":$1"));
+    return `/${segments.join("/")}`.replace(/\/+$/, "") || "/";
+  };
+
+  /**
+   * Anchored flow edges out of this screen → { documentNodeId: route href }.
+   * Computed on every sync so navigation written by flow wiring survives later
+   * regenerations instead of being silently dropped. Anchor ids recorded from
+   * expanded previews are `instanceId::templateNodeId`; the document node the
+   * emitter can match is the instance.
+   */
+  const navTargetsForRoot = (rootId: NodeId): Record<string, string> | undefined => {
+    const state = get();
+    const screensByRootId = new Map(
+      Object.values(state.loadedRepoScreens).map((screen) => [screen.rootId, screen]),
+    );
+    const targets: Record<string, string> = {};
+    for (const flow of flowsFromState(state)) {
+      for (const edge of flow.edges) {
+        if (edge.from.rootId !== rootId || !edge.from.anchorNodeId) continue;
+        const targetPath =
+          screensByRootId.get(edge.to)?.path ?? (edge as { toPath?: string }).toPath;
+        if (!targetPath) continue;
+        const href = hrefForScreenPath(targetPath);
+        if (!href) continue;
+        targets[edge.from.anchorNodeId.split("::")[0]] = href;
+      }
+    }
+    return Object.keys(targets).length > 0 ? targets : undefined;
+  };
+
+  // Only the components this screen actually uses (transitively). Writing the
+  // whole session registry into every sidecar spreads component sets into
+  // unrelated screens, and stale copies later collide by name on open.
+  const usedComponentsFor = (root: Node): ComponentRegistry => {
+    const components = useDocumentStore.getState().components;
+    const usedIds = collectUsedComponentIds(root, components);
+    return Object.fromEntries(
+      usedIds.filter((id) => components[id]).map((id) => [id, components[id]]),
+    );
+  };
+
   const postCodegen = async (
     mode: "preview" | "sync",
     payload: { root: Node; screenName: string; targetPath: string; ifAbsent?: boolean },
   ): Promise<CodegenResult> => {
     const state = useDocumentStore.getState();
+    const usedComponents = usedComponentsFor(payload.root);
     const res = await fetch(`/api/codegen/${mode}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...payload,
-        components: state.components,
+        components: usedComponents,
         tokens: state.tokens,
+        navTargets: navTargetsForRoot(payload.root.id),
       }),
     });
     const body = await res.json();
@@ -631,12 +734,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         if (source === "manual") set({ activeArtifactId: "screen" });
       }
       workspaceFlags.managedDocument = true;
+      const statusPath = displayResult?.targetPath ?? (paths.length === 1 ? paths[0] : `${paths.length} files`);
       set({
         syncState: {
           status: "synced",
-          path: paths.length === 1 ? paths[0] : `${paths.length} files`,
+          path: statusPath,
         },
-        status: `${source === "auto" ? "Autosynced" : "Synced"} ${paths.join(" · ")}`,
+        status: `${source === "auto" ? "Autosynced" : "Synced"} ${statusPath}`,
       });
       void get().refreshGitStatus();
       void get().loadRepoContext();
@@ -711,6 +815,65 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     return true;
   };
 
+  /** Rewrite ComponentInstance references per the id map (recursive, clone-on-write). */
+  const remapInstanceComponentIds = (node: Node, idMap: Map<string, string>): Node => {
+    if (node.type === "ComponentInstance") {
+      const mapped = idMap.get(node.componentId);
+      const slots = node.slots
+        ? Object.fromEntries(
+            Object.entries(node.slots).map(([name, kids]) => [
+              name,
+              kids.map((kid) => remapInstanceComponentIds(kid, idMap)),
+            ]),
+          )
+        : undefined;
+      if (!mapped && !slots) return node;
+      return { ...node, ...(mapped ? { componentId: mapped } : {}), ...(slots ? { slots } : {}) };
+    }
+    const kids = childrenOf(node);
+    if (kids.length === 0) return node;
+    const nextKids = kids.map((kid) => remapInstanceComponentIds(kid, idMap));
+    if (nextKids.every((kid, i) => kid === kids[i])) return node;
+    return { ...node, children: nextKids } as Node;
+  };
+
+  /**
+   * Reconcile an opened sidecar's components with the live registry by name:
+   * a definition whose name already exists in the session under a different id
+   * (id drift across sessions/tools) is dropped in favor of the session's, and
+   * the incoming tree's instances are remapped. Without this, merge-opening the
+   * drifted screen fails registry validation ("duplicate component name").
+   */
+  const reconcileIncomingComponents = (
+    existing: ComponentRegistry,
+    incoming: ComponentRegistry | undefined,
+    root: Node,
+  ): { components: ComponentRegistry | undefined; root: Node; remapped: number } => {
+    if (!incoming) return { components: incoming, root, remapped: 0 };
+    const existingByName = new Map(
+      Object.entries(existing).map(([id, def]) => [def.name, id]),
+    );
+    const idMap = new Map<string, string>();
+    for (const [id, def] of Object.entries(incoming)) {
+      const existingId = existingByName.get(def.name);
+      if (existingId && existingId !== id && !existing[id]) idMap.set(id, existingId);
+    }
+    if (idMap.size === 0) return { components: incoming, root, remapped: 0 };
+    const kept = Object.fromEntries(
+      Object.entries(incoming)
+        .filter(([id]) => !idMap.has(id))
+        .map(([id, def]) => [
+          id,
+          { ...def, template: remapInstanceComponentIds(def.template, idMap) },
+        ]),
+    );
+    return {
+      components: kept,
+      root: remapInstanceComponentIds(root, idMap),
+      remapped: idMap.size,
+    };
+  };
+
   const openLoadedDocument = (opts: {
     mode: "replace" | "merge";
     root: Node;
@@ -741,13 +904,35 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     ) {
       delete nextRoots[previousLoadedScreen.rootId];
     }
-    nextRoots[opts.root.id] = opts.root;
-    const nextComponents =
+    const reconciled =
       opts.mode === "merge"
-        ? { ...state.components, ...(opts.components ?? {}) }
-        : opts.components;
-    const nextTokens =
-      opts.mode === "merge" ? { ...state.tokens, ...(opts.tokens ?? {}) } : opts.tokens;
+        ? reconcileIncomingComponents(state.components, opts.components, opts.root)
+        : { components: opts.components, root: opts.root, remapped: 0 };
+    const openedRoot = reconciled.root;
+    if (reconciled.remapped > 0 && get().activeRepoScreen) {
+      // The file will be rewritten with the session ids on the next sync.
+      set({
+        status: `Reconciled ${reconciled.remapped} shared component${
+          reconciled.remapped === 1 ? "" : "s"
+        } by name`,
+      });
+    }
+    const rawNextComponents =
+      opts.mode === "merge"
+        ? { ...state.components, ...(reconciled.components ?? {}) }
+        : reconciled.components;
+    const tokenMerge =
+      opts.mode === "merge"
+        ? mergeLoadedTokens({
+            existing: state.tokens,
+            incoming: opts.tokens,
+            root: openedRoot,
+            components: rawNextComponents,
+          })
+        : { tokens: opts.tokens, root: openedRoot, components: rawNextComponents };
+    nextRoots[opts.root.id] = tokenMerge.root;
+    const nextComponents = tokenMerge.components;
+    const nextTokens = tokenMerge.tokens;
     state.loadRoots(nextRoots, [opts.root.id], nextComponents, nextTokens);
     studioHooks.onRepoDocumentOpened(opts.root.id);
     const repoScreen: ActiveRepoScreen = {
@@ -1224,13 +1409,39 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       if (!flow) return;
       const routes = routeIds.filter((rootId, index) => routeIds.indexOf(rootId) === index);
       const routeSet = new Set(routes);
+      // The manifest route order is the authoritative sort key across hydration
+      // round-trips, so an authored reorder must rewrite it too.
+      const { byRoot } = screenPathMap(get().loadedRepoScreens);
+      const previousManifestRoutes = flow.manifestRoutes ?? [];
+      const manifestByRoot = new Map(
+        previousManifestRoutes.filter((route) => route.rootId).map((route) => [route.rootId!, route]),
+      );
+      const manifestByPath = new Map(
+        previousManifestRoutes.filter((route) => route.path).map((route) => [route.path!, route]),
+      );
+      const manifestRoutes = routes.map((rootId) => {
+        const path = byRoot.get(rootId)?.path;
+        return (
+          manifestByRoot.get(rootId) ??
+          (path ? manifestByPath.get(path) : undefined) ?? { rootId, path, name: "" }
+        );
+      });
       const nextFlow = {
         ...flow,
         routes,
+        manifestRoutes,
         entryRootId: flow.entryRootId && routeSet.has(flow.entryRootId) ? flow.entryRootId : routes[0],
         successRootId:
           flow.successRootId && routeSet.has(flow.successRootId) ? flow.successRootId : undefined,
-        edges: deriveLinearEdges(routes),
+        // Re-derive the linear backbone, but keep authored edges (anchored or
+        // conditional) — reordering routes must not sever wired navigation.
+        edges: [
+          ...pruneFlowEdges(
+            flow.edges.filter((edge) => edge.kind !== "primary" || edge.from.anchorNodeId),
+            routes,
+          ),
+          ...deriveLinearEdges(routes),
+        ],
       };
       const nextFlows = flowsFromState(get()).map((item) =>
         item.id === flowId ? nextFlow : item,
@@ -1271,10 +1482,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           operation: "add-edge",
           sourcePath: source.path,
           targetPath: target.path,
-          anchorNodeId: edge.from.anchorNodeId,
+          // Preview anchors are instanceId::templateNodeId; the emitter matches
+          // document node ids, i.e. the instance.
+          anchorNodeId: edge.from.anchorNodeId.split("::")[0],
           root,
           screenName: source.screenName,
-          components: doc.components,
+          components: usedComponentsFor(root),
           tokens: doc.tokens,
         }),
       });
@@ -1283,6 +1496,52 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       applyCodegenResult(body);
       void get().refreshGitStatus();
       void get().loadRepoContext();
+    },
+
+    removeFlowEdge: async (flowId, edge) => {
+      const flow = get().flowsById[flowId];
+      if (!flow) return;
+      const liveKey = (candidate: FlowEdge) =>
+        [
+          candidate.from.rootId,
+          candidate.from.anchorNodeId ?? "",
+          candidate.to,
+          candidate.kind,
+          candidate.condition ?? "",
+        ].join("|");
+      const removedKey = liveKey(edge);
+      const nextEdges = flow.edges.filter((candidate) => liveKey(candidate) !== removedKey);
+      // Also drop the matching manifest copy — the manifest merge preserves
+      // authored edges it can't derive, which would resurrect the removed wire.
+      const nextManifestEdges = (flow.manifestEdges ?? []).filter(
+        (candidate) =>
+          !(
+            (candidate.from.rootId ?? "") === edge.from.rootId &&
+            (candidate.from.anchorNodeId ?? "") === (edge.from.anchorNodeId ?? "") &&
+            (candidate.to ?? "") === edge.to &&
+            candidate.kind === edge.kind
+          ),
+      );
+      if (
+        nextEdges.length === flow.edges.length &&
+        nextManifestEdges.length === (flow.manifestEdges ?? []).length
+      ) {
+        return;
+      }
+      const nextFlow = { ...flow, edges: nextEdges, manifestEdges: nextManifestEdges };
+      const nextFlows = flowsFromState(get()).map((item) =>
+        item.id === flowId ? nextFlow : item,
+      );
+      set((state) => ({ flowsById: { ...state.flowsById, [flowId]: nextFlow } }));
+      await get().persistFlowManifest(nextFlows);
+      if (edge.from.anchorNodeId && useDocumentStore.getState().roots[edge.from.rootId]) {
+        // Re-sync the source screen so the generated onPress handler disappears.
+        dirtyRoots.add(edge.from.rootId);
+        get().scheduleAutoSync();
+        set({ status: "Removed wire; source screen re-syncing" });
+      } else {
+        set({ status: "Removed flow edge" });
+      }
     },
 
     hydrateRepoFlows: (flows) => {
@@ -1446,6 +1705,49 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         get().pushToast(message);
       } finally {
         set({ codegenBusy: false });
+      }
+    },
+
+    hydrateSidecarComponents: async (path) => {
+      try {
+        const res = await fetch("/api/documents/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sidecarPath: path }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        const opened = body as OpenDocumentResult;
+        if (
+          Object.keys(opened.components ?? {}).length === 0 &&
+          Object.keys(opened.tokens ?? {}).length === 0
+        ) {
+          return;
+        }
+        workspaceFlags.skipTokenWrite = true;
+        workspaceFlags.skipCodeSync = true;
+        const state = useDocumentStore.getState();
+        const reconciled = reconcileIncomingComponents(
+          state.components,
+          opened.components,
+          opened.root,
+        );
+        const rawNextComponents = { ...state.components, ...(reconciled.components ?? {}) };
+        const tokenMerge = mergeLoadedTokens({
+          existing: state.tokens,
+          incoming: opened.tokens,
+          root: reconciled.root,
+          components: rawNextComponents,
+        });
+        state.loadRoots(
+          state.roots,
+          state.selection,
+          tokenMerge.components,
+          tokenMerge.tokens,
+        );
+      } catch {
+        // Component hydration is opportunistic; opening a screen still surfaces
+        // any document-specific load errors in the normal user-facing path.
       }
     },
 
@@ -1691,3 +1993,5 @@ export function initWorkspaceSubscriptions(): () => void {
     }
   };
 }
+
+

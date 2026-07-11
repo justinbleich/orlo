@@ -18,6 +18,9 @@ import {
   ArrowUp,
   Boxes,
   Check,
+  ChevronDown,
+  ChevronRight,
+  Component as ComponentIcon,
   Copy,
   Eye,
   EyeOff,
@@ -29,11 +32,13 @@ import {
   MoveVertical,
   List as ListIcon,
   Pencil,
+  RotateCcw,
   Square,
   TextCursorInput,
   Trash2,
   Type as TypeIcon,
   Ungroup as UngroupIcon,
+  Unlink,
   Unlock,
   X,
   type LucideIcon,
@@ -41,6 +46,7 @@ import {
 import {
   canHaveChildren,
   childrenOf,
+  createNode,
   findNode,
   getParent,
   isContainer,
@@ -99,6 +105,7 @@ import {
   distributionDeltas,
   type ArrangeAlignment,
 } from "./canvas-arrange";
+import { resolveStyleEditTarget } from "./variant-workspace";
 
 const TYPE_ICON: Record<RNPrimitive, LucideIcon> = {
   View: Square,
@@ -163,7 +170,7 @@ function dimHint(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-export function Inspector({ rootId }: { rootId: NodeId | null }) {
+export function Inspector({ rootId, embedded = false }: { rootId: NodeId | null; embedded?: boolean }) {
   const root = useDocumentStore((s) => (rootId ? s.roots[rootId] : undefined));
   const layoutResult = useStudioStore((state) =>
     rootId ? state.layouts[rootId] : undefined,
@@ -175,7 +182,10 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   const componentRegistry = useDocumentStore((s) => s.components);
   const editingComponentId = useDocumentStore((s) => s.editingComponentId);
   const beginComponentEdit = useDocumentStore((s) => s.beginComponentEdit);
+  const resetInstanceOverrides = useDocumentStore((s) => s.resetInstanceOverrides);
   const [error, setError] = useState<string | null>(null);
+  const wrap = (children: React.ReactNode) =>
+    embedded ? <>{children}</> : <Shell>{children}</Shell>;
 
   const nodes = root
     ? normalizeNodeSelection(root, selection)
@@ -195,11 +205,16 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
       ? componentRegistry[editingComponentId]
       : undefined;
   const variantProperties = editingDef?.variants ?? [];
-  const activeValues = variantProperties.length ? resolveVariant(editingDef!, activeVariant) : null;
-  const isDefaultVariant =
-    !activeValues || variantProperties.every((p) => activeValues[p.name] === p.values[0]);
-  const variantEditing =
-    !!activeValues && !isDefaultVariant && !multi && !!primary && primary.type !== "ComponentInstance";
+  const editTarget = resolveStyleEditTarget({
+    editingComponentId,
+    definition: editingDef,
+    activeVariant,
+    nodeId: primary?.id,
+    nodeType: primary?.type,
+    multi,
+  });
+  const activeValues = editTarget.kind === "variant" ? editTarget.values : null;
+  const variantEditing = editTarget.kind === "variant" && !!primary;
   const variantOverrideStyle = variantEditing
     ? (editingDef!.combinations ?? [])
         .find((c) => variantProperties.every((p) => c.values[p.name] === activeValues![p.name]))
@@ -271,41 +286,35 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
   };
 
   if (!root) {
-    return (
-      <Shell>
-        <Empty>Select a frame to inspect.</Empty>
-      </Shell>
-    );
+    return wrap(<Empty>Select a frame to inspect.</Empty>);
   }
   if (nodes.length === 0) {
-    return (
-      <Shell>
-        <Empty>Select a layer to edit its properties.</Empty>
-      </Shell>
-    );
+    return wrap(<Empty>Select a layer to edit its properties.</Empty>);
   }
 
   // A placed instance edits its exposed-prop overrides, not raw style — its
   // structure comes from the definition (edit it via focus mode).
   if (!multi && primary.type === "ComponentInstance") {
-    return (
-      <Shell>
-        <SelectionHeader
-          nodes={nodes}
+    const definition = componentRegistry[primary.componentId];
+    return wrap(
+      <>
+        <InstanceHeader
+          instance={primary}
+          definition={definition}
           onName={(name) => setDesignAll({ name })}
           onLock={(locked) => setDesignAll({ locked })}
           onHide={(hidden) => setDesignAll({ hidden })}
+          onEditDefinition={() => beginComponentEdit(primary.componentId)}
+          onResetOverrides={() => {
+            try {
+              setError(null);
+              resetInstanceOverrides(root.id, primary.id);
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            }
+          }}
           {...editLifecycle}
         />
-        <div className="px-md">
-          <button
-            type="button"
-            onClick={() => beginComponentEdit(primary.componentId)}
-            className="flex w-full items-center justify-center gap-sm rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink transition-colors hover:bg-raised"
-          >
-            <Pencil size={14} aria-hidden="true" /> Edit component
-          </button>
-        </div>
         <ActionRow
           canUngroup={false}
           canGroup={false}
@@ -317,10 +326,10 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         <InstanceProperties
           rootId={root.id}
           instance={primary}
-          definition={componentRegistry[primary.componentId]}
+          definition={definition}
         />
         {error && <p className="px-md text-sm text-amber">{error}</p>}
-      </Shell>
+      </>,
     );
   }
 
@@ -517,8 +526,8 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
     }
   };
 
-  return (
-    <Shell>
+  return wrap(
+    <>
       <SelectionHeader
         nodes={nodes}
         onName={(name) => setDesignAll({ name })}
@@ -538,18 +547,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         />
       )}
 
-      {/* In focus mode: manage variant properties/values, and expose the selected
-          template layer's value as a component prop. */}
-      {editingComponentId === root.id && (
-        <VariantControls
-          componentId={root.id}
-          selectedNodeId={!multi && primary && primary.type !== "ComponentInstance" ? primary.id : null}
-        />
-      )}
-      {editingComponentId === root.id && (
-        <PropertiesControls componentId={root.id} node={!multi ? primary : null} />
-      )}
-
+      {/* Component focus mode wraps these visual controls in ComponentEditPanel. */}
       {(canArrangeAbsolute || canArrangeFlex) && (
         <Section title="Arrange">
           <div className="flex items-center gap-xs">
@@ -744,19 +742,19 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
         <Section title="Typography">
           {!multi && primary.type === "Text" && (
             <Field label="Content" stacked>
-              <TextField {...editLifecycle} value={primary.props.text} onChange={(v) => setPrimaryProp("text", v)} placeholder="Text…" />
+              <TextField {...editLifecycle} aria-label="Content" value={primary.props.text} onChange={(v) => setPrimaryProp("text", v)} placeholder="Text…" />
             </Field>
           )}
           <FieldGrid>
             <Field label="Size">
               {!multi ? (
-                <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="fontSize" label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} editLifecycle={editLifecycle} />
+                <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="fontSize" label="S" ariaLabel="Size" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} editLifecycle={editLifecycle} />
               ) : (
-                <NumberField {...editLifecycle} label="S" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
+                <NumberField {...editLifecycle} label="S" ariaLabel="Size" {...num("fontSize")} min={1} onChange={(v) => setStyle("fontSize", v)} />
               )}
             </Field>
             <Field label="Line height">
-              <NumberField {...editLifecycle} label="LH" {...num("lineHeight")} min={0} onChange={(v) => setStyle("lineHeight", v)} />
+              <NumberField {...editLifecycle} label="LH" ariaLabel="Line height" {...num("lineHeight")} min={0} onChange={(v) => setStyle("lineHeight", v)} />
             </Field>
           </FieldGrid>
           <Field label="Weight">
@@ -779,9 +777,9 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           </Field>
           <Field label="Color">
             {!multi ? (
-              <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="color" value={colorVal("color")} onChange={(v) => setStyle("color", v)} editLifecycle={editLifecycle} />
+              <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="color" ariaLabel="Color" value={colorVal("color")} onChange={(v) => setStyle("color", v)} editLifecycle={editLifecycle} />
             ) : (
-              <ColorField {...editLifecycle} value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
+              <ColorField {...editLifecycle} ariaLabel="Color" value={colorVal("color")} onChange={(v) => setStyle("color", v)} />
             )}
           </Field>
         </Section>
@@ -790,31 +788,31 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
       <Section title="Appearance">
         <Field label="Fill">
           {!multi ? (
-            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="backgroundColor" value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} editLifecycle={editLifecycle} />
+            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="backgroundColor" ariaLabel="Fill" value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} editLifecycle={editLifecycle} />
           ) : (
-            <ColorField {...editLifecycle} value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
+            <ColorField {...editLifecycle} ariaLabel="Fill" value={colorVal("backgroundColor")} onChange={(v) => setStyle("backgroundColor", v)} />
           )}
         </Field>
         <Field label="Opacity">
-          <NumberField {...editLifecycle} label="○" {...num("opacity")} min={0} max={1} step={0.05} onChange={(v) => setStyle("opacity", v)} />
+          <NumberField {...editLifecycle} label="○" ariaLabel="Opacity" {...num("opacity")} min={0} max={1} step={0.05} onChange={(v) => setStyle("opacity", v)} />
         </Field>
         <FieldGrid>
           <Field label="Border width">
-            <NumberField {...editLifecycle} label="W" {...num("borderWidth")} min={0} onChange={(v) => setStyle("borderWidth", v)} />
+            <NumberField {...editLifecycle} label="W" ariaLabel="Border width" {...num("borderWidth")} min={0} onChange={(v) => setStyle("borderWidth", v)} />
           </Field>
           <Field label="Radius">
             {!multi ? (
-              <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderRadius" label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} editLifecycle={editLifecycle} />
+              <NumberTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderRadius" label="R" ariaLabel="Radius" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} editLifecycle={editLifecycle} />
             ) : (
-              <NumberField {...editLifecycle} label="R" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
+              <NumberField {...editLifecycle} label="R" ariaLabel="Radius" {...num("borderRadius")} min={0} onChange={(v) => setStyle("borderRadius", v)} />
             )}
           </Field>
         </FieldGrid>
         <Field label="Border color">
           {!multi ? (
-            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderColor" value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} editLifecycle={editLifecycle} />
+            <ColorTokenSlot rootId={root.id} nodeId={primary.id} styleKey="borderColor" ariaLabel="Border color" value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} editLifecycle={editLifecycle} />
           ) : (
-            <ColorField {...editLifecycle} value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
+            <ColorField {...editLifecycle} ariaLabel="Border color" value={colorVal("borderColor")} onChange={(v) => setStyle("borderColor", v)} />
           )}
         </Field>
       </Section>
@@ -824,7 +822,7 @@ export function Inspector({ rootId }: { rootId: NodeId | null }) {
           {error}
         </div>
       )}
-    </Shell>
+    </>,
   );
 }
 
@@ -955,6 +953,100 @@ function SelectionHeader({
   );
 }
 
+function InstanceHeader({
+  instance,
+  definition,
+  onName,
+  onLock,
+  onHide,
+  onEditDefinition,
+  onResetOverrides,
+  onEditStart,
+  onEditEnd,
+  onEditCancel,
+}: {
+  instance: ComponentInstanceNode;
+  definition: ComponentDefinition | undefined;
+  onName: (name: string) => void;
+  onLock: (locked: boolean) => void;
+  onHide: (hidden: boolean) => void;
+  onEditDefinition: () => void;
+  onResetOverrides: () => void;
+  onEditStart: () => void;
+  onEditEnd: () => void;
+  onEditCancel: () => void;
+}) {
+  const propCount = definition?.props.length ?? 0;
+  const variantCount = definition?.variants?.length ?? 0;
+  const overrideCount = Object.keys(instance.overrides).length;
+  const slotCount = Object.keys(instance.slots ?? {}).length;
+  const variantOverrideCount = Object.keys(instance.variant ?? {}).length;
+  const totalOverrideCount = overrideCount + slotCount + variantOverrideCount;
+  const locked = !!instance.design?.locked;
+  const hidden = !!instance.design?.hidden;
+  return (
+    <div className="flex flex-col gap-sm border-b border-line px-md py-md">
+      <div className="flex items-start gap-sm">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-accent-soft text-accent">
+          <ComponentIcon size={14} aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="eyebrow">Instance</div>
+          <div className="mt-1 truncate text-sm font-semibold text-ink">
+            {definition?.name ?? "Missing component"}
+          </div>
+        </div>
+        <IconToggle title={locked ? "Unlock" : "Lock"} pressed={locked} onPressedChange={onLock}>
+          {locked ? <Lock size={14} aria-hidden="true" /> : <Unlock size={14} aria-hidden="true" />}
+        </IconToggle>
+        <IconToggle title={hidden ? "Show" : "Hide"} pressed={hidden} onPressedChange={onHide}>
+          {hidden ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
+        </IconToggle>
+      </div>
+      <input
+        value={instance.design?.name ?? ""}
+        placeholder="Instance name"
+        onFocus={onEditStart}
+        onBlur={onEditEnd}
+        onChange={(event) => {
+          onEditStart();
+          onName(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onEditCancel();
+        }}
+        className="h-7 min-w-0 rounded-sm border border-line-soft bg-chrome-2 px-sm text-sm text-ink transition-colors hover:border-line focus-visible:border-accent-line focus-visible:outline-none"
+      />
+      <div className="flex flex-wrap gap-xs text-2xs text-ink-faint">
+        <span className="rounded-sm border border-line-soft bg-chrome-2 px-xs py-0.5">
+          {variantCount} variant{variantCount === 1 ? "" : "s"}
+        </span>
+        <span className="rounded-sm border border-line-soft bg-chrome-2 px-xs py-0.5">
+          {propCount} prop{propCount === 1 ? "" : "s"}
+        </span>
+        <span className="rounded-sm border border-line-soft bg-chrome-2 px-xs py-0.5">
+          {totalOverrideCount} override{totalOverrideCount === 1 ? "" : "s"}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onResetOverrides}
+        disabled={totalOverrideCount === 0}
+        className="flex w-full items-center justify-center gap-sm rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-chrome-2"
+      >
+        <RotateCcw size={14} aria-hidden="true" /> Reset overrides
+      </button>
+      <button
+        type="button"
+        onClick={onEditDefinition}
+        className="flex w-full items-center justify-center gap-sm rounded-sm border border-line bg-chrome-2 px-sm py-control-y text-sm text-ink transition-colors hover:bg-raised"
+      >
+        <Pencil size={14} aria-hidden="true" /> Edit definition
+      </button>
+    </div>
+  );
+}
+
 /** A JS identifier derived from `base`, unique against `taken`. */
 function uniquePropName(base: string, taken: Iterable<string>): string {
   const ident = /^[A-Za-z_$]/.test(base) ? base.replace(/[^\w$]/g, "") : `p${base.replace(/[^\w$]/g, "")}`;
@@ -1026,7 +1118,7 @@ function InstanceProperties({
       {definition.props.length === 0 ? (
         <Section title="Properties">
           <p className="text-sm text-ink-faint">
-            No exposed properties yet. Use “Edit component” to expose some.
+            No exposed properties yet. Edit the definition to expose instance controls.
           </p>
         </Section>
       ) : (
@@ -1104,6 +1196,7 @@ function VariantControls({
   const activeVariant = useStudioStore((s) => s.activeVariant);
   const setActiveVariant = useStudioStore((s) => s.setActiveVariant);
   const [err, setErr] = useState<string | null>(null);
+  const [editVariantsOpen, setEditVariantsOpen] = useState(false);
 
   if (!def) return null;
   const properties = def.variants ?? [];
@@ -1146,35 +1239,17 @@ function VariantControls({
     .join(" / ");
 
   return (
-    <Section title="Variants">
+    <Section title="Variant">
       <div className="flex flex-col gap-control">
-        <div className="flex flex-col gap-2xs">
-          <div className="eyebrow">Define</div>
-          {properties.map((property) => (
-            <PropertyEditor
-              key={property.name}
-              property={property}
-              onAddValue={(value) => run(() => addVariantValue(componentId, property.name, value))}
-              onRemoveValue={(value) => run(() => removeVariantValue(componentId, property.name, value))}
-              onRemove={() => run(() => removeVariantAxis(componentId, property.name))}
-            />
-          ))}
-
-          <AddPropertyMenu onAdd={addProperty} />
-        </div>
-
-        {properties.length > 0 && !canPick && (
-          <p className="m-0 text-xs text-ink-faint">
-            {hasDraft || valuedProperties.length === 0
-              ? "Add at least two values to a property to author variants."
-              : "Add another value to switch between variants."}
-          </p>
-        )}
-
         {canPick && (
-          <div className="flex flex-col gap-control border-t border-line/60 pt-sm">
+          <div className="flex flex-col gap-control">
             <div className="flex items-center justify-between gap-xs">
-              <div className="eyebrow">Edit</div>
+              <div className="min-w-0">
+                <div className="eyebrow">Editing</div>
+                <div className="mt-2xs truncate text-sm font-semibold text-ink">
+                  {isDefault ? "Base" : activeVariantLabel}
+                </div>
+              </div>
               <span
                 className={cn(
                   "rounded-xs border px-xs py-2xs text-2xs uppercase tracking-wide",
@@ -1186,23 +1261,6 @@ function VariantControls({
                 {isDefault ? "Base" : "Override"}
               </span>
             </div>
-            <div className="rounded-sm border border-line bg-chrome-2 p-xs">
-              <div className="text-xs font-medium text-ink">
-                {isDefault ? "Base version" : activeVariantLabel}
-              </div>
-              <p className={cn("m-0 mt-2xs text-xs", isDefault ? "text-ink-faint" : "text-accent")}>
-                {isDefault
-                  ? "Base values define the component default."
-                  : "Style changes now apply only to this variant."}
-              </p>
-            </div>
-            <VariantPicker
-              properties={valuedProperties}
-              activeValues={activeValues}
-              onSelect={(values) => {
-                for (const p of valuedProperties) setActiveVariant(p.name, values[p.name]);
-              }}
-            />
             <VariantMatrix
               definition={def}
               properties={valuedProperties}
@@ -1229,6 +1287,41 @@ function VariantControls({
                 </IconToggle>
               </div>
             )}
+          </div>
+        )}
+        {!canPick && (
+          <div className="rounded-sm border border-line/60 bg-chrome-2 p-sm">
+            <div className="text-sm font-semibold text-ink">Editing: Base</div>
+            <p className="m-0 mt-2xs text-xs text-ink-faint">
+              {properties.length === 0
+                ? "Add variant values when this component needs alternate states."
+                : hasDraft || valuedProperties.length === 0
+                  ? "Add at least two values to a property to author variants."
+                  : "Add another value to switch between variants."}
+            </p>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setEditVariantsOpen((next) => !next)}
+          aria-expanded={editVariantsOpen}
+          className="flex h-7 items-center justify-between gap-xs rounded-sm border border-line bg-chrome-2 px-sm text-left text-xs text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+        >
+          <span>Edit variants</span>
+          {editVariantsOpen ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
+        </button>
+        {editVariantsOpen && (
+          <div className="flex flex-col gap-2xs rounded-sm border border-line/50 p-xs">
+            {properties.map((property) => (
+              <PropertyEditor
+                key={property.name}
+                property={property}
+                onAddValue={(value) => run(() => addVariantValue(componentId, property.name, value))}
+                onRemoveValue={(value) => run(() => removeVariantValue(componentId, property.name, value))}
+                onRemove={() => run(() => removeVariantAxis(componentId, property.name))}
+              />
+            ))}
+            <AddPropertyMenu onAdd={addProperty} />
           </div>
         )}
         {err && <p className="m-0 text-xs text-amber">{err}</p>}
@@ -1449,6 +1542,7 @@ function VariantMatrix({
               onClick={() => onSelect(values)}
               className={cn(
                 "flex min-h-14 flex-col justify-between rounded-sm border p-xs text-left transition-colors",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-line focus-visible:ring-offset-1 focus-visible:ring-offset-chrome",
                 active
                   ? "border-accent-line bg-accent-soft text-accent"
                   : overrideCount > 0
@@ -1807,6 +1901,7 @@ function PropertyRow({
   onDefault: (value: OverrideValue | undefined) => void;
   onRemove: () => void;
 }) {
+  const [advanced, setAdvanced] = useState(false);
   const [draft, setDraft] = useState(prop.name);
   // Keep input in sync when the underlying name changes externally (undo, etc.)
   // and we're not actively editing.
@@ -1823,57 +1918,104 @@ function PropertyRow({
   };
   const targetLabels = prop.targets.map((target) => propertyTargetLabel(target, template));
   return (
-    <div className="flex flex-col gap-2xs rounded-sm border border-line/40 p-xs">
-      <div className="flex items-center gap-xs">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            else if (e.key === "Escape") {
-              setDraft(prop.name);
-              (e.target as HTMLInputElement).blur();
-            }
-          }}
-          spellCheck={false}
-          title="Property name"
-          className={cn(
-            "h-6 min-w-0 flex-1 rounded-xs border border-transparent bg-transparent px-xs text-xs font-medium text-ink outline-none",
-            "transition-colors hover:bg-chrome-2 focus-visible:border-accent-line focus-visible:bg-chrome-2",
-          )}
-        />
-        <span className="rounded-xs border border-line bg-chrome-2 px-xs py-2xs text-2xs uppercase tracking-wide text-ink-dim">
-          {VALUE_TYPE_LABEL[prop.valueType] ?? prop.valueType}
-        </span>
-        <IconButton title={`Delete ${prop.name}`} onClick={onRemove}>
-          <Trash2 size={14} aria-hidden="true" />
-        </IconButton>
-      </div>
-      <div className="flex flex-wrap items-center gap-2xs">
-        <span className="text-2xs uppercase tracking-wide text-ink-faint">Bound to</span>
-        {targetLabels.length ? (
-          targetLabels.map((target) => (
-            <span
-              key={target}
-              title={target}
-              className="max-w-full truncate rounded-xs border border-line bg-chrome-2 px-xs py-2xs text-2xs text-ink-dim"
-            >
-              {target}
+    <div className="flex flex-col gap-xs rounded-sm border border-line/50 bg-chrome-2 p-sm">
+      <div className="flex items-start gap-sm">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-xs">
+            <span className="min-w-0 truncate text-xs font-semibold text-ink">{prop.name}</span>
+            <span className="text-2xs text-ink-faint">
+              {VALUE_TYPE_LABEL[prop.valueType] ?? prop.valueType}
             </span>
-          ))
+          </div>
+          {targetLabels[0] && (
+            <div className="mt-2xs truncate text-2xs text-ink-faint" title={targetLabels.join(", ")}>
+              {targetLabels[0]}
+              {targetLabels.length > 1 ? ` +${targetLabels.length - 1}` : ""}
+            </div>
+          )}
+        </div>
+        {prop.valueType === "node" ? (
+          <span className="rounded-xs border border-line bg-raised px-xs py-2xs text-2xs text-ink-dim">
+            Slot
+          </span>
         ) : (
-          <span className="text-2xs text-ink-faint">No targets</span>
+          <div className="w-32 min-w-0">
+            <PropertyDefaultEditor prop={prop} onChange={onDefault} />
+          </div>
         )}
       </div>
-      {prop.valueType !== "node" && (
-        <div className="flex flex-col gap-2xs">
-          <span className="text-2xs text-ink-faint">Default value</span>
-          <PropertyDefaultEditor prop={prop} onChange={onDefault} />
+      <button
+        type="button"
+        onClick={() => setAdvanced((next) => !next)}
+        aria-expanded={advanced}
+        className="flex h-6 items-center justify-between gap-xs rounded-xs px-xs text-left text-2xs font-medium text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+      >
+        <span>Advanced</span>
+        {advanced ? <ChevronDownIcon /> : <ChevronRightIcon />}
+      </button>
+      {advanced && (
+        <div className="flex flex-col gap-xs border-t border-line/60 pt-xs">
+          <Field label="Name" stacked>
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                else if (e.key === "Escape") {
+                  setDraft(prop.name);
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+              spellCheck={false}
+              title="Property name"
+              className={cn(
+                "h-7 min-w-0 rounded-sm border border-line bg-chrome px-sm text-sm text-ink outline-none",
+                "transition-colors focus-visible:border-accent-line focus-visible:bg-raised",
+              )}
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-2xs">
+            <span className="text-2xs uppercase tracking-wide text-ink-faint">Type</span>
+            <span className="rounded-xs border border-line bg-chrome px-xs py-2xs text-2xs text-ink-dim">
+              {VALUE_TYPE_LABEL[prop.valueType] ?? prop.valueType}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2xs">
+            <span className="text-2xs uppercase tracking-wide text-ink-faint">Targets</span>
+            {targetLabels.length ? (
+              targetLabels.map((target) => (
+                <span
+                  key={target}
+                  title={target}
+                  className="max-w-full truncate rounded-xs border border-line bg-chrome px-xs py-2xs text-2xs text-ink-dim"
+                >
+                  {target}
+                </span>
+              ))
+            ) : (
+              <span className="text-2xs text-ink-faint">No targets</span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="flex h-7 items-center justify-center gap-xs rounded-sm border border-line bg-chrome px-sm text-xs text-ink-dim transition-colors hover:bg-raised hover:text-ink"
+          >
+            <Trash2 size={14} aria-hidden="true" /> Remove property
+          </button>
         </div>
       )}
     </div>
   );
+}
+
+function ChevronDownIcon() {
+  return <ChevronDown size={12} aria-hidden="true" className="text-ink-faint" />;
+}
+
+function ChevronRightIcon() {
+  return <ChevronRight size={12} aria-hidden="true" className="text-ink-faint" />;
 }
 
 function PropertyDefaultEditor({
@@ -1919,6 +2061,8 @@ function PropertyDefaultEditor({
           placeholder="—"
         />
       );
+    case "node":
+      return null;
     case "string":
     default:
       return (
@@ -1960,6 +2104,7 @@ function ColorTokenSlot({
   nodeId,
   styleKey,
   value,
+  ariaLabel,
   onChange,
   editLifecycle,
 }: {
@@ -1967,6 +2112,7 @@ function ColorTokenSlot({
   nodeId: NodeId;
   styleKey: string;
   value: string | undefined;
+  ariaLabel?: string;
   onChange: (v: string) => void;
   editLifecycle: { onEditStart?: () => void; onEditEnd?: () => void; onEditCancel?: () => void };
 }) {
@@ -1983,6 +2129,7 @@ function ColorTokenSlot({
   return (
     <TokenColorField
       {...editLifecycle}
+      ariaLabel={ariaLabel}
       value={value}
       onChange={onChange}
       tokens={colorOptions}
@@ -2041,6 +2188,7 @@ function NumberTokenSlot({
   nodeId,
   styleKey,
   label,
+  ariaLabel,
   value,
   onChange,
   min,
@@ -2054,6 +2202,7 @@ function NumberTokenSlot({
   nodeId: NodeId;
   styleKey: string;
   label: React.ReactNode;
+  ariaLabel?: string;
   value: number | undefined;
   onChange: (v: number | undefined) => void;
   min?: number;
@@ -2076,6 +2225,7 @@ function NumberTokenSlot({
       <NumberField
         {...editLifecycle}
         label={label}
+        ariaLabel={ariaLabel}
         value={value}
         onChange={onChange}
         min={min}
@@ -2095,6 +2245,7 @@ function NumberTokenSlot({
     <TokenNumberField
       {...editLifecycle}
       label={label}
+      ariaLabel={ariaLabel}
       value={value}
       onChange={onChange}
       min={min}
@@ -2110,5 +2261,189 @@ function NumberTokenSlot({
       onUnlink={() => unlink(rootId, nodeId, styleKey)}
       onPromote={(name) => promote(rootId, nodeId, styleKey, name)}
     />
+  );
+}
+
+// --- Unified Design tab (Component workspace) ----------------------------------
+
+/**
+ * The right column's Design tab while a component is being edited: the active
+ * variant target, exposed props, and the regular visual design controls in one
+ * scroll surface.
+ */
+export function ComponentEditPanel({ componentId }: { componentId: NodeId }) {
+  const root = useDocumentStore((s) => s.roots[componentId]);
+  const selection = useDocumentStore((s) => s.selection);
+  if (!root) {
+    return (
+      <Shell>
+        <Empty>Open a component to edit its properties.</Empty>
+      </Shell>
+    );
+  }
+  const nodes = normalizeNodeSelection(root, selection)
+    .map((id) => findNode(root, id))
+    .filter((n): n is Node => !!n);
+  const primary = nodes[0];
+  const templateNode =
+    nodes.length === 1 && primary && primary.type !== "ComponentInstance" ? primary : null;
+  return (
+    <Shell>
+      <TemplateActions componentId={componentId} root={root} />
+      <VariantControls componentId={componentId} selectedNodeId={templateNode?.id ?? null} />
+      <PropertiesControls componentId={componentId} node={templateNode} />
+      <Inspector rootId={componentId} embedded />
+      <TemplateTokensSection componentId={componentId} />
+    </Shell>
+  );
+}
+
+function firstTextDescendant(node: Node): Node | null {
+  if (node.type === "Text") return node;
+  for (const child of childrenOf(node)) {
+    const found = firstTextDescendant(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+function TemplateActions({ componentId, root }: { componentId: NodeId; root: Node }) {
+  const setSelection = useDocumentStore((s) => s.setSelection);
+  const insertChild = useDocumentStore((s) => s.insertChild);
+  const updateComponent = useDocumentStore((s) => s.updateComponent);
+  const definition = useDocumentStore((s) => s.components[componentId]);
+  const canAddLabel = root.type === "Pressable" && isContainer(root);
+  const labelNode = firstTextDescendant(root);
+
+  const ensureLabelProp = (nodeId: NodeId) => {
+    if (!definition) return;
+    const alreadyBound = definition.props.some((prop) =>
+      prop.targets.some(
+        (target) => target.kind === "prop" && target.nodeId === nodeId && target.path === "text",
+      ),
+    );
+    if (alreadyBound) return;
+    const taken = new Set(definition.props.map((prop) => prop.name));
+    let name = "label";
+    for (let i = 2; taken.has(name); i += 1) name = `label${i}`;
+    updateComponent(componentId, {
+      props: [...definition.props, presetProp(name, "text", nodeId)],
+    });
+  };
+
+  const addOrSelectLabel = () => {
+    if (labelNode) {
+      ensureLabelProp(labelNode.id);
+      setSelection([labelNode.id]);
+      return;
+    }
+    if (!canAddLabel) return;
+    const label = createNode("Text", {
+      props: { text: "Button" },
+      style: { color: "#FFFFFF", textAlign: "center" },
+      design: { name: "Label" },
+    });
+    insertChild(componentId, root.id, label);
+    ensureLabelProp(label.id);
+    setSelection([label.id]);
+  };
+
+  return (
+    <Section title="Template">
+      <div className="grid grid-cols-2 gap-xs">
+        <button
+          type="button"
+          onClick={() => setSelection([root.id])}
+          className={cn(
+            "inline-flex h-8 min-w-0 items-center justify-center gap-xs rounded-sm border border-line bg-chrome-2 px-sm text-xs font-semibold text-ink-dim",
+            "transition-colors hover:bg-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+          )}
+        >
+          <MousePointerClick size={13} aria-hidden="true" />
+          <span className="min-w-0 truncate">Select root</span>
+        </button>
+        <button
+          type="button"
+          onClick={addOrSelectLabel}
+          disabled={!canAddLabel && !labelNode}
+          className={cn(
+            "inline-flex h-8 min-w-0 items-center justify-center gap-xs rounded-sm border border-line bg-chrome-2 px-sm text-xs font-semibold text-ink-dim",
+            "transition-colors hover:bg-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+            "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-chrome-2 disabled:hover:text-ink-dim",
+          )}
+        >
+          <TypeIcon size={13} aria-hidden="true" />
+          <span className="min-w-0 truncate">{labelNode ? "Select label" : "Add label"}</span>
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+/** Token links inside the editing template, grouped per token with an unlink-all. */
+function TemplateTokensSection({ componentId }: { componentId: NodeId }) {
+  const root = useDocumentStore((s) => s.roots[componentId]);
+  const tokens = useDocumentStore((s) => s.tokens);
+  if (!root) return null;
+
+  const links = new Map<string, { nodeId: NodeId; styleKey: string }[]>();
+  const walk = (node: Node) => {
+    for (const [styleKey, tokenId] of Object.entries(node.design?.tokens ?? {})) {
+      const list = links.get(tokenId) ?? [];
+      list.push({ nodeId: node.id, styleKey });
+      links.set(tokenId, list);
+    }
+    for (const child of childrenOf(node)) walk(child);
+  };
+  walk(root);
+  const rows = [...links.entries()].flatMap(([tokenId, uses]) => {
+    const token = tokens[tokenId];
+    return token ? [{ token, uses }] : [];
+  });
+
+  const unlinkAll = (uses: { nodeId: NodeId; styleKey: string }[]) => {
+    const store = useDocumentStore.getState();
+    const ownsInteraction = !store.interaction;
+    try {
+      if (ownsInteraction) store.beginInteraction();
+      for (const use of uses) store.unlinkStyleToken(componentId, use.nodeId, use.styleKey);
+      if (ownsInteraction) store.commitInteraction();
+    } catch {
+      store.cancelInteraction();
+    }
+  };
+
+  return (
+    <Section title="Tokens">
+      {rows.length === 0 ? (
+        <p className="m-0 text-sm text-ink-faint">No token links in this template.</p>
+      ) : (
+        <div className="flex flex-col gap-2xs">
+          {rows.map(({ token, uses }) => (
+            <div
+              key={token.id}
+              className="grid min-h-8 grid-cols-[minmax(2rem,auto)_minmax(0,1fr)_auto_auto] items-center gap-sm rounded-xs border border-line-soft bg-chrome-2 px-xs"
+            >
+              {token.category === "color" ? (
+                <span
+                  className="size-4 shrink-0 rounded-xs border border-line"
+                  style={{ background: String(token.value) }}
+                  aria-hidden="true"
+                />
+              ) : (
+                <span className="text-right text-2xs tabular-nums text-ink-faint">
+                  {String(token.value)}
+                </span>
+              )}
+              <span className="min-w-0 flex-1 truncate text-sm text-ink">{token.name}</span>
+              <span className="text-2xs tabular-nums text-ink-faint">×{uses.length}</span>
+              <IconButton title={`Unlink ${token.name}`} onClick={() => unlinkAll(uses)}>
+                <Unlink size={12} aria-hidden="true" />
+              </IconButton>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }

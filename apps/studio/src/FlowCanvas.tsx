@@ -171,10 +171,22 @@ function flowAnchorPagePoint(
   return editor.screenToPage({ x: rect.right, y: rect.top + rect.height / 2 });
 }
 
+function flowEdgeKey(edge: FlowEdge) {
+  return [
+    edge.from.rootId,
+    edge.from.anchorNodeId ?? "",
+    edge.to,
+    edge.kind,
+    edge.condition ?? "",
+  ].join("|");
+}
+
 function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
   const editor = useEditor();
   const addStoredFlowEdge = useWorkspaceStore((s) => s.addFlowEdge);
+  const removeStoredFlowEdge = useWorkspaceStore((s) => s.removeFlowEdge);
   const setStatus = useWorkspaceStore((s) => s.setStatus);
+  const [selectedEdgeKey, setSelectedEdgeKey] = useState<string | null>(null);
   const [drag, setDrag] = useState<{
     fromRootId: NodeId;
     anchorNodeId?: NodeId;
@@ -268,6 +280,48 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
 
   const dragTarget = drag ? findTargetAtClientPoint(drag.fromRootId, drag.x, drag.y) : undefined;
 
+  const deleteEdge = useCallback(
+    (edge: FlowEdge) => {
+      setSelectedEdgeKey(null);
+      void removeStoredFlowEdge(flow.id, edge).then(
+        () => setStatus(edge.from.anchorNodeId ? "Removed wire; source screen re-syncing" : "Removed flow edge"),
+        (error) => setStatus(error instanceof Error ? error.message : "Flow edge removal failed"),
+      );
+    },
+    [flow.id, removeStoredFlowEdge, setStatus],
+  );
+
+  // Escape clears the wire selection; Delete/Backspace removes the selected wire.
+  useEffect(() => {
+    if (!selectedEdgeKey) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedEdgeKey(null);
+        return;
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        // Never eat the keystroke while the user is typing — the capture-phase
+        // listener fires before the field would, so Backspace in a rename or
+        // condition input must not delete the selected wire.
+        const target = event.target;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLElement && target.isContentEditable)
+        ) {
+          return;
+        }
+        const edge = flow.edges.find((candidate) => flowEdgeKey(candidate) === selectedEdgeKey);
+        if (edge) {
+          event.preventDefault();
+          deleteEdge(edge);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [deleteEdge, flow.edges, selectedEdgeKey]);
+
   return (
     <>
       <svg
@@ -301,19 +355,67 @@ function FlowEdgesOverlay({ flow }: { flow: FlowDefinition }) {
           const from = flowAnchorPagePoint(editor, edge, source);
           const to = { x: target.x, y: target.y + target.props.h / 2 };
           const dashed = edge.kind !== "primary";
+          const key = flowEdgeKey(edge);
+          const selected = key === selectedEdgeKey;
+          const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
           return (
-            <path
-              key={`${edge.from.rootId}-${edge.to}-${edge.kind}-${index}`}
-              d={elbowPath(from, to)}
-              fill="none"
-              stroke={edge.kind === "fallback" ? "var(--ink-faint)" : "var(--accent)"}
-              strokeWidth={3}
-              strokeDasharray={dashed ? "10 9" : undefined}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              markerEnd="url(#flow-arrow)"
-              opacity={0.84}
-            />
+            <g key={`${key}-${index}`}>
+              <path
+                d={elbowPath(from, to)}
+                fill="none"
+                stroke={
+                  selected
+                    ? "var(--amber, #C77B27)"
+                    : edge.kind === "fallback"
+                      ? "var(--ink-faint)"
+                      : "var(--accent)"
+                }
+                strokeWidth={selected ? 4 : 3}
+                strokeDasharray={dashed ? "10 9" : undefined}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                markerEnd="url(#flow-arrow)"
+                opacity={selected ? 1 : 0.84}
+              />
+              {/* Fat invisible twin so the wire is clickable (parent svg is inert). */}
+              <path
+                d={elbowPath(from, to)}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={18}
+                style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  setSelectedEdgeKey((current) => (current === key ? null : key));
+                }}
+              />
+              {selected && (
+                <g
+                  role="button"
+                  aria-label="Delete flow wire"
+                  style={{ pointerEvents: "all", cursor: "pointer" }}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    deleteEdge(edge);
+                  }}
+                >
+                  <circle
+                    cx={mid.x}
+                    cy={mid.y}
+                    r={13}
+                    fill="var(--chrome, #fff)"
+                    stroke="var(--amber, #C77B27)"
+                    strokeWidth={2}
+                  />
+                  <path
+                    d={`M ${mid.x - 5} ${mid.y - 5} L ${mid.x + 5} ${mid.y + 5} M ${mid.x + 5} ${mid.y - 5} L ${mid.x - 5} ${mid.y + 5}`}
+                    stroke="var(--amber, #C77B27)"
+                    strokeWidth={2.5}
+                    strokeLinecap="round"
+                  />
+                </g>
+              )}
+            </g>
           );
         })}
         {drag && (

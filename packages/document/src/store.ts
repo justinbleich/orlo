@@ -34,9 +34,11 @@ import {
 import { validateTree } from "./validate";
 import {
   createInstance,
+  migrateCombinationsForAxis,
   promoteToComponent as promoteOp,
   pruneDefinitionProps,
   pruneVariants,
+  seedComponentTemplateContent,
   upsertVariantOverride,
   reconcileOverrides,
   validateComponentRegistry,
@@ -55,6 +57,29 @@ export interface FramePosition {
 
 export type FramePositions = Record<NodeId, FramePosition>;
 
+function remapDefinitionRootReferences(
+  definition: ComponentDefinition,
+  fromRootId: NodeId,
+  toRootId: NodeId,
+): ComponentDefinition {
+  if (fromRootId === toRootId) return definition;
+  return {
+    ...definition,
+    props: definition.props.map((prop) => ({
+      ...prop,
+      targets: prop.targets.map((target) =>
+        target.nodeId === fromRootId ? { ...target, nodeId: toRootId } : target,
+      ),
+    })),
+    combinations: definition.combinations?.map((combo) => ({
+      ...combo,
+      overrides: combo.overrides.map((override) =>
+        override.nodeId === fromRootId ? { ...override, nodeId: toRootId } : override,
+      ),
+    })),
+  };
+}
+
 /** A history entry snapshots the trees, the component registry, and the selection,
  *  so undo/redo restores a coherent document (no dangling selection or definition). */
 export interface Snapshot {
@@ -68,6 +93,8 @@ export interface Snapshot {
   editingComponentId: NodeId | null;
   /** Definition captured at edit-start, so Cancel can discard the session. */
   editingOriginalDefinition: ComponentDefinition | null;
+  /** Definition as first hosted for editing (post-seed/remap) — the dirty baseline. */
+  editingBaselineDefinition: ComponentDefinition | null;
   selection: NodeId[];
 }
 
@@ -83,6 +110,10 @@ export interface DocumentState {
   editingComponentId: NodeId | null;
   /** Definition captured when focus mode opened, for Cancel. */
   editingOriginalDefinition: ComponentDefinition | null;
+  /** Definition as first hosted for editing (post-seed/remap). Dirty means the live
+   *  definition differs from this — not from the pre-seed original, so a legacy
+   *  empty template that gets auto-seeded on open still reads clean. */
+  editingBaselineDefinition: ComponentDefinition | null;
   selection: NodeId[];
   past: Snapshot[];
   future: Snapshot[];
@@ -120,10 +151,14 @@ export interface DocumentState {
   placeInstance(rootId: NodeId, parentId: NodeId, componentId: NodeId, index?: number): void;
   setInstanceOverride(rootId: NodeId, instanceId: NodeId, name: string, value: OverrideValue): void;
   setInstanceSlot(rootId: NodeId, instanceId: NodeId, name: string, children: Node[]): void;
+  resetInstanceOverrides(rootId: NodeId, instanceId: NodeId): void;
   /** Open a component's template for editing (hosted as a transient root). */
   beginComponentEdit(componentId: NodeId): void;
   /** Close focus mode; `commit` writes the edited template back to the definition. */
   endComponentEdit(commit?: boolean): void;
+  /** Whether the open edit session differs from the definition captured at edit
+   *  start. Diff-based (not a timestamp): an edit-then-undo session reads clean. */
+  componentEditIsDirty(): boolean;
 
   // --- Variants (Phase 2D-3) ---
   addVariantAxis(componentId: NodeId, name: string, values?: string[]): void;
@@ -177,6 +212,13 @@ export interface DocumentState {
     styleKey: string;
     kind: "style" | "override";
   }[];
+  /** Every placed instance of `componentId` across screen roots and other
+   *  component templates. The transient edit root is skipped because it mirrors
+   *  the definition being edited, not a real placement. */
+  getComponentUsage(componentId: NodeId): {
+    rootId: NodeId;
+    nodeId: NodeId;
+  }[];
 
   insertChild(rootId: NodeId, parentId: NodeId, child: Node, index?: number): void;
   removeNode(rootId: NodeId, id: NodeId): void;
@@ -202,6 +244,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     framePositions: state.framePositions,
     editingComponentId: state.editingComponentId,
     editingOriginalDefinition: state.editingOriginalDefinition,
+    editingBaselineDefinition: state.editingBaselineDefinition,
     selection: state.selection,
   });
 
@@ -300,6 +343,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     framePositions: {},
     editingComponentId: null,
     editingOriginalDefinition: null,
+    editingBaselineDefinition: null,
     selection: [],
     past: [],
     future: [],
@@ -337,6 +381,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         framePositions: state.interaction.framePositions,
         editingComponentId: state.interaction.editingComponentId,
         editingOriginalDefinition: state.interaction.editingOriginalDefinition,
+        editingBaselineDefinition: state.interaction.editingBaselineDefinition,
         selection: state.interaction.selection,
         interaction: null,
       });
@@ -374,6 +419,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         tokens: tokenRegistry,
         editingComponentId: null,
         editingOriginalDefinition: null,
+        editingBaselineDefinition: null,
         selection: nextSelection,
         past: [],
         future: [],
@@ -500,6 +546,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
         return replaceNode(tree, instanceId, nextInstance);
       }),
 
+    resetInstanceOverrides: (rootId, instanceId) =>
+      mutateRoot(rootId, (tree) => {
+        const node = findNode(tree, instanceId);
+        if (!node || node.type !== "ComponentInstance") {
+          throw new Error(`Instance not found: ${instanceId}`);
+        }
+        const nextInstance = { ...node, overrides: {} };
+        delete nextInstance.slots;
+        delete nextInstance.variant;
+        return replaceNode(tree, instanceId, nextInstance);
+      }),
+
     beginComponentEdit: (componentId) => {
       const { components, roots, editingComponentId } = get();
       if (editingComponentId) return; // one component edited at a time
@@ -509,15 +567,26 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       // the definition's template at that same tree so the two stay in lockstep —
       // edits mirror through mutateRoot, instances re-expand live, and prop edits
       // validate against the live template.
-      const template = JSON.parse(JSON.stringify(definition.template)) as Node;
+      const template = seedComponentTemplateContent(
+        JSON.parse(JSON.stringify(definition.template)) as Node,
+        definition.name,
+        components,
+        componentId,
+      );
       const editingRoot = { ...template, id: componentId } as Node;
+      const editingDefinition = remapDefinitionRootReferences(
+        { ...definition, template: editingRoot },
+        template.id,
+        componentId,
+      );
       commit({
         roots: { ...roots, [componentId]: editingRoot },
-        components: { ...components, [componentId]: { ...definition, template: editingRoot } },
+        components: { ...components, [componentId]: editingDefinition },
       });
       set({
         editingComponentId: componentId,
         editingOriginalDefinition: definition,
+        editingBaselineDefinition: editingDefinition,
         selection: [componentId],
       });
     },
@@ -541,8 +610,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       set({
         editingComponentId: null,
         editingOriginalDefinition: null,
+        editingBaselineDefinition: null,
         selection: fallback ? [fallback] : [],
       });
+    },
+
+    componentEditIsDirty: () => {
+      const { editingComponentId, components, editingBaselineDefinition } = get();
+      if (!editingComponentId || !editingBaselineDefinition) return false;
+      const current = components[editingComponentId];
+      if (!current) return false;
+      // The baseline is the definition exactly as begin hosted it (post-seed,
+      // post-remap), so no normalization is needed and an edit-then-undo session
+      // reads clean again.
+      if (current === editingBaselineDefinition) return false;
+      return JSON.stringify(current) !== JSON.stringify(editingBaselineDefinition);
     },
 
     // --- Variants (Phase 2D-3) ---
@@ -553,7 +635,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       // Seeded values (from a preset) make this a ready axis in one step; an
       // empty list is a draft — its first added value becomes the base/default.
       const variants = [...(def.variants ?? []), { name, values }];
-      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+      // Replicate existing combinations across the new axis before commitRegistry's
+      // pruneVariants runs, so prior overrides survive the full-key invariant.
+      const next = migrateCombinationsForAxis({ ...def, variants }, name);
+      commitRegistry({ ...components, [componentId]: next }, roots);
     },
     removeVariantAxis: (componentId, name) => {
       const { components, roots } = get();
@@ -567,10 +652,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       const { components, roots } = get();
       const def = components[componentId];
       if (!def) throw new Error(`Component not found: ${componentId}`);
+      const wasDraft =
+        (def.variants ?? []).find((axis) => axis.name === axisName)?.values.length === 0;
       const variants = (def.variants ?? []).map((axis) =>
         axis.name === axisName ? { ...axis, values: [...axis.values, value] } : axis,
       );
-      commitRegistry({ ...components, [componentId]: { ...def, variants } }, roots);
+      // A draft axis gaining its first value starts counting toward the full-key
+      // invariant — annotate existing combinations so they aren't pruned.
+      const next = wasDraft
+        ? migrateCombinationsForAxis({ ...def, variants }, axisName)
+        : { ...def, variants };
+      commitRegistry({ ...components, [componentId]: next }, roots);
     },
     removeVariantValue: (componentId, axisName, value) => {
       const { components, roots } = get();
@@ -821,6 +913,31 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
       for (const [rootId, root] of Object.entries(roots)) walk(rootId, root);
       return out;
     },
+    getComponentUsage: (componentId) => {
+      const out: { rootId: NodeId; nodeId: NodeId }[] = [];
+      const { roots, components, editingComponentId } = get();
+      const walk = (rootId: NodeId, node: Node) => {
+        if (node.type === "ComponentInstance") {
+          if (node.componentId === componentId) out.push({ rootId, nodeId: node.id });
+          if (node.slots) {
+            for (const kids of Object.values(node.slots)) {
+              for (const kid of kids) walk(rootId, kid);
+            }
+          }
+          return;
+        }
+        if (isContainer(node)) {
+          for (const child of node.children) walk(rootId, child);
+        }
+      };
+      for (const [rootId, root] of Object.entries(roots)) {
+        if (rootId !== editingComponentId) walk(rootId, root);
+      }
+      for (const [rootId, definition] of Object.entries(components)) {
+        if (rootId !== componentId) walk(rootId, definition.template);
+      }
+      return out;
+    },
 
     insertChild: (rootId, parentId, child, index) =>
       mutateRoot(rootId, (t) => opInsertChild(t, parentId, child, index)),
@@ -849,6 +966,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
           framePositions: previous.framePositions,
           editingComponentId: previous.editingComponentId,
           editingOriginalDefinition: previous.editingOriginalDefinition,
+          editingBaselineDefinition: previous.editingBaselineDefinition,
           selection: previous.selection,
           past: state.past.slice(0, -1),
           future: [snapshotOf(state), ...state.future].slice(0, HISTORY_LIMIT),
@@ -866,6 +984,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
           framePositions: next.framePositions,
           editingComponentId: next.editingComponentId,
           editingOriginalDefinition: next.editingOriginalDefinition,
+          editingBaselineDefinition: next.editingBaselineDefinition,
           selection: next.selection,
           past: [...state.past, snapshotOf(state)].slice(-HISTORY_LIMIT),
           future: state.future.slice(1),

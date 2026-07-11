@@ -93,6 +93,19 @@ export function emitComponent(
   });
   const body = emitter.build(definition.template);
 
+  // Pressable-rooted components accept and forward an optional onPress, so a
+  // placed instance can be wired to navigation (flow anchors) or behavior
+  // without detaching or wrapping in a second Pressable.
+  const forwardsPress = definition.template.type === "Pressable" && t.isJSXElement(body);
+  if (forwardsPress) {
+    (body as t.JSXElement).openingElement.attributes.unshift(
+      t.jsxAttribute(
+        t.jsxIdentifier("onPress"),
+        t.jsxExpressionContainer(t.identifier("onPress")),
+      ),
+    );
+  }
+
   // Props interface: each exposed prop typed by its valueType (node/defaulted props
   // optional), then each variant axis as a defaulted string-literal union prop.
   const interfaceMembers = [
@@ -112,6 +125,20 @@ export function emitComponent(
       signature.optional = true; // always defaulted to the first value
       return signature;
     }),
+    ...(forwardsPress
+      ? [
+          (() => {
+            const signature = t.tsPropertySignature(
+              t.identifier("onPress"),
+              t.tsTypeAnnotation(
+                t.tsFunctionType(null, [], t.tsTypeAnnotation(t.tsVoidKeyword())),
+              ),
+            );
+            signature.optional = true;
+            return signature;
+          })(),
+        ]
+      : []),
   ];
   const propsInterface = t.tsInterfaceDeclaration(
     t.identifier(`${name}Props`),
@@ -138,6 +165,9 @@ export function emitComponent(
         true,
       ),
     ),
+    ...(forwardsPress
+      ? [t.objectProperty(t.identifier("onPress"), t.identifier("onPress"), false, true)]
+      : []),
   ]);
   param.typeAnnotation = t.tsTypeAnnotation(t.tsTypeReference(t.identifier(`${name}Props`)));
 

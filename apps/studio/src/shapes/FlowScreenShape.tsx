@@ -59,15 +59,48 @@ export function registerFlowAnchorDragHandler(
   };
 }
 
-function flattenLayout(box: LayoutBox, out: LayoutBox[] = []) {
+type FlatLayoutBox = { box: LayoutBox; parent: LayoutBox | null };
+
+function flattenLayout(
+  box: LayoutBox,
+  parent: LayoutBox | null = null,
+  out: FlatLayoutBox[] = [],
+) {
   if (box.node.design?.hidden) return out;
-  out.push(box);
-  for (const child of box.children) flattenLayout(child, out);
+  out.push({ box, parent });
+  for (const child of box.children) flattenLayout(child, box, out);
   return out;
 }
 
-function isRoutableElement(box: LayoutBox) {
-  return box.node.type === "Pressable";
+/**
+ * Two-stage connect handles, classified the way the code would read:
+ *
+ * - "primary": elements that already take onPress in idiomatic RN — Pressables,
+ *   whether a primitive or a Pressable-rooted component (expansion makes the
+ *   instance root literally a Pressable box). Always visible in wire mode.
+ * - "latent": elements an engineer would *deliberately* make tappable — a Text
+ *   link (native onPress), a tappable Image, or a row/card instance that codegen
+ *   wraps in a Pressable. Revealed on hover (or once wired), so the canvas
+ *   isn't wallpapered with handles but any real affordance is one point away.
+ *
+ * Inside an expanded instance only the root is offered — a wire from any
+ * internal resolves to the whole instance anyway. Plain structural Views stay
+ * unwireable.
+ */
+type AnchorTier = "primary" | "latent";
+
+function anchorTier({ box, parent }: FlatLayoutBox): AnchorTier | null {
+  const id = box.node.id;
+  const separator = id.indexOf("::");
+  if (separator !== -1) {
+    const instancePrefix = `${id.slice(0, separator)}::`;
+    const isInstanceRoot = !parent || !parent.node.id.startsWith(instancePrefix);
+    if (!isInstanceRoot) return null;
+    return box.node.type === "Pressable" ? "primary" : "latent";
+  }
+  if (box.node.type === "Pressable") return "primary";
+  if (box.node.type === "Text" || box.node.type === "Image") return "latent";
+  return null;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -265,13 +298,17 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
           live &&
           layoutResult &&
           flattenLayout(layoutResult.layout)
-            .filter((box) => box.node.id !== root.id)
-            .filter((box) => isRoutableElement(box))
-            .filter((box) => wiredAnchorIds.has(box.node.id) || showUnusedAnchors)
-            .map((box) => {
+            .filter(({ box }) => box.node.id !== root.id)
+            .map((entry) => ({ entry, tier: anchorTier(entry) }))
+            .filter((item): item is { entry: FlatLayoutBox; tier: AnchorTier } => item.tier !== null)
+            .filter(({ entry }) => wiredAnchorIds.has(entry.box.node.id) || showUnusedAnchors)
+            .map(({ entry: { box }, tier }) => {
               const wired = wiredAnchorIds.has(box.node.id);
               const label = box.node.design?.name ?? box.node.type;
               const hovered = hoveredAnchorId === box.node.id;
+              // Latent affordances (text links, tappable images, rows/cards) stay
+              // invisible until pointed at or wired — two-stage wiring.
+              const revealed = tier === "primary" || wired || hovered;
               const anchorWidth = Math.max(screenPx(36), box.width);
               const anchorHeight = Math.max(screenPx(22), box.height);
               const anchorBorder = screenPx(2);
@@ -287,6 +324,7 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
                   data-flow-anchor-id={box.node.id}
                   data-flow-root-id={root.id}
                   data-flow-anchor-state={wired ? "wired" : "available"}
+                  data-flow-anchor-tier={tier}
                   className="flow-anchor"
                   title={wired ? `Wired from ${label}` : `Connect from ${label}`}
                   aria-label={wired ? `Wired from ${label}` : `Connect from ${label}`}
@@ -315,7 +353,8 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
                       : hovered
                         ? "0 0 0 3px rgba(59, 130, 246, 0.1), 0 2px 8px rgba(17, 24, 39, 0.14)"
                         : "0 0 0 2px rgba(59, 130, 246, 0.08)",
-                    opacity: wired || hovered ? 1 : 0.9,
+                    opacity: revealed ? (wired || hovered ? 1 : 0.9) : 0,
+                    transition: "opacity 120ms ease",
                     pointerEvents: "auto",
                     cursor: "crosshair",
                     padding: 0,

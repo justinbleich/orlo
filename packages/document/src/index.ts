@@ -67,6 +67,7 @@ export {
   ownerInstanceId,
   reconcileInstance,
   reconcileOverrides,
+  migrateCombinationsForAxis,
   pruneDefinitionProps,
   pruneVariants,
   resolveVariant,

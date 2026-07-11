@@ -7,7 +7,6 @@
 import { useEffect, useRef } from "react";
 import {
   findNode,
-  RN_PRIMITIVES,
   useDocumentStore,
   type NodeId,
 } from "@rn-canvas/document";
@@ -18,18 +17,13 @@ import { cn } from "./studio-ui";
 
 export type LayerMenuState = { rootId: NodeId; nodeId: NodeId; x: number; y: number };
 
-function pascalCase(input: string): string {
-  return input
-    .replace(/[^A-Za-z0-9]+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word[0].toUpperCase() + word.slice(1))
-    .join("") || "Component";
-}
-
 const MENU_WIDTH = 208;
 
-export function LayerContextMenu() {
+export function LayerContextMenu({
+  onCreateComponentFromLayer,
+}: {
+  onCreateComponentFromLayer?: (rootId: NodeId, nodeId: NodeId) => void;
+}) {
   const menu = useStudioStore((state) => state.layerMenu);
   const close = useStudioStore((state) => state.closeLayerMenu);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -75,16 +69,7 @@ export function LayerContextMenu() {
     }
   };
 
-  const promote = run(() => {
-    const pascal = pascalCase(node.design?.name ?? node.type);
-    const base = (RN_PRIMITIVES as readonly string[]).includes(pascal)
-      ? `${pascal}Component`
-      : pascal;
-    const taken = new Set(Object.values(store.components).map((c) => c.name));
-    let name = base;
-    for (let i = 2; taken.has(name); i += 1) name = `${base}${i}`;
-    useDocumentStore.getState().promoteToComponent(menu.rootId, menu.nodeId, name);
-  });
+  const requestPromote = run(() => onCreateComponentFromLayer?.(menu.rootId, menu.nodeId));
 
   const items: Array<
     | { kind: "action"; label: string; icon: React.ReactNode; onSelect: () => void; disabled?: boolean }
@@ -104,7 +89,7 @@ export function LayerContextMenu() {
       kind: "action",
       label: "Create component",
       icon: <Component size={13} aria-hidden="true" />,
-      onSelect: promote,
+      onSelect: requestPromote,
       disabled: isRoot || isInstance || locked,
     },
     { kind: "divider" },

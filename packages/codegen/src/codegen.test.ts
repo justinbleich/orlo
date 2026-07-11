@@ -378,6 +378,23 @@ test("a screen emits instances as parameterized usages + a component import", ()
   assertParses(gen.components[0].code);
 });
 
+test("dotted component display names emit sanitized component identifiers", () => {
+  const button = cardDefinition();
+  button.name = "Button.Primary";
+  const screen = createNode("View", {
+    id: "screen",
+    children: [createInstance("card1", { id: "button" })],
+  });
+  const gen = generateScreen(screen, { screenName: "Home", components: { card1: button } });
+
+  assert.match(gen.code, /import \{ ButtonPrimary \} from "\.\/components\/ButtonPrimary"/);
+  assert.match(gen.code, /<ButtonPrimary \/>/);
+  assert.deepEqual(gen.components.map((c) => c.fileName), ["ButtonPrimary.tsx"]);
+  assert.match(gen.components[0].code, /function ButtonPrimary/);
+  assertParses(gen.code);
+  assertParses(gen.components[0].code);
+});
+
 test("a nested instance pulls in its sub-component module", () => {
   const card = cardDefinition();
   const outer: ComponentDefinition = {
@@ -411,6 +428,20 @@ test("the sidecar round-trips the component registry", () => {
   const bad = JSON.parse(sidecar);
   bad.components.card1.name = "lowercase";
   assert.throws(() => parseSidecar(JSON.stringify(bad)), /Invalid .rncanvas.json sidecar/);
+});
+
+test("sidecar parser repairs stale component prop targets", () => {
+  const registry: ComponentRegistry = { card1: cardDefinition() };
+  registry.card1.props.push({
+    name: "disabled",
+    valueType: "boolean",
+    targets: [{ kind: "prop", nodeId: "missing", path: "disabled" }],
+  });
+  const screen = createNode("View", { id: "s", children: [createInstance("card1", { id: "i1" })] });
+  const sidecar = serializeSidecar(buildSidecar(screen, { screenName: "Home", components: registry }));
+  const parsed = parseSidecar(sidecar);
+
+  assert.ok(!parsed.components?.card1.props.some((prop) => prop.name === "disabled"));
 });
 
 import { emitTheme } from "./index";

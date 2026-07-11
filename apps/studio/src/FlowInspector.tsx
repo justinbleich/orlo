@@ -1,10 +1,10 @@
 import { ArrowDown, ArrowUp, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
-import { type Node, type NodeId } from "@rn-canvas/document";
+import { useEffect, useMemo, useState } from "react";
+import { findNode, useDocumentStore, type Node, type NodeId } from "@rn-canvas/document";
 import { Field, IconButton, Section, Select, TextField, cn } from "./studio-ui";
 import { controlClass } from "./studio-ui/controls";
 import { flowScreenName, removeFlowEdgeAtIndex, updateFlowEdge } from "./flow-model";
-import type { FlowDefinition } from "./workspace-store";
+import { useWorkspaceStore, type FlowDefinition } from "./workspace-store";
 import type { FlowEdge } from "./repo-contract";
 
 type ScreenOption = { value: NodeId; label: string };
@@ -42,6 +42,8 @@ export function FlowInspector({
   const [pendingScreenId, setPendingScreenId] = useState<NodeId | undefined>(
     availableScreens[0]?.id,
   );
+  const removeStoredFlowEdge = useWorkspaceStore((s) => s.removeFlowEdge);
+  const componentRegistry = useDocumentStore((s) => s.components);
   const screenOptions = useMemo<ScreenOption[]>(
     () => routeScreens.map((root) => ({ value: root.id, label: screenLabel(root, screens) })),
     [routeScreens, screens],
@@ -50,6 +52,13 @@ export function FlowInspector({
     () => availableScreens.map((root) => ({ value: root.id, label: screenLabel(root, screens) })),
     [availableScreens, screens],
   );
+
+  useEffect(() => {
+    if (pendingScreenId && availableScreens.some((screen) => screen.id === pendingScreenId)) {
+      return;
+    }
+    setPendingScreenId(availableScreens[0]?.id);
+  }, [availableScreens, pendingScreenId]);
 
   if (!flow) {
     return (
@@ -63,6 +72,28 @@ export function FlowInspector({
   const conditionalEdges = flow.edges
     .map((edge, index) => ({ edge, index }))
     .filter((item) => item.edge.kind === "conditional");
+
+  // Anchored wires: "Source · anchor → Target". The anchor id may be an expanded
+  // preview id (instanceId::…); the document node is its first segment.
+  const wiredEdges = flow.edges
+    .filter((edge) => !!edge.from.anchorNodeId)
+    .map((edge) => {
+      const source = routeScreens.find((screen) => screen.id === edge.from.rootId);
+      const target = routeScreens.find((screen) => screen.id === edge.to);
+      const anchorDocId = (edge.from.anchorNodeId ?? "").split("::")[0];
+      const anchorNode = source ? findNode(source, anchorDocId) : undefined;
+      const anchorLabel =
+        anchorNode?.design?.name ??
+        (anchorNode?.type === "ComponentInstance"
+          ? componentRegistry[anchorNode.componentId]?.name
+          : anchorNode?.type) ??
+        "element";
+      const label = `${source ? screenLabel(source, screens) : "?"} · ${anchorLabel} → ${
+        target ? screenLabel(target, screens) : "?"
+      }`;
+      return { edge, label };
+    });
+  const onRemoveEdge = (edge: FlowEdge) => void removeStoredFlowEdge(flow.id, edge);
 
   const addCondition = () => {
     const from = conditionSource(flow);
@@ -128,6 +159,7 @@ export function FlowInspector({
               options={availableOptions}
               placeholder="Add screen"
               disabled={availableOptions.length === 0}
+              ariaLabel="Add screen to flow"
             />
           </div>
           <IconButton
@@ -189,6 +221,7 @@ export function FlowInspector({
           options={screenOptions}
           placeholder="Select entry"
           disabled={screenOptions.length === 0}
+          ariaLabel="Entry screen"
         />
       </Section>
 
@@ -201,7 +234,32 @@ export function FlowInspector({
           options={screenOptions}
           placeholder="Select success"
           disabled={screenOptions.length === 0}
+          ariaLabel="Success screen"
         />
+      </Section>
+
+      <Section title="Wires">
+        {wiredEdges.length === 0 ? (
+          <p className="m-0 text-xs text-ink-faint">
+            No wires yet. Drag from a connect handle on a screen to another screen.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-xs">
+            {wiredEdges.map(({ edge, label }, index) => (
+              <div
+                key={`${edge.from.rootId}-${edge.from.anchorNodeId}-${edge.to}-${index}`}
+                className="flex items-center gap-xs rounded-sm bg-chrome-2 px-sm py-xs"
+              >
+                <span className="min-w-0 flex-1 truncate text-xs text-ink-dim" title={label}>
+                  {label}
+                </span>
+                <IconButton title="Remove wire" onClick={() => onRemoveEdge(edge)}>
+                  <X size={13} aria-hidden="true" />
+                </IconButton>
+              </div>
+            ))}
+          </div>
+        )}
       </Section>
 
       <Section
@@ -234,6 +292,7 @@ export function FlowInspector({
                     options={screenOptions}
                     placeholder="Destination"
                     disabled={screenOptions.length === 0}
+                    ariaLabel="Condition destination"
                   />
                 </div>
                 <IconButton title="Remove condition" onClick={() => removeCondition(index)}>

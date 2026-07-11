@@ -6,6 +6,7 @@ import {
   createNode,
   expandComponents,
   findNode,
+  migrateCombinationsForAxis,
   ownerInstanceId,
   promoteToComponent,
   pruneVariants,
@@ -64,6 +65,37 @@ test("promoteToComponent clones the subtree and returns a referencing instance",
   assert.equal(placed.type, "ComponentInstance");
   assert.equal(placed.componentId, definition.id);
   assert.deepEqual(placed.overrides, {});
+});
+
+test("promoteToComponent moves screen placement from template root to instance", () => {
+  const node = createNode("Pressable", {
+    id: "button",
+    style: {
+      position: "absolute",
+      left: 16,
+      right: 16,
+      bottom: 40,
+      height: 64,
+      padding: 8,
+      backgroundColor: "#2563eb",
+      borderRadius: 999,
+    },
+    children: [createNode("Text", { props: { text: "Next" } })],
+  });
+  const { definition, instance: placed } = promoteToComponent(node, "ButtonPrimary");
+
+  assert.deepEqual(definition.template.style, {
+    height: 64,
+    padding: 8,
+    backgroundColor: "#2563eb",
+    borderRadius: 999,
+  });
+  assert.deepEqual(placed.style, {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 40,
+  });
 });
 
 test("applyOverrides resolves text, falling back to the prop default", () => {
@@ -238,6 +270,26 @@ test("validateComponentRegistry catches bad prop names, targets, and defaults", 
   assert.ok(validateComponentRegistry({ comp1: badDefault }).some((e) => e.key.endsWith(".default")));
 });
 
+test("validateComponentRegistry accepts dotted PascalCase display paths", () => {
+  const def = cardDef();
+  def.name = "Button.Primary";
+  assert.deepEqual(validateComponentRegistry({ comp1: def }), []);
+});
+
+test("validateComponentRegistry rejects display paths with colliding emitted names", () => {
+  const primary = cardDef();
+  primary.id = "primary";
+  primary.name = "Button.Primary";
+  const flat = cardDef();
+  flat.id = "flat";
+  flat.name = "ButtonPrimary";
+  assert.ok(
+    validateComponentRegistry({ primary, flat }).some(
+      (e) => e.reason === "component name collides after codegen sanitization",
+    ),
+  );
+});
+
 test("validateInstance checks names and value types against the registry", () => {
   const registry = { comp1: cardDef() };
   assert.ok(validateInstance(createInstance("ghost"), registry).some((e) => e.key === "componentId"));
@@ -357,6 +409,111 @@ test("store: begin/end component edit hosts the template and writes it back", ()
   assert.equal(useDocumentStore.getState().editingComponentId, cid);
 });
 
+test("store: beginning component edit repairs empty button definitions", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots(
+    { frame: createNode("View", { id: "frame" }) },
+    ["frame"],
+    {
+      button: {
+        id: "button",
+        name: "ButtonPrimary",
+        template: createNode("Pressable", {
+          id: "button-root",
+          style: { width: 120, height: 44, backgroundColor: "#2563EB" },
+        }),
+        props: [],
+      },
+    },
+  );
+
+  store.beginComponentEdit("button");
+  const editing = useDocumentStore.getState().roots.button;
+  const definition = useDocumentStore.getState().components.button;
+  assert.equal(editing.type, "Pressable");
+  assert.equal(editing.children?.[0]?.type, "Text");
+  assert.equal(editing.children?.[0]?.props.text, "Pressable");
+  const template = definition.template;
+  assert.equal(template.type, "Pressable");
+  const child = template.children?.[0];
+  assert.equal(child?.type, "Text");
+  assert.equal(child.props.text, "Pressable");
+});
+
+test("store: beginning component edit repairs invalid instance roots", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots(
+    { frame: createNode("View", { id: "frame" }) },
+    ["frame"],
+    {
+      card: {
+        id: "card",
+        name: "TaskCard",
+        template: createInstance("missing", {
+          id: "bad-root",
+          style: { width: 240, height: 120, backgroundColor: "#F8FAFC" },
+        }),
+        props: [],
+      },
+    },
+  );
+
+  store.beginComponentEdit("card");
+  const editing = useDocumentStore.getState().roots.card;
+  const definition = useDocumentStore.getState().components.card;
+  assert.equal(editing.type, "View");
+  assert.equal(editing.id, "card");
+  assert.equal(editing.style.width, 240);
+  assert.equal(editing.style.height, 120);
+  assert.equal(definition.template.type, "View");
+});
+
+test("store: beginning component edit remaps root prop and variant targets", () => {
+  const store = useDocumentStore.getState();
+  store.loadRoots(
+    { frame: createNode("View", { id: "frame" }) },
+    ["frame"],
+    {
+      button: {
+        id: "button",
+        name: "Button",
+        template: createNode("Pressable", {
+          id: "template-root",
+          props: { disabled: false },
+          style: { backgroundColor: "#2563EB" },
+        }),
+        props: [
+          {
+            name: "disabled",
+            valueType: "boolean",
+            default: false,
+            targets: [{ kind: "prop", nodeId: "template-root", path: "disabled" }],
+          },
+        ],
+        variants: [{ name: "state", values: ["default", "disabled"] }],
+        combinations: [
+          {
+            values: { state: "disabled" },
+            overrides: [{ nodeId: "template-root", style: { opacity: 0.5 } }],
+          },
+        ],
+      },
+    },
+  );
+
+  store.beginComponentEdit("button");
+  const definition = useDocumentStore.getState().components.button;
+
+  assert.equal(definition.template.id, "button");
+  assert.deepEqual(definition.props[0].targets, [
+    { kind: "prop", nodeId: "button", path: "disabled" },
+  ]);
+  assert.deepEqual(definition.combinations?.[0].overrides, [
+    { nodeId: "button", style: { opacity: 0.5 } },
+  ]);
+  assert.deepEqual(validateComponentRegistry({ button: definition }), []);
+});
+
 test("store: definition edits preserve overrides; removing a prop drops them", () => {
   const screen = createNode("View", {
     id: "frame",
@@ -382,6 +539,42 @@ test("store: definition edits preserve overrides; removing a prop drops them", (
   // Removing the prop reconciles the override away.
   store.updateComponent(cid, { props: [] });
   assert.equal(overrideOf(instId), undefined);
+});
+
+test("store: resetInstanceOverrides restores a placed instance to defaults", () => {
+  const screen = createNode("View", { id: "frame", children: [] });
+  const store = useDocumentStore.getState();
+  store.loadRoots(
+    { frame: screen },
+    ["frame"],
+    {
+      button: {
+        id: "button",
+        name: "Button",
+        template: createNode("Pressable", {
+          id: "root",
+          children: [createNode("Text", { id: "label", props: { text: "Go" } })],
+        }),
+        props: [
+          { name: "label", valueType: "string", default: "Go", targets: [{ kind: "prop", nodeId: "label", path: "text" }] },
+          { name: "body", valueType: "node", targets: [{ kind: "slot", nodeId: "root" }] },
+        ],
+        variants: [{ name: "state", values: ["default", "pressed"] }],
+      },
+    },
+  );
+  store.placeInstance("frame", "frame", "button");
+  const inst = childrenOf(useDocumentStore.getState().roots.frame)[0] as ComponentInstanceNode;
+  store.setInstanceOverride("frame", inst.id, "label", "Next");
+  store.setInstanceSlot("frame", inst.id, "body", [createNode("Text", { id: "custom", props: { text: "Slot" } })]);
+  store.setInstanceVariant("frame", inst.id, "state", "pressed");
+
+  store.resetInstanceOverrides("frame", inst.id);
+  const reset = findNode(useDocumentStore.getState().roots.frame, inst.id) as ComponentInstanceNode;
+
+  assert.deepEqual(reset.overrides, {});
+  assert.equal(reset.slots, undefined);
+  assert.equal(reset.variant, undefined);
 });
 
 // --- Variants (Phase 2D-3) ---------------------------------------------------
@@ -506,6 +699,18 @@ test("validateComponentRegistry rejects malformed variants/combinations", () => 
   assert.match(reason(axisCollidesProp), /collides/);
 });
 
+test("promoteToComponent seeds empty pressables with neutral editable text", () => {
+  const node = createNode("Pressable", {
+    id: "button",
+    style: { width: 120, height: 44, backgroundColor: "#2563EB" },
+  });
+  const { definition } = promoteToComponent(node, "ButtonPrimary");
+  assert.equal(definition.template.type, "Pressable");
+  assert.equal(definition.template.children?.length, 1);
+  assert.equal(definition.template.children?.[0]?.type, "Text");
+  assert.equal(definition.template.children?.[0]?.props.text, "Pressable");
+});
+
 test("pruneVariants drops combinations orphaned by an axis/value edit", () => {
   // remove the "lg" value → both lg/* combinations become invalid
   const def = buttonDef();
@@ -524,6 +729,104 @@ test("pruneVariants drops combinations orphaned by an axis/value edit", () => {
   trimmed.template = createNode("Pressable", { id: "root", style: { padding: 8 }, children: [] });
   const t = pruneVariants(trimmed);
   assert.ok(t.combinations!.every((c) => c.overrides.every((o) => o.nodeId === "root")));
+});
+
+test("migrateCombinationsForAxis replicates combinations across a new axis", () => {
+  const def = buttonDef();
+  // simulate an axis added after the combinations were authored
+  def.variants = [...def.variants!, { name: "tone", values: ["solid", "outline"] }];
+  const migrated = migrateCombinationsForAxis(def, "tone");
+  // every original combination is replicated once per tone value
+  assert.equal(migrated.combinations!.length, 6);
+  const lgDefault = migrated.combinations!.filter(
+    (c) => c.values.size === "lg" && c.values.state === "default",
+  );
+  assert.deepEqual(
+    lgDefault.map((c) => c.values.tone).sort(),
+    ["outline", "solid"],
+  );
+  // overrides survive intact and are deep-cloned per replica
+  assert.deepEqual(lgDefault[0].overrides, lgDefault[1].overrides);
+  lgDefault[0].overrides[0].style!.padding = 99;
+  assert.equal(lgDefault[1].overrides[0].style!.padding, 16);
+  // combinations already referencing the axis pass through untouched
+  const already = migrateCombinationsForAxis(migrated, "tone");
+  assert.equal(already, migrated);
+  // migrated definitions satisfy the full-key invariant — nothing gets pruned
+  assert.equal(pruneVariants(migrated).combinations!.length, 6);
+});
+
+test("addVariantAxis preserves existing overrides by replicating combinations", () => {
+  const store = useDocumentStore.getState();
+  const root = createNode("View", { id: "frame", children: [
+    createNode("Pressable", { id: "btn", style: { backgroundColor: "#111827" } }),
+  ] });
+  store.loadRoots({ frame: root }, ["btn"]);
+  store.promoteToComponent("frame", "btn", "AddTask");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+  const tmplRoot = useDocumentStore.getState().components[cid].template.id;
+
+  store.addVariantAxis(cid, "state", ["default", "hover"]);
+  store.setVariantOverride(cid, { state: "hover" }, tmplRoot, { style: { backgroundColor: "#0f1623" } });
+  assert.equal(useDocumentStore.getState().components[cid].combinations!.length, 1);
+
+  // the QA repro: adding a second seeded axis must not orphan the hover override
+  store.addVariantAxis(cid, "size", ["Small", "Medium", "Large"]);
+  const def = useDocumentStore.getState().components[cid];
+  assert.equal(def.combinations!.length, 3); // hover × each size
+  for (const combo of def.combinations!) {
+    assert.equal(combo.values.state, "hover");
+    assert.deepEqual(combo.overrides[0].style, { backgroundColor: "#0f1623" });
+  }
+});
+
+test("componentEditIsDirty is diff-based against the post-seed baseline", () => {
+  const store = useDocumentStore.getState();
+  // an empty Pressable gets seeded content on open — still clean vs baseline
+  const root = createNode("View", { id: "frame", children: [
+    createNode("Pressable", { id: "btn", style: { width: 100, height: 40 } }),
+  ] });
+  store.loadRoots({ frame: root }, ["btn"]);
+  store.promoteToComponent("frame", "btn", "SeededButton");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+
+  store.beginComponentEdit(cid);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+
+  // a real edit reads dirty; undoing back to the baseline reads clean again
+  useDocumentStore.getState().updateStyle(cid, cid, { width: 320 });
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), true);
+  useDocumentStore.getState().undo();
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+
+  // discard, reopen: the reverted definition is the new baseline — clean
+  useDocumentStore.getState().updateStyle(cid, cid, { width: 320 });
+  useDocumentStore.getState().endComponentEdit(false);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+  useDocumentStore.getState().beginComponentEdit(cid);
+  assert.equal(useDocumentStore.getState().componentEditIsDirty(), false);
+});
+
+test("a draft axis gaining its first value annotates existing combinations", () => {
+  const store = useDocumentStore.getState();
+  const root = createNode("View", { id: "frame", children: [
+    createNode("Pressable", { id: "btn", style: { backgroundColor: "#111827" } }),
+  ] });
+  store.loadRoots({ frame: root }, ["btn"]);
+  store.promoteToComponent("frame", "btn", "AddTask");
+  const cid = Object.keys(useDocumentStore.getState().components)[0];
+  const tmplRoot = useDocumentStore.getState().components[cid].template.id;
+
+  store.addVariantAxis(cid, "state", ["default", "pressed"]);
+  store.setVariantOverride(cid, { state: "pressed" }, tmplRoot, { style: { opacity: 0.8 } });
+
+  store.addVariantAxis(cid, "tone"); // draft — doesn't count toward the full key yet
+  assert.equal(useDocumentStore.getState().components[cid].combinations!.length, 1);
+  store.addVariantValue(cid, "tone", "solid"); // axis becomes matchable here
+  const def = useDocumentStore.getState().components[cid];
+  assert.equal(def.combinations!.length, 1);
+  assert.deepEqual(def.combinations![0].values, { state: "pressed", tone: "solid" });
+  assert.deepEqual(def.combinations![0].overrides[0].style, { opacity: 0.8 });
 });
 
 test("reconcileInstance clamps variant selections to valid axes/values", () => {

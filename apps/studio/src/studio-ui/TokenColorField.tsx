@@ -18,6 +18,7 @@ export type ColorTokenOption = { id: string; name: string; value: string };
  */
 export function TokenColorField({
   value,
+  ariaLabel,
   onChange,
   disabled,
   onEditStart,
@@ -31,6 +32,7 @@ export function TokenColorField({
   onPromote,
 }: {
   value: string | undefined;
+  ariaLabel?: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   tokens: ColorTokenOption[];
@@ -79,6 +81,7 @@ export function TokenColorField({
         trigger={
           <ColorSwatchTrigger
             disabled={disabled}
+            ariaLabel={ariaLabel}
             value={value}
             linked={!!linked}
             linkedName={linked?.name}
@@ -100,6 +103,7 @@ export function TokenColorField({
       />
       <input
         type="text"
+        aria-label={ariaLabel}
         value={linked ? linked.name : hex}
         placeholder="—"
         disabled={disabled}
@@ -145,17 +149,18 @@ const ColorSwatchTrigger = forwardRef<
   HTMLButtonElement,
   {
     disabled?: boolean;
+    ariaLabel?: string;
     value: string | undefined;
     linked: boolean;
     linkedName?: string;
   } & React.ButtonHTMLAttributes<HTMLButtonElement>
->(function ColorSwatchTrigger({ disabled, value, linked, linkedName, ...rest }, ref) {
+>(function ColorSwatchTrigger({ disabled, ariaLabel, value, linked, linkedName, ...rest }, ref) {
   return (
     <button
       ref={ref}
       type="button"
       disabled={disabled}
-      aria-label={linked ? `Linked to ${linkedName} — change` : "Pick color or token"}
+      aria-label={linked ? `Linked to ${linkedName} — change` : `Pick ${ariaLabel?.toLowerCase() ?? "color or token"}`}
       {...rest}
       className={cn(
         "relative inline-flex size-swatch shrink-0 cursor-pointer overflow-hidden rounded-xs ring-1 ring-inset ring-line",

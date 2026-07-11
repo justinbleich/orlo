@@ -15,6 +15,7 @@ export type NumberTokenOption = { id: string; name: string; value: number };
  */
 export function TokenNumberField({
   label,
+  ariaLabel,
   value,
   onChange,
   min,
@@ -35,6 +36,7 @@ export function TokenNumberField({
   onPromote,
 }: {
   label: React.ReactNode;
+  ariaLabel?: string;
   value: number | undefined;
   onChange: (value: number | undefined) => void;
   min?: number;
@@ -133,6 +135,7 @@ export function TokenNumberField({
       <div className="min-w-0 flex-1">
         <NumberField
           label={label}
+          ariaLabel={ariaLabel}
           value={value}
           onChange={(next) => {
             // Direct numeric edits auto-detach any link.

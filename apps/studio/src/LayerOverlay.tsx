@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   childrenOf,
   createInstance,
@@ -16,6 +16,7 @@ import {
   containerAt,
   drawSize,
   flexBlockInParent,
+  flexCreateInsertIndex,
   flexFlowHorizontal,
   flexInsertIndex,
   hitTestLayout,
@@ -92,15 +93,21 @@ export function LayerOverlay({
   root,
   result,
   active,
+  variantTarget,
 }: {
   root: Node;
   result: LayoutReadyResult;
   active: boolean;
+  /** When set, the overlay hosts a variant preview: style edits (move/resize)
+   *  write that combination's overrides instead of the tree, and structural
+   *  interactions (create, reorder, text/prop edits) are disabled — variant
+   *  overrides can only express style and visibility. */
+  variantTarget?: { componentId: string; values: Record<string, string> };
 }) {
   const selection = useDocumentStore((state) => state.selection);
   const armedTool = useStudioStore((state) => state.armedTool);
   const armedComponentId = useStudioStore((state) => state.armedComponentId);
-  const armed = armedTool !== null || armedComponentId !== null;
+  const armed = (armedTool !== null || armedComponentId !== null) && !variantTarget;
   const [instanceKey, setInstanceKey] = useState<string | null>(null);
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [layoutGuide, setLayoutGuide] = useState<Gesture["layoutGuide"]>(undefined);
@@ -113,6 +120,14 @@ export function LayerOverlay({
   const [armedHover, setArmedHover] = useState(false);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    const node = findNode(root, editing.id);
+    if (!active || !node || node.type !== "Text" || !selection.includes(editing.id)) {
+      setEditing(null);
+    }
+  }, [active, editing, root, selection]);
 
   // Selected nodes that actually live in this frame's tree.
   const selectedInRoot = useMemo(
@@ -180,6 +195,19 @@ export function LayerOverlay({
 
   function setSelection(ids: NodeId[]) {
     useDocumentStore.getState().setSelection(ids);
+  }
+
+  /** Gesture style writes: the base template mutates the tree; a variant preview
+   *  routes the same patch into its combination's override instead. */
+  function patchGestureStyle(nodeId: NodeId, partial: Record<string, unknown>) {
+    const store = useDocumentStore.getState();
+    if (variantTarget) {
+      store.setVariantOverride(variantTarget.componentId, variantTarget.values, nodeId, {
+        style: partial,
+      });
+    } else {
+      store.updateStyle(root.id, nodeId, partial as Parameters<typeof store.updateStyle>[2]);
+    }
   }
 
   function beginGesture(
@@ -276,7 +304,7 @@ export function LayerOverlay({
       additive: false,
       moved: false,
       layoutGuide:
-        kind === "move" && box.node.style.position !== "absolute" && parent
+        kind === "move" && !variantTarget && box.node.style.position !== "absolute" && parent
           ? {
               box: boxOf(parent.id) ?? result.layout,
               horizontal: parent.style.flexDirection?.startsWith("row") ?? false,
@@ -330,6 +358,8 @@ export function LayerOverlay({
       return;
     }
     const node = rawHit.node;
+    // Text is a prop edit — not expressible as a variant override.
+    if (variantTarget) return;
     if (node.type === "Text" && !node.design?.locked) {
       useDocumentStore.getState().setSelection([node.id]);
       setInstanceKey(rawHit.instanceKey);
@@ -395,6 +425,12 @@ export function LayerOverlay({
     // the event here so it never reaches tldraw underneath, which would
     // otherwise translate the (selected) frame while you drag a node.
     event.stopPropagation();
+    // The frame being touched decides the edit target: clicking back into the
+    // base template frame retargets Inspector edits at the base (variant preview
+    // frames set their own combination on pointer-down capture).
+    if (!variantTarget && useDocumentStore.getState().editingComponentId === root.id) {
+      useStudioStore.getState().resetActiveVariant();
+    }
     // An armed primitive or component turns the next drag into a create gesture.
     if (armed) {
       beginCreate(event);
@@ -408,7 +444,10 @@ export function LayerOverlay({
 
     // Empty space or the frame background → marquee (or clear when not additive).
     if (!hit || hit.node.id === root.id) {
-      if (!additive) setSelection([]);
+      if (!additive) {
+        const editingComponentId = useDocumentStore.getState().editingComponentId;
+        setSelection(editingComponentId === root.id ? [root.id] : []);
+      }
       beginMarquee(event, additive);
       return;
     }
@@ -486,7 +525,6 @@ export function LayerOverlay({
     }
     const node = findNode(root, current.nodeId);
     if (!node) return;
-    const store = useDocumentStore.getState();
 
     if (current.kind === "resize") {
       const west = current.handle === "nw" || current.handle === "sw" || current.handle === "w";
@@ -503,7 +541,7 @@ export function LayerOverlay({
         if (west) partial.left = current.box.left - parentLeft + dx;
         if (north) partial.top = current.box.top - parentTop + dy;
       }
-      store.updateStyle(root.id, node.id, partial);
+      patchGestureStyle(node.id, partial);
       return;
     }
 
@@ -537,7 +575,7 @@ export function LayerOverlay({
       setSnapGuides({ x: snapped.guideX, y: snapped.guideY });
       setSpacingSegments(segments);
       for (const member of current.group) {
-        store.updateStyle(root.id, member.nodeId, {
+        patchGestureStyle(member.nodeId, {
           ...absoluteMovePatch(member.style, "horizontal", finalDx),
           ...absoluteMovePatch(member.style, "vertical", finalDy),
         });
@@ -569,7 +607,7 @@ export function LayerOverlay({
               rectOf(current.start, eventPoint(event)),
             );
             if (created && current.createType === "Text") {
-              setEditing({ id: created, value: "Text" });
+              setEditing({ id: created, value: "" });
             }
           }
           store.commitInteraction();
@@ -614,8 +652,10 @@ export function LayerOverlay({
     }
 
     // Flex siblings dropped → reorder block (or single node) by drop position.
+    // Structural: never routed into a variant override, so previews skip it.
     if (
       !cancel &&
+      !variantTarget &&
       current.kind === "move" &&
       current.moved &&
       current.group.length === 0 &&
@@ -664,7 +704,13 @@ export function LayerOverlay({
         return box ? [{ id: sibling.id, box }] : [];
       });
       const horizontal = flexFlowHorizontal(target.node.style.flexDirection);
-      const index = flexInsertIndex(siblings, start, horizontal);
+      const index = flexCreateInsertIndex(
+        siblings,
+        start,
+        horizontal,
+        target.node.id,
+        useDocumentStore.getState().selection,
+      );
       const store = useDocumentStore.getState();
       store.insertChild(root.id, target.node.id, node, index);
       store.setSelection([node.id]);
@@ -684,7 +730,13 @@ export function LayerOverlay({
         return box ? [{ id: sibling.id, box }] : [];
       });
       const horizontal = flexFlowHorizontal(target.node.style.flexDirection);
-      const index = flexInsertIndex(siblings, start, horizontal);
+      const index = flexCreateInsertIndex(
+        siblings,
+        start,
+        horizontal,
+        target.node.id,
+        useDocumentStore.getState().selection,
+      );
       const store = useDocumentStore.getState();
       store.insertChild(root.id, target.node.id, node, index);
       store.setSelection([node.id]);
@@ -754,7 +806,9 @@ export function LayerOverlay({
       }}
       onDoubleClick={onDoubleClick}
       onContextMenu={(event) => {
-        if (!active || editing) return;
+        // The layer menu's actions (duplicate, delete, wrap…) are structural and
+        // target document roots; a variant preview tree is neither.
+        if (!active || editing || variantTarget) return;
         event.preventDefault();
         event.stopPropagation();
         const point = localPoint(
@@ -1020,6 +1074,7 @@ export function LayerOverlay({
               value={editing.value}
               onChange={(e) => setEditing({ id: editing.id, value: e.target.value })}
               onBlur={commitEdit}
+              onFocus={(e) => e.currentTarget.select()}
               onPointerDown={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
                 e.stopPropagation();

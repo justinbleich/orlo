@@ -83,6 +83,18 @@ export function flexInsertIndex(
   return remaining.length;
 }
 
+/** Draw-to-create into the actively selected container appends by default. */
+export function flexCreateInsertIndex(
+  siblings: readonly { id: NodeId; box: Pick<LayoutHitBox, "left" | "top" | "width" | "height"> }[],
+  point: Point,
+  horizontal: boolean,
+  targetId: NodeId,
+  selectedIds: readonly NodeId[],
+): number {
+  if (selectedIds.includes(targetId)) return siblings.length;
+  return flexInsertIndex(siblings, point, horizontal);
+}
+
 /** Selected flex siblings of `parent`, in document order, excluding absolutes. */
 export function flexBlockInParent(
   root: Node,
@@ -125,7 +137,26 @@ export function buildDrawnNode(type: RNPrimitive, width: number, height: number)
     case "TextInput":
       return createNode("TextInput", { style: { width, height: Math.max(height, 36) } });
     case "Pressable":
-      return createNode("Pressable", { style: { width, height } });
+      return createNode("Pressable", {
+        style: {
+          width,
+          height: Math.max(height, 40),
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: "#CBD5E1",
+          backgroundColor: "#FFFFFF",
+          alignItems: "center",
+          justifyContent: "center",
+        },
+        children: [
+          createNode("Text", {
+            props: { text: "Pressable" },
+            style: { color: "#111827", textAlign: "center" },
+          }),
+        ],
+      });
     case "Image":
       return createNode("Image", { style: { width, height } });
     default:

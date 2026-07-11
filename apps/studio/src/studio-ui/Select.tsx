@@ -12,12 +12,14 @@ export function Select<T extends string>({
   options,
   placeholder = "—",
   disabled,
+  ariaLabel,
 }: {
   value: T | undefined;
   onChange: (value: T) => void;
   options: SelectOption<T>[];
   placeholder?: string;
   disabled?: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <BaseSelect.Root
@@ -27,6 +29,7 @@ export function Select<T extends string>({
       items={options}
     >
       <BaseSelect.Trigger
+        aria-label={ariaLabel}
         className={cn(
           controlClass,
           "flex items-center justify-between gap-sm overflow-hidden text-left",

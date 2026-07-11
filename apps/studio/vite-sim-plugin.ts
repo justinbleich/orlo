@@ -1,5 +1,10 @@
 import type { Plugin } from "vite";
-import type { ComponentRegistry, Node, TokenRegistry } from "@rn-canvas/document";
+import type {
+  ComponentDefinition,
+  ComponentRegistry,
+  Node,
+  TokenRegistry,
+} from "@rn-canvas/document";
 import { execFile } from "node:child_process";
 import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -56,6 +61,13 @@ type ExternalSourceRequest = {
 type TokensSaveRequest = {
   sidecarPath?: string;
   tokens?: TokenRegistry;
+};
+
+type ComponentSaveRequest = {
+  definition?: ComponentDefinition;
+  components?: ComponentRegistry;
+  tokens?: TokenRegistry;
+  sidecarPaths?: string[];
 };
 
 type FlowManifestRequest = {
@@ -196,6 +208,16 @@ function safeComponentName(input = "Screen") {
   return input.trim() || "Screen";
 }
 
+function emittedComponentName(input: string) {
+  return input
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+}
+
 async function resolveRepoRoot(input?: string) {
   if (!input?.trim()) throw new Error("Enter a repository path");
   const root = resolve(isAbsolute(input) ? input : join(repoRoot, input));
@@ -299,6 +321,29 @@ async function emitThemeCode(tokens: TokenRegistry): Promise<GeneratedTheme> {
       inputPath,
     ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
     return JSON.parse(stdout) as GeneratedTheme;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function emitComponentCode(
+  definition: ComponentDefinition,
+  components?: ComponentRegistry,
+  tokens?: TokenRegistry,
+): Promise<GeneratedComponent> {
+  const dir = await mkdtemp(join(tmpdir(), "rncanvas-component-"));
+  const inputPath = join(dir, "component.json");
+  try {
+    await writeFile(inputPath, JSON.stringify({ definition, components, tokens }));
+    const { stdout } = await execFileAsync("pnpm", [
+      "--filter",
+      "@rn-canvas/codegen",
+      "exec",
+      "tsx",
+      "src/cli-emit-component.ts",
+      inputPath,
+    ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
+    return JSON.parse(stdout) as GeneratedComponent;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -1145,6 +1190,76 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "React Native import failed",
+          });
+        }
+      });
+
+      // Component focus can be opened from the hydrated library without opening
+      // any screen roots. Persist the edited definition back to every sidecar
+      // that owns it, and update the standalone component module, so Done is a
+      // durable save rather than an in-memory-only edit.
+      server.middlewares.use("/api/components/save", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<ComponentSaveRequest>(req);
+          const definition = body.definition;
+          if (!definition) throw new Error("Missing component definition");
+          const sidecarInputs = [...new Set(body.sidecarPaths ?? [])];
+          if (sidecarInputs.length === 0) throw new Error("Component has no owning sidecar");
+
+          const savedSidecars: string[] = [];
+          const componentPaths = new Set<string>();
+          const emittedName = emittedComponentName(definition.name);
+          for (const input of sidecarInputs) {
+            const sidecarPath = resolveSidecarPath(input);
+            const document = JSON.parse(await readFile(sidecarPath, "utf8")) as {
+              components?: ComponentRegistry;
+              tokens?: TokenRegistry;
+              [key: string]: unknown;
+            };
+            const registry = document.components ?? {};
+            const match = Object.entries(registry).find(
+              ([id, candidate]) =>
+                id === definition.id ||
+                candidate.name === definition.name ||
+                emittedComponentName(candidate.name) === emittedName,
+            );
+            if (!match) continue;
+
+            const [storedId] = match;
+            const storedDefinition =
+              storedId === definition.id ? definition : { ...definition, id: storedId };
+            document.components = { ...registry, [storedId]: storedDefinition };
+            await writeFile(sidecarPath, `${JSON.stringify(document, null, 2)}\n`);
+            savedSidecars.push(relative(activeRepoRoot, sidecarPath));
+
+            const emitted = await emitComponentCode(
+              definition,
+              body.components ?? { [definition.id]: definition },
+              body.tokens ?? document.tokens,
+            );
+            const componentPath = join(dirname(sidecarPath), "components", emitted.fileName);
+            if (!componentPaths.has(componentPath)) {
+              await mkdir(dirname(componentPath), { recursive: true });
+              await writeFile(componentPath, `${emitted.code}\n`);
+              componentPaths.add(componentPath);
+            }
+          }
+
+          if (savedSidecars.length === 0) {
+            throw new Error(`No sidecar owns component ${definition.name}`);
+          }
+          sendJson(res, 200, {
+            savedSidecars,
+            componentPaths: [...componentPaths].map((path) => relative(activeRepoRoot, path)),
+            wrote: true,
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Component save failed",
           });
         }
       });

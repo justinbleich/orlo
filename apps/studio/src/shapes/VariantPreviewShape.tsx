@@ -125,7 +125,7 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
           // second white card behind it (especially visible for transparent or
           // rounded components).
           backgroundColor: "transparent",
-          border: "1px solid transparent",
+          border: "none",
           borderRadius: 0,
           boxShadow: "none",
           pointerEvents: "auto",

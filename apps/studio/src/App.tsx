@@ -1241,6 +1241,8 @@ export default function App() {
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
   const repoComponentHydratedRef = useRef<Set<string>>(new Set());
+  const connectedRepoIdentityRef = useRef<string | null>(null);
+  const bootstrapAttemptedRef = useRef(false);
   const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
 
   const [inspectorTab, setInspectorTab] = useState("Design");
@@ -1370,6 +1372,18 @@ export default function App() {
     () => repoFlowItemsForContext(repoContext),
     [repoContext],
   );
+
+  // Relative sidecar paths commonly repeat across repos. Clear per-repo load
+  // guards when the connected root changes so the new repo hydrates its own
+  // components/flows and gets its own first-run bootstrap decision.
+  useEffect(() => {
+    const identity = repoContext?.repoPath ?? null;
+    if (connectedRepoIdentityRef.current === identity) return;
+    connectedRepoIdentityRef.current = identity;
+    repoFlowAutoloadedRef.current.clear();
+    repoComponentHydratedRef.current.clear();
+    bootstrapAttemptedRef.current = false;
+  }, [repoContext?.repoPath]);
   if (focusedRootId && focusedRootId !== editingComponentId) {
     setSyncRootHint(focusedRootId);
   }
@@ -1629,7 +1643,6 @@ export default function App() {
   // screens (the in-memory store is always empty at mount — repo screens load
   // lazily — so it must not be the signal). Runs at most once per session.
   // TODO: replace this with a dedicated repo bootstrap/onboarding flow.
-  const bootstrapAttemptedRef = useRef(false);
   useEffect(() => {
     if (!repoContext || bootstrapAttemptedRef.current) return;
     bootstrapAttemptedRef.current = true;
@@ -2818,10 +2831,10 @@ export default function App() {
                 setWorkspace("Screen");
                 setStatus(`Canceled ${editingComponentName ?? "component"} edits`);
               }}
-              onDone={() => {
-                useDocumentStore.getState().endComponentEdit(true);
+              onDone={async () => {
+                const saved = await useWorkspaceStore.getState().saveComponentEdit();
+                if (!saved) return;
                 setWorkspace("Screen");
-                setStatus(`Saved ${editingComponentName ?? "component"}`);
               }}
             >
               <div

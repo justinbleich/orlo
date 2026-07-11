@@ -604,8 +604,11 @@ export function LeftPanel({
       const next = { ...current };
       for (const root of Object.values(roots)) {
         const key = layerCollapseKey(root);
-        if (next[key] !== true) {
-          next[key] = true;
+        // Hide screen contents while component focus owns the canvas, but keep
+        // the active component's own layer hierarchy open in the left panel.
+        const collapsed = root.id !== editingComponentId;
+        if (next[key] !== collapsed) {
+          next[key] = collapsed;
           changed = true;
         }
       }
@@ -633,11 +636,14 @@ export function LeftPanel({
     deleteNodes(focusedRoot.id, [selectedId]);
   }
 
-  function layerAccordion(root: typeof rootList[number]) {
+  function layerAccordion(
+    root: typeof rootList[number],
+    rootKind: "screen" | "component" = "screen",
+  ) {
     const collapseKey = layerCollapseKey(root);
     const collapsed = collapsedLayerRoots[collapseKey] ?? false;
     const count = layerCount(root);
-    const rootLabel = root.design?.name ?? "Screen";
+    const rootLabel = root.design?.name ?? (rootKind === "component" ? "Component" : "Screen");
     return (
       <div className="ml-md flex flex-col gap-xs border-l border-line-soft pl-xs">
         <button
@@ -661,7 +667,12 @@ export function LeftPanel({
         {!collapsed && (
           <>
             <div className="rounded-sm border border-line/40 bg-chrome-2 p-xs">
-              <DocumentTree node={root} rootId={root.id} selectedIds={selection} />
+              <DocumentTree
+                node={root}
+                rootId={root.id}
+                selectedIds={selection}
+                rootKind={rootKind}
+              />
             </div>
             <div className="flex gap-xs">
               <PanelAction
@@ -979,61 +990,64 @@ export function LeftPanel({
                   const armed = armedComponentId === comp.id;
                   const componentFileName = toComponentFileName(comp.name);
                   const componentGitCode = gitCodeForPath(gitStatus, `generated/components/${componentFileName}.tsx`);
+                  const editing = editingComponentId === comp.id;
                   return (
-                    <PanelRow
-                      key={comp.id}
-                      icon={Component}
-                      onClick={() => {
-                        setArmedComponent(null);
-                        onOpenComponent(comp.id);
-                      }}
-                      title={`Edit ${comp.name}`}
-                      active={editingComponentId === comp.id || armed}
-                      action={(
-                        <>
-                          <PanelAction
-                            onClick={() => {
-                              if (editingComponentId) {
-                                setStatus("Finish component edit before placing components");
-                                return;
-                              }
-                              const nextArmed = armed ? null : comp.id;
-                              setArmedComponent(nextArmed);
-                              setStatus(
-                                nextArmed
-                                  ? `${comp.name} ready to place. Click or drag on a screen · Esc to cancel`
-                                  : `${comp.name} placement canceled`,
-                              );
-                              if (nextArmed) onWorkspaceChange("Screen");
-                            }}
-                            title={armed ? "Cancel placing component" : "Place component"}
-                            className={rowAction}
-                          >
-                            <MousePointerClick size={14} aria-hidden="true" />
-                          </PanelAction>
-                          <PanelAction
-                            onClick={() => {
-                              const usageCount = useDocumentStore
-                                .getState()
-                                .getComponentUsage(comp.id).length;
-                              setConfirmDeleteComponent({ id: comp.id, name: comp.name, usageCount });
-                            }}
-                            title="Delete component"
-                            className={rowAction}
-                          >
-                            <Trash2 size={14} aria-hidden="true" />
-                          </PanelAction>
-                        </>
-                      )}
-                    >
-                      <span className="min-w-0 flex-1 truncate">{label}</span>
-                      {group && (
-                        <span className="max-w-20 truncate text-2xs text-ink-faint">
-                          {componentFileName}
-                        </span>
-                      )}
-                      <GitBadge code={componentGitCode} title={`generated/components/${componentFileName}.tsx`} />
-                    </PanelRow>
+                    <div key={comp.id} className="flex flex-col gap-xs">
+                      <PanelRow
+                        icon={Component}
+                        onClick={() => {
+                          setArmedComponent(null);
+                          onOpenComponent(comp.id);
+                        }}
+                        title={`Edit ${comp.name}`}
+                        active={editing || armed}
+                        action={(
+                          <>
+                            <PanelAction
+                              onClick={() => {
+                                if (editingComponentId) {
+                                  setStatus("Finish component edit before placing components");
+                                  return;
+                                }
+                                const nextArmed = armed ? null : comp.id;
+                                setArmedComponent(nextArmed);
+                                setStatus(
+                                  nextArmed
+                                    ? `${comp.name} ready to place. Click or drag on a screen · Esc to cancel`
+                                    : `${comp.name} placement canceled`,
+                                );
+                                if (nextArmed) onWorkspaceChange("Screen");
+                              }}
+                              title={armed ? "Cancel placing component" : "Place component"}
+                              className={rowAction}
+                            >
+                              <MousePointerClick size={14} aria-hidden="true" />
+                            </PanelAction>
+                            <PanelAction
+                              onClick={() => {
+                                const usageCount = useDocumentStore
+                                  .getState()
+                                  .getComponentUsage(comp.id).length;
+                                setConfirmDeleteComponent({ id: comp.id, name: comp.name, usageCount });
+                              }}
+                              title="Delete component"
+                              className={rowAction}
+                            >
+                              <Trash2 size={14} aria-hidden="true" />
+                            </PanelAction>
+                          </>
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{label}</span>
+                        {group && (
+                          <span className="max-w-20 truncate text-2xs text-ink-faint">
+                            {componentFileName}
+                          </span>
+                        )}
+                        <GitBadge code={componentGitCode} title={`generated/components/${componentFileName}.tsx`} />
+                      </PanelRow>
+                      {editing && roots[comp.id] && layerAccordion(roots[comp.id], "component")}
+                    </div>
                   );
                 })}
               </div>

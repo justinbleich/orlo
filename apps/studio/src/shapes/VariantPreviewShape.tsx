@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   HTMLContainer,
   Rectangle2d,
   ShapeUtil,
   T,
+  useEditor,
+  type Editor,
   type Geometry2d,
   type RecordProps,
   type TLBaseShape,
@@ -29,6 +31,7 @@ export type VariantPreviewShape = TLBaseShape<
   "rnvariantpreview",
   { componentId: string; variantValues: Record<string, string>; w: number; h: number }
 >;
+type UpdatePartial = Parameters<Editor["updateShape"]>[0];
 
 // @ts-expect-error custom shape type vs closed TLShape constraint
 export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
@@ -53,6 +56,7 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
   }
 
   override component(shape: VariantPreviewShape) {
+    const editor = useEditor();
     const definition = useDocumentStore((s) => s.components[shape.props.componentId]);
     const activeVariant = useStudioStore((s) => s.activeVariant);
     const setActiveVariantAll = useStudioStore((s) => s.setActiveVariantAll);
@@ -72,6 +76,25 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
     // Layout snapshot for direct manipulation — shape-local, unlike FrameShape's
     // rootId-keyed studio layout map (a preview isn't a document root).
     const [layoutResult, setLayoutResult] = useState<LayoutReadyResult | null>(null);
+    const onLayoutReady = useCallback(
+      (result: LayoutReadyResult) => {
+        setLayoutResult(result);
+        const w = Number.isFinite(result.width) && result.width > 0 ? result.width : shape.props.w;
+        const h = Number.isFinite(result.height) && result.height > 0 ? result.height : shape.props.h;
+        if (Math.abs(w - shape.props.w) <= 0.01 && Math.abs(h - shape.props.h) <= 0.01) return;
+        editor.run(
+          () => {
+            editor.updateShape({
+              id: shape.id,
+              type: shape.type,
+              props: { ...shape.props, w, h },
+            } as unknown as UpdatePartial);
+          },
+          { history: "ignore", ignoreShapeLock: true },
+        );
+      },
+      [editor, shape.id, shape.props],
+    );
     const root = useMemo(
       () => (definition ? variantPreviewRoot(definition, shape.props.variantValues) : null),
       [definition, shape.props.variantValues],
@@ -98,12 +121,13 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
           width: shape.props.w,
           height: shape.props.h,
           overflow: "visible",
-          backgroundColor: "#ffffff",
-          border: `1px solid ${active ? color.accentLine : color.artLine}`,
-          borderRadius: radius.base,
-          boxShadow: active
-            ? "0 0 0 3px rgba(59, 130, 246, 0.16), 0 10px 26px rgba(17, 24, 39, 0.11)"
-            : "0 8px 24px rgba(17, 24, 39, 0.08)",
+          // The component paints its own surface. Preview chrome must not add a
+          // second white card behind it (especially visible for transparent or
+          // rounded components).
+          backgroundColor: "transparent",
+          border: "1px solid transparent",
+          borderRadius: 0,
+          boxShadow: "none",
           pointerEvents: "auto",
         }}
         onPointerDownCapture={() => {
@@ -141,7 +165,7 @@ export class VariantPreviewShapeUtil extends ShapeUtil<VariantPreviewShape> {
           {variantPreviewLabel(definition, shape.props.variantValues)}
         </div>
         <div style={{ pointerEvents: "none" }}>
-          <FrameRenderer root={root} components={components} onLayoutReady={setLayoutResult} />
+          <FrameRenderer root={root} components={components} onLayoutReady={onLayoutReady} />
         </div>
         {/* Direct manipulation: active only while this combo is the active
             variant — first click activates (capture handler above), then the

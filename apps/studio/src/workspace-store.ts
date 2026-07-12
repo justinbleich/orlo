@@ -32,6 +32,7 @@ import {
 } from "./repo-project-model";
 import { mergeLoadedTokens } from "./token-merge";
 import { createScreenFrame, nextScreenName } from "./document-actions";
+import { toComponentFileName } from "./component-name";
 import {
   addFlowEdge,
   deriveLinearEdges,
@@ -59,6 +60,29 @@ export type FlowDefinition = {
   manifestEntryPath?: string;
   manifestSuccessPath?: string;
 };
+
+function sameGitStatus(a: GitStatus, b: GitStatus): boolean {
+  if (a.status !== b.status) return false;
+  if (a.status === "loading" || b.status === "loading") return true;
+  if (a.status === "error" || b.status === "error") {
+    return a.status === "error" && b.status === "error" && a.message === b.message;
+  }
+  return (
+    a.repoPath === b.repoPath &&
+    a.branch === b.branch &&
+    a.clean === b.clean &&
+    a.files.length === b.files.length &&
+    a.files.every((file, index) => {
+      const other = b.files[index];
+      return (
+        !!other &&
+        file.path === other.path &&
+        file.index === other.index &&
+        file.workingTree === other.workingTree
+      );
+    })
+  );
+}
 
 export type FlowPositions = Record<string, Record<string, { x: number; y: number }>>;
 
@@ -138,6 +162,9 @@ export const workspaceFlags = {
   skipTokenWrite: false,
   /** Next document change is a load, not an edit — don't schedule a code sync. */
   skipCodeSync: false,
+  /** Next frame-position change resets repo state; don't echo an empty canvas
+   * manifest into either the old or newly connected repository. */
+  skipCanvasWrite: false,
 };
 
 let codegenInFlight = false;
@@ -153,6 +180,79 @@ let syncRootHint: NodeId | null = null;
  *  every affected generated file, not just the focused one. */
 const dirtyRoots = new Set<NodeId>();
 let nextToastId = 1;
+
+/** Clear every repo-owned projection before hydrating a newly connected repo.
+ * Kept explicit because workspace metadata and the document registry live in
+ * separate stores; resetting only one leaks screens, components, and positions
+ * across repository boundaries. */
+export function resetDocumentForRepoSwitch() {
+  workspaceFlags.skipTokenWrite = true;
+  workspaceFlags.skipCodeSync = true;
+  workspaceFlags.skipCanvasWrite = true;
+  useDocumentStore.getState().loadRoots({}, [], {}, {});
+  useDocumentStore.setState({ framePositions: {} });
+  dirtyRoots.clear();
+  syncRootHint = null;
+  canvasSaved = "";
+}
+
+/** Rewrite ComponentInstance references per the id map (recursive, clone-on-write). */
+function remapInstanceComponentIds(node: Node, idMap: Map<string, string>): Node {
+  if (node.type === "ComponentInstance") {
+    const mapped = idMap.get(node.componentId);
+    const slots = node.slots
+      ? Object.fromEntries(
+          Object.entries(node.slots).map(([name, kids]) => [
+            name,
+            kids.map((kid) => remapInstanceComponentIds(kid, idMap)),
+          ]),
+        )
+      : undefined;
+    if (!mapped && !slots) return node;
+    return { ...node, ...(mapped ? { componentId: mapped } : {}), ...(slots ? { slots } : {}) };
+  }
+  const kids = childrenOf(node);
+  if (kids.length === 0) return node;
+  const nextKids = kids.map((kid) => remapInstanceComponentIds(kid, idMap));
+  if (nextKids.every((kid, i) => kid === kids[i])) return node;
+  return { ...node, children: nextKids } as Node;
+}
+
+/** Reconcile an incoming sidecar registry with the live session, including
+ * display names that differ but sanitize to the same generated module name. */
+export function reconcileIncomingComponents(
+  existing: ComponentRegistry,
+  incoming: ComponentRegistry | undefined,
+  root: Node,
+): { components: ComponentRegistry | undefined; root: Node; remapped: number } {
+  if (!incoming) return { components: incoming, root, remapped: 0 };
+  const existingByName = new Map(
+    Object.entries(existing).map(([id, def]) => [def.name, id]),
+  );
+  const existingByEmittedName = new Map(
+    Object.entries(existing).map(([id, def]) => [toComponentFileName(def.name), id]),
+  );
+  const idMap = new Map<string, string>();
+  for (const [id, def] of Object.entries(incoming)) {
+    const existingId =
+      existingByName.get(def.name) ?? existingByEmittedName.get(toComponentFileName(def.name));
+    if (existingId && existingId !== id && !existing[id]) idMap.set(id, existingId);
+  }
+  if (idMap.size === 0) return { components: incoming, root, remapped: 0 };
+  const kept = Object.fromEntries(
+    Object.entries(incoming)
+      .filter(([id]) => !idMap.has(id))
+      .map(([id, def]) => [
+        id,
+        { ...def, template: remapInstanceComponentIds(def.template, idMap) },
+      ]),
+  );
+  return {
+    components: kept,
+    root: remapInstanceComponentIds(root, idMap),
+    remapped: idMap.size,
+  };
+}
 
 function defaultFlowsById(): Record<string, FlowDefinition> {
   return Object.fromEntries(DEFAULT_FLOWS.map((flow) => [flow.id, { ...flow }]));
@@ -557,6 +657,9 @@ interface WorkspaceState {
     source?: "manual" | "auto",
   ): Promise<CodegenResult | null>;
   scheduleAutoSync(): void;
+  /** Persist the live definition to its owning sidecar/module, then close
+   * component focus. A failed durable write leaves the editor open. */
+  saveComponentEdit(): Promise<boolean>;
   openSidecar(path?: string, mode?: "replace" | "merge"): Promise<void>;
   hydrateSidecarComponents(path: string): Promise<void>;
   importSource(path?: string, mode?: "replace" | "merge"): Promise<void>;
@@ -769,7 +872,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     fallbackPath: string,
   ) => {
     const nextPath = body.repoPath ?? fallbackPath;
-    set({ repoPath: nextPath, repoDraft: nextPath });
+    resetDocumentForRepoSwitch();
+    workspaceFlags.managedDocument = false;
+    applyCodegenResult(null);
+    set({
+      repoPath: nextPath,
+      repoDraft: nextPath,
+      screenName: "",
+      targetPath: "",
+      sidecarPath: "",
+      activeRepoScreen: null,
+      loadedRepoScreens: {},
+      flowsById: defaultFlowsById(),
+      flowOrder: DEFAULT_FLOWS.map((flow) => flow.id),
+      flowPositions: {},
+    });
     if (body.git) {
       set({
         gitStatus: {
@@ -789,8 +906,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     } else {
       await get().loadRepoContext();
     }
-    workspaceFlags.managedDocument = false;
-    set({ activeRepoScreen: null, loadedRepoScreens: {} });
     void get().refreshBranches();
     // Frame arrangement is per-repo state; pick up the new repo's layout.
     void get().loadCanvasManifest();
@@ -813,65 +928,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     }
     set({ syncState: { status: "idle" }, repoBusy: true, repoError: null });
     return true;
-  };
-
-  /** Rewrite ComponentInstance references per the id map (recursive, clone-on-write). */
-  const remapInstanceComponentIds = (node: Node, idMap: Map<string, string>): Node => {
-    if (node.type === "ComponentInstance") {
-      const mapped = idMap.get(node.componentId);
-      const slots = node.slots
-        ? Object.fromEntries(
-            Object.entries(node.slots).map(([name, kids]) => [
-              name,
-              kids.map((kid) => remapInstanceComponentIds(kid, idMap)),
-            ]),
-          )
-        : undefined;
-      if (!mapped && !slots) return node;
-      return { ...node, ...(mapped ? { componentId: mapped } : {}), ...(slots ? { slots } : {}) };
-    }
-    const kids = childrenOf(node);
-    if (kids.length === 0) return node;
-    const nextKids = kids.map((kid) => remapInstanceComponentIds(kid, idMap));
-    if (nextKids.every((kid, i) => kid === kids[i])) return node;
-    return { ...node, children: nextKids } as Node;
-  };
-
-  /**
-   * Reconcile an opened sidecar's components with the live registry by name:
-   * a definition whose name already exists in the session under a different id
-   * (id drift across sessions/tools) is dropped in favor of the session's, and
-   * the incoming tree's instances are remapped. Without this, merge-opening the
-   * drifted screen fails registry validation ("duplicate component name").
-   */
-  const reconcileIncomingComponents = (
-    existing: ComponentRegistry,
-    incoming: ComponentRegistry | undefined,
-    root: Node,
-  ): { components: ComponentRegistry | undefined; root: Node; remapped: number } => {
-    if (!incoming) return { components: incoming, root, remapped: 0 };
-    const existingByName = new Map(
-      Object.entries(existing).map(([id, def]) => [def.name, id]),
-    );
-    const idMap = new Map<string, string>();
-    for (const [id, def] of Object.entries(incoming)) {
-      const existingId = existingByName.get(def.name);
-      if (existingId && existingId !== id && !existing[id]) idMap.set(id, existingId);
-    }
-    if (idMap.size === 0) return { components: incoming, root, remapped: 0 };
-    const kept = Object.fromEntries(
-      Object.entries(incoming)
-        .filter(([id]) => !idMap.has(id))
-        .map(([id, def]) => [
-          id,
-          { ...def, template: remapInstanceComponentIds(def.template, idMap) },
-        ]),
-    );
-    return {
-      components: kept,
-      root: remapInstanceComponentIds(root, idMap),
-      remapped: idMap.size,
-    };
   };
 
   const openLoadedDocument = (opts: {
@@ -1047,7 +1103,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           files: Array.isArray(body.files) ? body.files : [],
         };
         // The 5s poll usually returns the same answer — don't re-render for it.
-        if (JSON.stringify(next) !== JSON.stringify(get().gitStatus)) {
+        if (!sameGitStatus(next, get().gitStatus)) {
           set({ gitStatus: next });
         }
         if (body.repoPath && body.repoPath !== previousRepoPath) void get().refreshBranches();
@@ -1677,6 +1733,54 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }, 900);
     },
 
+    saveComponentEdit: async () => {
+      const doc = useDocumentStore.getState();
+      const componentId = doc.editingComponentId;
+      if (!componentId) return true;
+      const definition = doc.components[componentId];
+      if (!definition) {
+        const message = "Component definition is no longer available";
+        set({ status: message });
+        get().pushToast(message);
+        return false;
+      }
+
+      const sidecarPaths = [
+        ...new Set((get().repoContext?.sidecars ?? []).map((sidecar) => sidecar.path)),
+      ];
+      if (workspaceFlags.managedDocument && sidecarPaths.length > 0) {
+        set({ status: `Saving ${definition.name}…` });
+        try {
+          const res = await fetch("/api/components/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              definition,
+              components: doc.components,
+              tokens: doc.tokens,
+              sidecarPaths,
+            }),
+          });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Component save failed";
+          set({ status: message });
+          get().pushToast(message);
+          return false;
+        }
+      }
+
+      useDocumentStore.getState().endComponentEdit(true);
+      const screenRoots = Object.keys(useDocumentStore.getState().roots);
+      for (const rootId of screenRoots) dirtyRoots.add(rootId);
+      if (workspaceFlags.managedDocument && screenRoots.length > 0) get().scheduleAutoSync();
+      set({ status: `Saved ${definition.name}` });
+      void get().refreshGitStatus();
+      void get().loadRepoContext();
+      return true;
+    },
+
     openSidecar: async (path = get().sidecarPath, mode = "replace") => {
       set({ codegenBusy: true, codegenError: null });
       try {
@@ -1913,10 +2017,11 @@ export function initWorkspaceSubscriptions(): () => void {
   let dirtyDuringInteraction = false;
   const unsubscribeAutoSync = docStore.subscribe((state) => {
     const previousRoots = lastRoots;
+    const previousComponents = lastComponents;
     const rootsChanged = state.roots !== lastRoots;
-    const globalsChanged =
-      state.components !== lastComponents || state.tokens !== lastTokens;
-    const documentChanged = rootsChanged || globalsChanged;
+    const componentsChanged = state.components !== lastComponents;
+    const tokensChanged = state.tokens !== lastTokens;
+    const documentChanged = rootsChanged || componentsChanged || tokensChanged;
     const interactionJustEnded = !!lastInteraction && !state.interaction;
     lastRoots = state.roots;
     lastComponents = state.components;
@@ -1937,10 +2042,25 @@ export function initWorkspaceSubscriptions(): () => void {
         if (previousRoots[id] !== root) dirtyRoots.add(id);
       }
     }
-    if (globalsChanged) {
-      // Tokens/components reapply across every tree — all screens are stale.
+    if (tokensChanged) {
+      // Token literals can affect every tree.
       for (const id of Object.keys(state.roots)) {
         if (id !== state.editingComponentId) dirtyRoots.add(id);
+      }
+    }
+    if (componentsChanged) {
+      const changedComponentIds = [
+        ...new Set([...Object.keys(previousComponents), ...Object.keys(state.components)]),
+      ].filter((id) => previousComponents[id] !== state.components[id]);
+      for (const [id, root] of Object.entries(state.roots)) {
+        if (id === state.editingComponentId) continue;
+        const used = new Set([
+          ...collectUsedComponentIds(root, previousComponents),
+          ...collectUsedComponentIds(root, state.components),
+        ]);
+        if (changedComponentIds.some((componentId) => used.has(componentId))) {
+          dirtyRoots.add(id);
+        }
       }
     }
     if (state.interaction) {
@@ -1978,6 +2098,10 @@ export function initWorkspaceSubscriptions(): () => void {
   const unsubscribeCanvas = docStore.subscribe((state) => {
     if (state.framePositions === lastPositions) return;
     lastPositions = state.framePositions;
+    if (workspaceFlags.skipCanvasWrite) {
+      workspaceFlags.skipCanvasWrite = false;
+      return;
+    }
     saveCanvasManifestLater();
   });
 
@@ -1993,5 +2117,3 @@ export function initWorkspaceSubscriptions(): () => void {
     }
   };
 }
-
-

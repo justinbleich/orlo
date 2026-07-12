@@ -38,6 +38,10 @@ type FrameRendererProps = {
   instrumentation?: RenderInstrumentation;
 };
 
+const devPerformanceMarks =
+  (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
+let layoutMeasureId = 0;
+
 /**
  * Flatten the Yoga layout into a draw list. Yoga is authoritative for geometry,
  * so every node is painted absolutely positioned. design.hidden nodes (and their
@@ -177,6 +181,10 @@ export function FrameRenderer({
     let cancelled = false;
     setError(null);
     const started = globalThis.performance?.now() ?? Date.now();
+    const measureId = layoutMeasureId++;
+    const startMark = `rn-canvas:yoga-layout:${measureId}:start`;
+    const endMark = `rn-canvas:yoga-layout:${measureId}:end`;
+    if (devPerformanceMarks) globalThis.performance?.mark(startMark);
 
     // Resolve component instances into a primitive tree before Yoga sees it.
     const expanded = components ? expandComponents(root, components) : root;
@@ -184,6 +192,12 @@ export function FrameRenderer({
     computeLayout(expanded)
       .then(({ layout, rootWidth, rootHeight }) => {
         if (cancelled) return;
+        if (devPerformanceMarks) {
+          globalThis.performance?.mark(endMark);
+          globalThis.performance?.measure("rn-canvas:yoga-layout", startMark, endMark);
+          globalThis.performance?.clearMarks(startMark);
+          globalThis.performance?.clearMarks(endMark);
+        }
         const snapshot = createLayoutSnapshot(layout);
         const result = { layout, snapshot, width: rootWidth, height: rootHeight };
         setLayoutState(result);
@@ -200,6 +214,10 @@ export function FrameRenderer({
 
     return () => {
       cancelled = true;
+      if (devPerformanceMarks) {
+        globalThis.performance?.clearMarks(startMark);
+        globalThis.performance?.clearMarks(endMark);
+      }
     };
   }, [root, components]);
 

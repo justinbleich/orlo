@@ -324,9 +324,9 @@ export class FrameShapeUtil extends ShapeUtil<FrameShape> {
           height: shape.props.h,
           overflow: editingDefinition ? "visible" : "hidden",
           backgroundColor: editingDefinition ? "transparent" : "#ffffff",
-          border: `1px solid ${
-            editingDefinition || hasInnerSelection ? "transparent" : color.artLine
-          }`,
+          border: editingDefinition
+            ? "none"
+            : `1px solid ${hasInnerSelection ? "transparent" : color.artLine}`,
           borderRadius: editingDefinition ? 0 : DEVICE_FRAME_RADIUS,
           boxShadow:
             editingDefinition || hasInnerSelection

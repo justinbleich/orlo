@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   FileCode2,
@@ -40,7 +40,6 @@ import { VariantPreviewShapeUtil, type VariantPreviewShape } from "./shapes/Vari
 import { ComponentWorkspace, type ComponentWorkspaceTab } from "./ComponentWorkspace";
 import { FlowCanvas } from "./FlowCanvas";
 import { FlowInspector } from "./FlowInspector";
-import { CodePanel } from "./CodePanel";
 import { gitFileStatusLabel, type GitFileStatus, type GitStatus } from "./code-artifacts";
 import {
   initWorkspaceSubscriptions,
@@ -50,7 +49,6 @@ import {
   type ActiveRepoScreen,
   type FlowDefinition,
 } from "./workspace-store";
-import { ComponentEditPanel, Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { color, layout, radius, space, text } from "./studio-theme";
@@ -120,6 +118,24 @@ import {
   variantPreviewCombinations,
   variantPreviewKey,
 } from "./variant-workspace";
+
+const Inspector = lazy(() =>
+  import("./Inspector").then((module) => ({ default: module.Inspector })),
+);
+const ComponentEditPanel = lazy(() =>
+  import("./Inspector").then((module) => ({ default: module.ComponentEditPanel })),
+);
+const CodePanel = lazy(() =>
+  import("./CodePanel").then((module) => ({ default: module.CodePanel })),
+);
+
+function PanelFallback() {
+  return (
+    <div className="flex flex-1 items-center justify-center p-md text-xs text-ink-faint">
+      Loading panel…
+    </div>
+  );
+}
 
 const shapeUtils = [FrameShapeUtil, VariantPreviewShapeUtil];
 const FRAME_TYPE = FrameShapeUtil.type;
@@ -1238,9 +1254,12 @@ function ChangesTimeline({ onOpenCode }: { onOpenCode: () => void }) {
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
+  const previousRootsRef = useRef<Record<NodeId, Node>>({});
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
   const repoComponentHydratedRef = useRef<Set<string>>(new Set());
+  const connectedRepoIdentityRef = useRef<string | null>(null);
+  const bootstrapAttemptedRef = useRef(false);
   const requestDeleteRepoScreenRef = useRef<(screen: RepoPanelScreen) => void>(() => {});
 
   const [inspectorTab, setInspectorTab] = useState("Design");
@@ -1370,6 +1389,18 @@ export default function App() {
     () => repoFlowItemsForContext(repoContext),
     [repoContext],
   );
+
+  // Relative sidecar paths commonly repeat across repos. Clear per-repo load
+  // guards when the connected root changes so the new repo hydrates its own
+  // components/flows and gets its own first-run bootstrap decision.
+  useEffect(() => {
+    const identity = repoContext?.repoPath ?? null;
+    if (connectedRepoIdentityRef.current === identity) return;
+    connectedRepoIdentityRef.current = identity;
+    repoFlowAutoloadedRef.current.clear();
+    repoComponentHydratedRef.current.clear();
+    bootstrapAttemptedRef.current = false;
+  }, [repoContext?.repoPath]);
   if (focusedRootId && focusedRootId !== editingComponentId) {
     setSyncRootHint(focusedRootId);
   }
@@ -1629,7 +1660,6 @@ export default function App() {
   // screens (the in-memory store is always empty at mount — repo screens load
   // lazily — so it must not be the signal). Runs at most once per session.
   // TODO: replace this with a dedicated repo bootstrap/onboarding flow.
-  const bootstrapAttemptedRef = useRef(false);
   useEffect(() => {
     if (!repoContext || bootstrapAttemptedRef.current) return;
     bootstrapAttemptedRef.current = true;
@@ -2230,37 +2260,53 @@ export default function App() {
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    const previousRoots = previousRootsRef.current;
+    previousRootsRef.current = roots;
+    const changedRootIds = new Set(
+      [...Object.keys(previousRoots), ...Object.keys(roots)].filter(
+        (rootId) => previousRoots[rootId] !== roots[rootId],
+      ),
+    );
     reconcilingShapesRef.current = true;
     try {
       editor.run(
-          () => {
+        () => {
+          if (changedRootIds.size > 0) {
             createMissingShapes(editor, roots);
-            for (const shape of editor.getCurrentPageShapes()) {
-              if (!isFrame(shape)) continue;
-            const root = roots[asFrame(shape).props.rootId];
-            if (!root) {
-              editor.deleteShapes([shape.id]);
-              continue;
-            }
-            const shouldLock = !!root.design?.locked;
-            if (shape.isLocked !== shouldLock) {
-              editor.updateShape({
-                id: shape.id,
-                type: FRAME_TYPE,
-                isLocked: shouldLock,
-              } as unknown as UpdatePartial);
-            }
-            // Mirror the screen size from the root so a document undo of a frame
-            // resize restores the box too. Only when it differs (a live drag has
-            // already matched them, so this won't fight tldraw mid-gesture).
-            const frame = asFrame(shape);
-            const { w, h } = rootSize(root);
-            if (frame.props.w !== w || frame.props.h !== h) {
-              editor.updateShape({
-                id: shape.id,
-                type: FRAME_TYPE,
-                props: { ...frame.props, w, h },
-              } as unknown as UpdatePartial);
+            const framesByRootId = new Map(
+              editor
+                .getCurrentPageShapes()
+                .filter(isFrame)
+                .map((shape) => [asFrame(shape).props.rootId, shape] as const),
+            );
+            for (const rootId of changedRootIds) {
+              const shape = framesByRootId.get(rootId);
+              if (!shape) continue;
+              const root = roots[rootId];
+              if (!root) {
+                editor.deleteShapes([shape.id]);
+                continue;
+              }
+              const shouldLock = !!root.design?.locked;
+              if (shape.isLocked !== shouldLock) {
+                editor.updateShape({
+                  id: shape.id,
+                  type: FRAME_TYPE,
+                  isLocked: shouldLock,
+                } as unknown as UpdatePartial);
+              }
+              // Mirror the screen size from the root so a document undo of a frame
+              // resize restores the box too. Only when it differs (a live drag has
+              // already matched them, so this won't fight tldraw mid-gesture).
+              const frame = asFrame(shape);
+              const { w, h } = rootSize(root);
+              if (frame.props.w !== w || frame.props.h !== h) {
+                editor.updateShape({
+                  id: shape.id,
+                  type: FRAME_TYPE,
+                  props: { ...frame.props, w, h },
+                } as unknown as UpdatePartial);
+              }
             }
           }
           const selectedId = useDocumentStore.getState().selection[0] ?? "";
@@ -2292,16 +2338,32 @@ export default function App() {
     let last = useDocumentStore.getState().framePositions;
     const unsubscribe = useDocumentStore.subscribe((state) => {
       if (state.framePositions === last) return;
+      const previous = last;
       last = state.framePositions;
+      const changedRootIds = [
+        ...new Set([...Object.keys(previous), ...Object.keys(state.framePositions)]),
+      ].filter((rootId) => {
+        const before = previous[rootId];
+        const after = state.framePositions[rootId];
+        return before?.x !== after?.x || before?.y !== after?.y;
+      });
+      if (changedRootIds.length === 0) return;
       const editor = editorRef.current;
       if (!editor) return;
       reconcilingShapesRef.current = true;
       try {
         editor.run(
           () => {
-            for (const shape of editor.getCurrentPageShapes()) {
-              if (!isFrame(shape)) continue;
-              const position = state.framePositions[asFrame(shape).props.rootId];
+            const framesByRootId = new Map(
+              editor
+                .getCurrentPageShapes()
+                .filter(isFrame)
+                .map((shape) => [asFrame(shape).props.rootId, shape] as const),
+            );
+            for (const rootId of changedRootIds) {
+              const shape = framesByRootId.get(rootId);
+              const position = state.framePositions[rootId];
+              if (!shape) continue;
               if (!position) continue;
               if (
                 Math.abs(shape.x - position.x) > 0.01 ||
@@ -2315,7 +2377,10 @@ export default function App() {
                 } as unknown as UpdatePartial);
               }
             }
-            syncVariantPreviewShapes(editor);
+            const editingComponentId = useDocumentStore.getState().editingComponentId;
+            if (editingComponentId && changedRootIds.includes(editingComponentId)) {
+              syncVariantPreviewShapes(editor);
+            }
           },
           { history: "ignore", ignoreShapeLock: true },
         );
@@ -2818,10 +2883,10 @@ export default function App() {
                 setWorkspace("Screen");
                 setStatus(`Canceled ${editingComponentName ?? "component"} edits`);
               }}
-              onDone={() => {
-                useDocumentStore.getState().endComponentEdit(true);
+              onDone={async () => {
+                const saved = await useWorkspaceStore.getState().saveComponentEdit();
+                if (!saved) return;
                 setWorkspace("Screen");
-                setStatus(`Saved ${editingComponentName ?? "component"}`);
               }}
             >
               <div
@@ -2970,14 +3035,18 @@ export default function App() {
                   <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
                     {inspectorTab === "Design" ? (
                       <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
-                        {isComponentWorkspace && editingComponentId ? (
-                          <ComponentEditPanel componentId={editingComponentId} />
-                        ) : (
-                          <Inspector rootId={focusedRootId} />
-                        )}
+                        <Suspense fallback={<PanelFallback />}>
+                          {isComponentWorkspace && editingComponentId ? (
+                            <ComponentEditPanel componentId={editingComponentId} />
+                          ) : (
+                            <Inspector rootId={focusedRootId} />
+                          )}
+                        </Suspense>
                       </ErrorBoundary>
                     ) : inspectorTab === "Code" ? (
-                      <CodePanel />
+                      <Suspense fallback={<PanelFallback />}>
+                        <CodePanel />
+                      </Suspense>
                     ) : (
                       <ChangesTimeline onOpenCode={() => setInspectorTab("Code")} />
                     )}

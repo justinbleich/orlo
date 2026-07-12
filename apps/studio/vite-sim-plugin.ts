@@ -1,8 +1,12 @@
-import type { Plugin } from "vite";
-import type { ComponentRegistry, Node, TokenRegistry } from "@rn-canvas/document";
+import type { Plugin, ViteDevServer } from "vite";
+import type {
+  ComponentDefinition,
+  ComponentRegistry,
+  Node,
+  TokenRegistry,
+} from "@rn-canvas/document";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -45,6 +49,29 @@ type GeneratedComponent = {
 
 type GeneratedTheme = { fileName: string; code: string };
 
+type CodegenApi = {
+  generateScreen(
+    root: Node,
+    options?: {
+      screenName?: string;
+      components?: ComponentRegistry;
+      tokens?: TokenRegistry;
+      navTargets?: Record<string, string>;
+    },
+  ): GeneratedScreen;
+  openDocument(
+    sidecarJson: string,
+    themeSource?: string,
+  ): { screenName: string; root: Node; components?: ComponentRegistry; tokens: TokenRegistry };
+  emitTheme(tokens: TokenRegistry): GeneratedTheme;
+  emitComponent(
+    definition: ComponentDefinition,
+    components?: ComponentRegistry,
+    tokens?: TokenRegistry,
+  ): GeneratedComponent;
+  parseExternalScreen(source: string): { screenName: string; root: Node };
+};
+
 type SidecarRequest = {
   sidecarPath?: string;
 };
@@ -56,6 +83,13 @@ type ExternalSourceRequest = {
 type TokensSaveRequest = {
   sidecarPath?: string;
   tokens?: TokenRegistry;
+};
+
+type ComponentSaveRequest = {
+  definition?: ComponentDefinition;
+  components?: ComponentRegistry;
+  tokens?: TokenRegistry;
+  sidecarPaths?: string[];
 };
 
 type FlowManifestRequest = {
@@ -196,6 +230,16 @@ function safeComponentName(input = "Screen") {
   return input.trim() || "Screen";
 }
 
+function emittedComponentName(input: string) {
+  return input
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+}
+
 async function resolveRepoRoot(input?: string) {
   if (!input?.trim()) throw new Error("Enter a repository path");
   const root = resolve(isAbsolute(input) ? input : join(repoRoot, input));
@@ -230,31 +274,6 @@ function resolveExternalSourcePath(input?: string) {
   return resolveExternalSourcePathInRoot(activeRepoRoot, input);
 }
 
-async function runCodegen(
-  root: Node,
-  screenName: string,
-  components?: ComponentRegistry,
-  tokens?: TokenRegistry,
-  navTargets?: Record<string, string>,
-): Promise<GeneratedScreen> {
-  const dir = await mkdtemp(join(tmpdir(), "rncanvas-codegen-"));
-  const inputPath = join(dir, "input.json");
-  try {
-    await writeFile(inputPath, JSON.stringify({ root, screenName, components, tokens, navTargets }));
-    const { stdout } = await execFileAsync("pnpm", [
-      "--filter",
-      "@rn-canvas/codegen",
-      "exec",
-      "tsx",
-      "src/cli-generate.ts",
-      inputPath,
-    ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
-    return JSON.parse(stdout) as GeneratedScreen;
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 async function fileExists(path: string) {
   try {
     await access(path);
@@ -264,56 +283,15 @@ async function fileExists(path: string) {
   }
 }
 
-async function openDocument(sidecarPath: string) {
+async function openDocument(sidecarPath: string, codegen: CodegenApi) {
   // The canonical token values live in `theme.ts` beside the sidecar (Phase 2D-2b).
   // Pass it only when present so pre-2D-2b documents fall back to sidecar tokens.
   const themePath = join(dirname(sidecarPath), "theme.ts");
-  const args = ["src/cli-open-document.ts", sidecarPath];
-  if (await fileExists(themePath)) args.push(themePath);
-  const { stdout } = await execFileAsync("pnpm", [
-    "--filter",
-    "@rn-canvas/codegen",
-    "exec",
-    "tsx",
-    ...args,
-  ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
-  return JSON.parse(stdout) as {
-    screenName: string;
-    root: Node;
-    components?: ComponentRegistry;
-    tokens: TokenRegistry;
-  };
-}
-
-async function emitThemeCode(tokens: TokenRegistry): Promise<GeneratedTheme> {
-  const dir = await mkdtemp(join(tmpdir(), "rncanvas-theme-"));
-  const inputPath = join(dir, "tokens.json");
-  try {
-    await writeFile(inputPath, JSON.stringify(tokens));
-    const { stdout } = await execFileAsync("pnpm", [
-      "--filter",
-      "@rn-canvas/codegen",
-      "exec",
-      "tsx",
-      "src/cli-emit-theme.ts",
-      inputPath,
-    ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
-    return JSON.parse(stdout) as GeneratedTheme;
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-async function parseExternalSource(sourcePath: string) {
-  const { stdout } = await execFileAsync("pnpm", [
-    "--filter",
-    "@rn-canvas/codegen",
-    "exec",
-    "tsx",
-    "src/cli-parse-external.ts",
-    sourcePath,
-  ], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
-  return JSON.parse(stdout) as { screenName: string; root: Node };
+  const sidecarJson = await readFile(sidecarPath, "utf8");
+  const themeSource = (await fileExists(themePath))
+    ? await readFile(themePath, "utf8")
+    : undefined;
+  return codegen.openDocument(sidecarJson, themeSource);
 }
 
 async function readGitStatus() {
@@ -464,12 +442,14 @@ async function remoteCompareUrl() {
 async function connectRepoRoot(path?: string) {
   activeRepoRoot = await resolveRepoRoot(path);
   await ensureStudioBranch(activeRepoRoot);
+  invalidateRepoContext(activeRepoRoot);
   return activeRepoRoot;
 }
 
 async function connectDemoRepoRoot() {
   await access(demoRepoRoot);
   activeRepoRoot = demoRepoRoot;
+  invalidateRepoContext(activeRepoRoot);
   return activeRepoRoot;
 }
 
@@ -721,9 +701,9 @@ function inferLinearRepoFlows(screens: RepoScreenCandidate[]): RepoFlowCandidate
   });
 }
 
-async function maybeReadSidecar(path: string): Promise<RepoSidecarCandidate> {
+async function maybeReadSidecar(root: string, path: string): Promise<RepoSidecarCandidate> {
   try {
-    const raw = await readFile(join(activeRepoRoot, path), "utf8");
+    const raw = await readFile(join(root, path), "utf8");
     const parsed = JSON.parse(raw) as { root?: { id?: unknown }; screenName?: string };
     const rootId = typeof parsed.root?.id === "string" ? parsed.root.id : undefined;
     return {
@@ -795,7 +775,7 @@ export async function walkRepoFiles(root: string) {
   return { files, rootEntries, truncated };
 }
 
-async function readRepoContext(): Promise<RepoContext> {
+async function scanRepoContext(): Promise<RepoContext> {
   const root = activeRepoRoot;
   const gitRoot = await resolveGitRoot(root);
   const { files, rootEntries, truncated } = await walkRepoFiles(root);
@@ -830,7 +810,9 @@ async function readRepoContext(): Promise<RepoContext> {
   }
 
   const sidecars = await Promise.all(
-    files.filter((file) => file.endsWith(".rncanvas.json")).map((file) => maybeReadSidecar(file)),
+    files
+      .filter((file) => file.endsWith(".rncanvas.json"))
+      .map((file) => maybeReadSidecar(root, file)),
   );
   const sidecarByTarget = new Map(
     sidecars
@@ -901,6 +883,24 @@ async function readRepoContext(): Promise<RepoContext> {
   };
 }
 
+const repoContextCache = new Map<string, Promise<RepoContext>>();
+
+function invalidateRepoContext(root = activeRepoRoot) {
+  repoContextCache.delete(resolve(root));
+}
+
+function readRepoContext(): Promise<RepoContext> {
+  const key = resolve(activeRepoRoot);
+  const cached = repoContextCache.get(key);
+  if (cached) return cached;
+  const pending = scanRepoContext().catch((error) => {
+    repoContextCache.delete(key);
+    throw error;
+  });
+  repoContextCache.set(key, pending);
+  return pending;
+}
+
 export function simScreenshotPlugin(): Plugin {
   const commandQueue: BrowserCommand[] = [];
   const pending = new Map<
@@ -916,6 +916,16 @@ export function simScreenshotPlugin(): Plugin {
     timeout: ReturnType<typeof setTimeout>;
   } | null = null;
   const LONG_POLL_MS = 25_000;
+  let codegenPromise: Promise<CodegenApi> | null = null;
+
+  const loadCodegen = (server: ViteDevServer): Promise<CodegenApi> => {
+    if (!codegenPromise) {
+      codegenPromise = server
+        .ssrLoadModule("@rn-canvas/codegen")
+        .then((module) => module as unknown as CodegenApi);
+    }
+    return codegenPromise;
+  };
 
   function browserBridgeActive(now = Date.now()) {
     // A parked long-poll is proof the client is connected even though its
@@ -951,7 +961,12 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName, body.components, body.tokens, body.navTargets);
+          const generated = (await loadCodegen(server)).generateScreen(body.root, {
+            screenName,
+            components: body.components,
+            tokens: body.tokens,
+            navTargets: body.navTargets,
+          });
           const paths = resolveTargetPath(screenName, body.targetPath);
           sendJson(res, 200, {
             ...generated,
@@ -975,7 +990,12 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<CodegenRequest>(req);
           if (!body.root) throw new Error("Missing document root");
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName, body.components, body.tokens, body.navTargets);
+          const generated = (await loadCodegen(server)).generateScreen(body.root, {
+            screenName,
+            components: body.components,
+            tokens: body.tokens,
+            navTargets: body.navTargets,
+          });
           const paths = resolveTargetPath(screenName, body.targetPath);
           if (body.ifAbsent && ((await fileExists(paths.tsxPath)) || (await fileExists(paths.sidecarPath)))) {
             throw new Error("Screen path already exists");
@@ -1002,6 +1022,7 @@ export function simScreenshotPlugin(): Plugin {
             await writeFile(filePath, `${generated.theme.code}\n`);
             themePath = relative(activeRepoRoot, filePath);
           }
+          invalidateRepoContext();
           sendJson(res, 200, {
             ...generated,
             repoPath: activeRepoRoot,
@@ -1031,8 +1052,13 @@ export function simScreenshotPlugin(): Plugin {
           if (!body.sourcePath || !body.targetPath) throw new Error("Missing source or target path");
           const sourcePath = resolveExternalSourcePath(body.sourcePath);
           const screenName = safeComponentName(body.screenName);
-          const generated = await runCodegen(body.root, screenName, body.components, body.tokens, {
-            [body.anchorNodeId]: expoHrefForPath(body.targetPath),
+          const generated = (await loadCodegen(server)).generateScreen(body.root, {
+            screenName,
+            components: body.components,
+            tokens: body.tokens,
+            navTargets: {
+              [body.anchorNodeId]: expoHrefForPath(body.targetPath),
+            },
           });
           const sourceDir = dirname(sourcePath);
           await mkdir(sourceDir, { recursive: true });
@@ -1054,6 +1080,7 @@ export function simScreenshotPlugin(): Plugin {
             await writeFile(filePath, `${generated.theme.code}\n`);
             themePath = relative(activeRepoRoot, filePath);
           }
+          invalidateRepoContext();
           sendJson(res, 200, {
             ...generated,
             repoPath: activeRepoRoot,
@@ -1094,6 +1121,7 @@ export function simScreenshotPlugin(): Plugin {
           }
           await rm(tsxPath);
           await rm(sidecarPath);
+          invalidateRepoContext();
           sendJson(res, 200, {
             deleted: [relative(activeRepoRoot, tsxPath), relative(activeRepoRoot, sidecarPath)],
           });
@@ -1112,7 +1140,7 @@ export function simScreenshotPlugin(): Plugin {
         try {
           const body = await readRequestJson<SidecarRequest>(req);
           const sidecarPath = resolveSidecarPath(body.sidecarPath);
-          const document = await openDocument(sidecarPath);
+          const document = await openDocument(sidecarPath, await loadCodegen(server));
           sendJson(res, 200, {
             ...document,
             repoPath: activeRepoRoot,
@@ -1134,7 +1162,9 @@ export function simScreenshotPlugin(): Plugin {
         try {
           const body = await readRequestJson<ExternalSourceRequest>(req);
           const sourcePath = resolveExternalSourcePath(body.sourcePath);
-          const document = await parseExternalSource(sourcePath);
+          const document = (await loadCodegen(server)).parseExternalScreen(
+            await readFile(sourcePath, "utf8"),
+          );
           const relativeSourcePath = relative(activeRepoRoot, sourcePath);
           sendJson(res, 200, {
             ...document,
@@ -1145,6 +1175,77 @@ export function simScreenshotPlugin(): Plugin {
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "React Native import failed",
+          });
+        }
+      });
+
+      // Component focus can be opened from the hydrated library without opening
+      // any screen roots. Persist the edited definition back to every sidecar
+      // that owns it, and update the standalone component module, so Done is a
+      // durable save rather than an in-memory-only edit.
+      server.middlewares.use("/api/components/save", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "POST required" });
+          return;
+        }
+        try {
+          const body = await readRequestJson<ComponentSaveRequest>(req);
+          const definition = body.definition;
+          if (!definition) throw new Error("Missing component definition");
+          const sidecarInputs = [...new Set(body.sidecarPaths ?? [])];
+          if (sidecarInputs.length === 0) throw new Error("Component has no owning sidecar");
+
+          const savedSidecars: string[] = [];
+          const componentPaths = new Set<string>();
+          const emittedName = emittedComponentName(definition.name);
+          for (const input of sidecarInputs) {
+            const sidecarPath = resolveSidecarPath(input);
+            const document = JSON.parse(await readFile(sidecarPath, "utf8")) as {
+              components?: ComponentRegistry;
+              tokens?: TokenRegistry;
+              [key: string]: unknown;
+            };
+            const registry = document.components ?? {};
+            const match = Object.entries(registry).find(
+              ([id, candidate]) =>
+                id === definition.id ||
+                candidate.name === definition.name ||
+                emittedComponentName(candidate.name) === emittedName,
+            );
+            if (!match) continue;
+
+            const [storedId] = match;
+            const storedDefinition =
+              storedId === definition.id ? definition : { ...definition, id: storedId };
+            document.components = { ...registry, [storedId]: storedDefinition };
+            await writeFile(sidecarPath, `${JSON.stringify(document, null, 2)}\n`);
+            savedSidecars.push(relative(activeRepoRoot, sidecarPath));
+
+            const emitted = (await loadCodegen(server)).emitComponent(
+              definition,
+              body.components ?? { [definition.id]: definition },
+              body.tokens ?? document.tokens,
+            );
+            const componentPath = join(dirname(sidecarPath), "components", emitted.fileName);
+            if (!componentPaths.has(componentPath)) {
+              await mkdir(dirname(componentPath), { recursive: true });
+              await writeFile(componentPath, `${emitted.code}\n`);
+              componentPaths.add(componentPath);
+            }
+          }
+
+          if (savedSidecars.length === 0) {
+            throw new Error(`No sidecar owns component ${definition.name}`);
+          }
+          invalidateRepoContext();
+          sendJson(res, 200, {
+            savedSidecars,
+            componentPaths: [...componentPaths].map((path) => relative(activeRepoRoot, path)),
+            wrote: true,
+          });
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Component save failed",
           });
         }
       });
@@ -1161,10 +1262,11 @@ export function simScreenshotPlugin(): Plugin {
           const body = await readRequestJson<TokensSaveRequest>(req);
           const sidecarPath = resolveSidecarPath(body.sidecarPath);
           const tokens = body.tokens ?? {};
-          const theme = await emitThemeCode(tokens);
+          const theme = (await loadCodegen(server)).emitTheme(tokens);
           const themePath = join(dirname(sidecarPath), theme.fileName);
           await mkdir(dirname(themePath), { recursive: true });
           await writeFile(themePath, `${theme.code}\n`);
+          invalidateRepoContext();
           sendJson(res, 200, { themePath: relative(activeRepoRoot, themePath), wrote: true });
         } catch (error) {
           sendJson(res, 400, {
@@ -1308,7 +1410,9 @@ export function simScreenshotPlugin(): Plugin {
         }
         try {
           const body = await readRequestJson<{ branch?: string; create?: boolean }>(req);
-          sendJson(res, 200, await switchBranch(body.branch ?? "", Boolean(body.create)));
+          const result = await switchBranch(body.branch ?? "", Boolean(body.create));
+          invalidateRepoContext();
+          sendJson(res, 200, result);
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Branch switch failed",
@@ -1323,7 +1427,9 @@ export function simScreenshotPlugin(): Plugin {
         }
         try {
           const body = await readRequestJson<{ message?: string; paths?: string[] }>(req);
-          sendJson(res, 200, await commitPaths(body.message ?? "", body.paths ?? []));
+          const result = await commitPaths(body.message ?? "", body.paths ?? []);
+          invalidateRepoContext();
+          sendJson(res, 200, result);
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Commit failed",
@@ -1357,7 +1463,9 @@ export function simScreenshotPlugin(): Plugin {
           }
           const body = await readRequestJson<FlowManifestRequest>(req);
           if (!body.manifest) throw new Error("Missing flow manifest");
-          sendJson(res, 200, await writeFlowManifest(body.manifest));
+          const result = await writeFlowManifest(body.manifest);
+          invalidateRepoContext();
+          sendJson(res, 200, result);
         } catch (error) {
           sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Flow manifest failed",

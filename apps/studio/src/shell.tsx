@@ -30,7 +30,7 @@ import {
   ZoomIn,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   childrenOf,
   findNode,
@@ -48,12 +48,15 @@ import { Button, cn, PanelAction, PanelRow, PanelSection, PanelStaticRow, Toolti
 import { useWorkspaceStore } from "./workspace-store";
 import { DocumentTree } from "./DocumentTree";
 import { deleteNodes, reorderNode } from "./document-actions";
-import { TokensPanel } from "./TokensPanel";
 import {
   displayScreenName,
   type RepoPanelContext,
   type RepoPanelScreen,
 } from "./repo-project-model";
+
+const TokensPanel = lazy(() =>
+  import("./TokensPanel").then((module) => ({ default: module.TokensPanel })),
+);
 
 type WorkspaceMode = "Screen" | "Component" | "Flow" | "Design System";
 export type FlowId = string;
@@ -1107,7 +1110,11 @@ export function LeftPanel({
                 </Menu.Portal>
               </Menu.Root>
             </div>
-            <TokensPanel onCreate={createToken} />
+            <Suspense
+              fallback={<div className="p-md text-xs text-ink-faint">Loading tokens…</div>}
+            >
+              <TokensPanel onCreate={createToken} />
+            </Suspense>
           </section>
         )}
       </div>

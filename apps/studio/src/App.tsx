@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   FileCode2,
@@ -40,7 +40,6 @@ import { VariantPreviewShapeUtil, type VariantPreviewShape } from "./shapes/Vari
 import { ComponentWorkspace, type ComponentWorkspaceTab } from "./ComponentWorkspace";
 import { FlowCanvas } from "./FlowCanvas";
 import { FlowInspector } from "./FlowInspector";
-import { CodePanel } from "./CodePanel";
 import { gitFileStatusLabel, type GitFileStatus, type GitStatus } from "./code-artifacts";
 import {
   initWorkspaceSubscriptions,
@@ -50,7 +49,6 @@ import {
   type ActiveRepoScreen,
   type FlowDefinition,
 } from "./workspace-store";
-import { ComponentEditPanel, Inspector } from "./Inspector";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { color, layout, radius, space, text } from "./studio-theme";
@@ -120,6 +118,24 @@ import {
   variantPreviewCombinations,
   variantPreviewKey,
 } from "./variant-workspace";
+
+const Inspector = lazy(() =>
+  import("./Inspector").then((module) => ({ default: module.Inspector })),
+);
+const ComponentEditPanel = lazy(() =>
+  import("./Inspector").then((module) => ({ default: module.ComponentEditPanel })),
+);
+const CodePanel = lazy(() =>
+  import("./CodePanel").then((module) => ({ default: module.CodePanel })),
+);
+
+function PanelFallback() {
+  return (
+    <div className="flex flex-1 items-center justify-center p-md text-xs text-ink-faint">
+      Loading panel…
+    </div>
+  );
+}
 
 const shapeUtils = [FrameShapeUtil, VariantPreviewShapeUtil];
 const FRAME_TYPE = FrameShapeUtil.type;
@@ -3019,14 +3035,18 @@ export default function App() {
                   <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
                     {inspectorTab === "Design" ? (
                       <ErrorBoundary label="Inspector" resetKey={selection[0] ?? null}>
-                        {isComponentWorkspace && editingComponentId ? (
-                          <ComponentEditPanel componentId={editingComponentId} />
-                        ) : (
-                          <Inspector rootId={focusedRootId} />
-                        )}
+                        <Suspense fallback={<PanelFallback />}>
+                          {isComponentWorkspace && editingComponentId ? (
+                            <ComponentEditPanel componentId={editingComponentId} />
+                          ) : (
+                            <Inspector rootId={focusedRootId} />
+                          )}
+                        </Suspense>
                       </ErrorBoundary>
                     ) : inspectorTab === "Code" ? (
-                      <CodePanel />
+                      <Suspense fallback={<PanelFallback />}>
+                        <CodePanel />
+                      </Suspense>
                     ) : (
                       <ChangesTimeline onOpenCode={() => setInspectorTab("Code")} />
                     )}

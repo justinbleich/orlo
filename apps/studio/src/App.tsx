@@ -1238,6 +1238,7 @@ function ChangesTimeline({ onOpenCode }: { onOpenCode: () => void }) {
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const reconcilingShapesRef = useRef(false);
+  const previousRootsRef = useRef<Record<NodeId, Node>>({});
   const pendingFocusRootIdRef = useRef<NodeId | null>(null);
   const repoFlowAutoloadedRef = useRef<Set<string>>(new Set());
   const repoComponentHydratedRef = useRef<Set<string>>(new Set());
@@ -2243,37 +2244,53 @@ export default function App() {
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    const previousRoots = previousRootsRef.current;
+    previousRootsRef.current = roots;
+    const changedRootIds = new Set(
+      [...Object.keys(previousRoots), ...Object.keys(roots)].filter(
+        (rootId) => previousRoots[rootId] !== roots[rootId],
+      ),
+    );
     reconcilingShapesRef.current = true;
     try {
       editor.run(
-          () => {
+        () => {
+          if (changedRootIds.size > 0) {
             createMissingShapes(editor, roots);
-            for (const shape of editor.getCurrentPageShapes()) {
-              if (!isFrame(shape)) continue;
-            const root = roots[asFrame(shape).props.rootId];
-            if (!root) {
-              editor.deleteShapes([shape.id]);
-              continue;
-            }
-            const shouldLock = !!root.design?.locked;
-            if (shape.isLocked !== shouldLock) {
-              editor.updateShape({
-                id: shape.id,
-                type: FRAME_TYPE,
-                isLocked: shouldLock,
-              } as unknown as UpdatePartial);
-            }
-            // Mirror the screen size from the root so a document undo of a frame
-            // resize restores the box too. Only when it differs (a live drag has
-            // already matched them, so this won't fight tldraw mid-gesture).
-            const frame = asFrame(shape);
-            const { w, h } = rootSize(root);
-            if (frame.props.w !== w || frame.props.h !== h) {
-              editor.updateShape({
-                id: shape.id,
-                type: FRAME_TYPE,
-                props: { ...frame.props, w, h },
-              } as unknown as UpdatePartial);
+            const framesByRootId = new Map(
+              editor
+                .getCurrentPageShapes()
+                .filter(isFrame)
+                .map((shape) => [asFrame(shape).props.rootId, shape] as const),
+            );
+            for (const rootId of changedRootIds) {
+              const shape = framesByRootId.get(rootId);
+              if (!shape) continue;
+              const root = roots[rootId];
+              if (!root) {
+                editor.deleteShapes([shape.id]);
+                continue;
+              }
+              const shouldLock = !!root.design?.locked;
+              if (shape.isLocked !== shouldLock) {
+                editor.updateShape({
+                  id: shape.id,
+                  type: FRAME_TYPE,
+                  isLocked: shouldLock,
+                } as unknown as UpdatePartial);
+              }
+              // Mirror the screen size from the root so a document undo of a frame
+              // resize restores the box too. Only when it differs (a live drag has
+              // already matched them, so this won't fight tldraw mid-gesture).
+              const frame = asFrame(shape);
+              const { w, h } = rootSize(root);
+              if (frame.props.w !== w || frame.props.h !== h) {
+                editor.updateShape({
+                  id: shape.id,
+                  type: FRAME_TYPE,
+                  props: { ...frame.props, w, h },
+                } as unknown as UpdatePartial);
+              }
             }
           }
           const selectedId = useDocumentStore.getState().selection[0] ?? "";
@@ -2305,16 +2322,32 @@ export default function App() {
     let last = useDocumentStore.getState().framePositions;
     const unsubscribe = useDocumentStore.subscribe((state) => {
       if (state.framePositions === last) return;
+      const previous = last;
       last = state.framePositions;
+      const changedRootIds = [
+        ...new Set([...Object.keys(previous), ...Object.keys(state.framePositions)]),
+      ].filter((rootId) => {
+        const before = previous[rootId];
+        const after = state.framePositions[rootId];
+        return before?.x !== after?.x || before?.y !== after?.y;
+      });
+      if (changedRootIds.length === 0) return;
       const editor = editorRef.current;
       if (!editor) return;
       reconcilingShapesRef.current = true;
       try {
         editor.run(
           () => {
-            for (const shape of editor.getCurrentPageShapes()) {
-              if (!isFrame(shape)) continue;
-              const position = state.framePositions[asFrame(shape).props.rootId];
+            const framesByRootId = new Map(
+              editor
+                .getCurrentPageShapes()
+                .filter(isFrame)
+                .map((shape) => [asFrame(shape).props.rootId, shape] as const),
+            );
+            for (const rootId of changedRootIds) {
+              const shape = framesByRootId.get(rootId);
+              const position = state.framePositions[rootId];
+              if (!shape) continue;
               if (!position) continue;
               if (
                 Math.abs(shape.x - position.x) > 0.01 ||
@@ -2328,7 +2361,10 @@ export default function App() {
                 } as unknown as UpdatePartial);
               }
             }
-            syncVariantPreviewShapes(editor);
+            const editingComponentId = useDocumentStore.getState().editingComponentId;
+            if (editingComponentId && changedRootIds.includes(editingComponentId)) {
+              syncVariantPreviewShapes(editor);
+            }
           },
           { history: "ignore", ignoreShapeLock: true },
         );

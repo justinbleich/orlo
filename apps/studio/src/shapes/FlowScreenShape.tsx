@@ -1,5 +1,5 @@
 import { BatteryFull, Signal, Wifi } from "lucide-react";
-import { useState, type PointerEvent } from "react";
+import { useMemo, useState, type PointerEvent } from "react";
 import {
   HTMLContainer,
   Rectangle2d,
@@ -260,9 +260,21 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
       () => shape.props.w * editor.getZoomLevel() >= LOD_MIN_ONSCREEN_WIDTH,
       [editor, shape.id, shape.props.w],
     );
-    const zoomLevel = useValue("rnflowscreen-zoom-level", () => editor.getZoomLevel(), [editor]);
+    const zoomLevel = useValue(
+      "rnflowscreen-zoom-level",
+      () => Math.round(editor.getZoomLevel() * 50) / 50,
+      [editor],
+    );
     const live = selected || largeEnough;
     const showUnusedAnchors = selected || flowWireMode;
+    const anchorEntries = useMemo(() => {
+      if (!layoutResult) return [];
+      return flattenLayout(layoutResult.layout)
+        .filter(({ box }) => box.node.id !== root?.id)
+        .map((entry) => ({ entry, tier: anchorTier(entry) }))
+        .filter((item): item is { entry: FlatLayoutBox; tier: AnchorTier } => item.tier !== null)
+        .filter(({ entry }) => wiredAnchorIds.has(entry.box.node.id) || showUnusedAnchors);
+    }, [layoutResult, root?.id, showUnusedAnchors, wiredAnchorIds]);
     const inverseZoom = 1 / Math.max(0.05, zoomLevel);
     const screenPx = (value: number) => value * inverseZoom;
     return (
@@ -297,11 +309,7 @@ export class FlowScreenShapeUtil extends ShapeUtil<FlowScreenShape> {
         {root &&
           live &&
           layoutResult &&
-          flattenLayout(layoutResult.layout)
-            .filter(({ box }) => box.node.id !== root.id)
-            .map((entry) => ({ entry, tier: anchorTier(entry) }))
-            .filter((item): item is { entry: FlatLayoutBox; tier: AnchorTier } => item.tier !== null)
-            .filter(({ entry }) => wiredAnchorIds.has(entry.box.node.id) || showUnusedAnchors)
+          anchorEntries
             .map(({ entry: { box }, tier }) => {
               const wired = wiredAnchorIds.has(box.node.id);
               const label = box.node.design?.name ?? box.node.type;

@@ -61,6 +61,29 @@ export type FlowDefinition = {
   manifestSuccessPath?: string;
 };
 
+function sameGitStatus(a: GitStatus, b: GitStatus): boolean {
+  if (a.status !== b.status) return false;
+  if (a.status === "loading" || b.status === "loading") return true;
+  if (a.status === "error" || b.status === "error") {
+    return a.status === "error" && b.status === "error" && a.message === b.message;
+  }
+  return (
+    a.repoPath === b.repoPath &&
+    a.branch === b.branch &&
+    a.clean === b.clean &&
+    a.files.length === b.files.length &&
+    a.files.every((file, index) => {
+      const other = b.files[index];
+      return (
+        !!other &&
+        file.path === other.path &&
+        file.index === other.index &&
+        file.workingTree === other.workingTree
+      );
+    })
+  );
+}
+
 export type FlowPositions = Record<string, Record<string, { x: number; y: number }>>;
 
 export const DEFAULT_FLOWS: FlowDefinition[] = [
@@ -1080,7 +1103,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           files: Array.isArray(body.files) ? body.files : [],
         };
         // The 5s poll usually returns the same answer — don't re-render for it.
-        if (JSON.stringify(next) !== JSON.stringify(get().gitStatus)) {
+        if (!sameGitStatus(next, get().gitStatus)) {
           set({ gitStatus: next });
         }
         if (body.repoPath && body.repoPath !== previousRepoPath) void get().refreshBranches();

@@ -1994,10 +1994,11 @@ export function initWorkspaceSubscriptions(): () => void {
   let dirtyDuringInteraction = false;
   const unsubscribeAutoSync = docStore.subscribe((state) => {
     const previousRoots = lastRoots;
+    const previousComponents = lastComponents;
     const rootsChanged = state.roots !== lastRoots;
-    const globalsChanged =
-      state.components !== lastComponents || state.tokens !== lastTokens;
-    const documentChanged = rootsChanged || globalsChanged;
+    const componentsChanged = state.components !== lastComponents;
+    const tokensChanged = state.tokens !== lastTokens;
+    const documentChanged = rootsChanged || componentsChanged || tokensChanged;
     const interactionJustEnded = !!lastInteraction && !state.interaction;
     lastRoots = state.roots;
     lastComponents = state.components;
@@ -2018,10 +2019,25 @@ export function initWorkspaceSubscriptions(): () => void {
         if (previousRoots[id] !== root) dirtyRoots.add(id);
       }
     }
-    if (globalsChanged) {
-      // Tokens/components reapply across every tree — all screens are stale.
+    if (tokensChanged) {
+      // Token literals can affect every tree.
       for (const id of Object.keys(state.roots)) {
         if (id !== state.editingComponentId) dirtyRoots.add(id);
+      }
+    }
+    if (componentsChanged) {
+      const changedComponentIds = [
+        ...new Set([...Object.keys(previousComponents), ...Object.keys(state.components)]),
+      ].filter((id) => previousComponents[id] !== state.components[id]);
+      for (const [id, root] of Object.entries(state.roots)) {
+        if (id === state.editingComponentId) continue;
+        const used = new Set([
+          ...collectUsedComponentIds(root, previousComponents),
+          ...collectUsedComponentIds(root, state.components),
+        ]);
+        if (changedComponentIds.some((componentId) => used.has(componentId))) {
+          dirtyRoots.add(id);
+        }
       }
     }
     if (state.interaction) {
